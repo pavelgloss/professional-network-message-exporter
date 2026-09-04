@@ -1,6 +1,6 @@
 import type { Locator, Page } from 'playwright';
 import { canonicalLinkedInUrl, cleanText } from '../../domain/normalize.js';
-import { extractUrnId, sha256Id } from '../../domain/stable-id.js';
+import { conversationIdFromUrn, sha256Id } from '../../domain/stable-id.js';
 import type { RawConversation } from '../../domain/schema.js';
 import { scrollUntilStable } from '../../browser/scrolling.js';
 import { domSelectors } from './selectors.js';
@@ -26,7 +26,7 @@ export async function collectConversationList(page: Page, limit: number): Promis
     const row = rows.nth(i);
     const href = canonicalLinkedInUrl(await row.getAttribute('href'));
     const urn = await row.evaluate((element) => element.closest('[data-entity-urn]')?.getAttribute('data-entity-urn') ?? null);
-    const id = extractUrnId(urn ?? undefined) ?? href?.match(/\/messaging\/thread\/([^/]+)/)?.[1] ?? sha256Id('conversation', [href]);
+    const id = conversationIdFromUrn(urn ?? undefined) ?? href?.match(/\/messaging\/thread\/([^/]+)/)?.[1] ?? sha256Id('conversation', [href]);
     if (seen.has(id)) continue;
     seen.add(id);
     let name: string | undefined;

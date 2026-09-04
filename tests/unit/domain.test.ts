@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeConversation, normalizeTimestamp, canonicalLinkedInUrl } from '../../src/domain/normalize.js';
 import { classifyRecruiter } from '../../src/domain/recruiter.js';
-import { sha256Id } from '../../src/domain/stable-id.js';
+import { conversationIdFromUrn, extractUrnId, personIdFromUrn, sha256Id } from '../../src/domain/stable-id.js';
 import { mergeExports } from '../../src/domain/merge.js';
 import type { LinkedInExport } from '../../src/domain/schema.js';
 
@@ -10,6 +10,14 @@ describe('normalization and stable IDs', () => {
     expect(normalizeTimestamp(1_725_000_000_000)).toBe('2024-08-30T06:40:00.000Z');
     expect(canonicalLinkedInUrl('https://linkedin.com/in/jane/?trk=x#y')).toBe('https://www.linkedin.com/in/jane');
     expect(sha256Id('x', [' žluťoučký '])).toBe(sha256Id('x', ['žluťoučký']));
+  });
+
+  it('parses typed and composite URNs without truncating identity', () => {
+    const composite = 'urn:li:msg_conversation:(urn:li:fsd_profile:ABC,2-XYZ)';
+    expect(extractUrnId(composite)).toBe('(urn:li:fsd_profile:ABC,2-XYZ)');
+    expect(conversationIdFromUrn(composite)).toBe('2-XYZ');
+    expect(personIdFromUrn('urn:li:fs_miniProfile:ABC')).toBe('ABC');
+    expect(personIdFromUrn(composite)).toBeUndefined();
   });
 
   it('creates a normalized direction and stable fallback ID', () => {
@@ -25,6 +33,16 @@ describe('normalization and stable IDs', () => {
     const messages = normalizeConversation(raw, 'me').messages;
     expect(messages).toHaveLength(2);
     expect(messages[1]?.id).toBe(`${messages[0]?.id}_2`);
+  });
+
+  it('fails closed for missing or unlinked sender identity', () => {
+    expect(() => normalizeConversation({ id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [{ text: 'ambiguous' }] }, 'me')).toThrow(/sender identity/);
+    expect(() => normalizeConversation({ id: 'c', participants: [{ id: 'other', name: 'Other' }], messages: [{ senderId: 'unlinked', senderName: 'Unknown', text: 'ambiguous' }] }, 'me')).toThrow(/cannot be proven/);
+  });
+
+  it('matches self across supported person URN namespaces', () => {
+    const conversation = normalizeConversation({ id: 'c', participants: [{ entityUrn: 'urn:li:fs_miniProfile:ABC', name: 'Me', isSelf: true }], messages: [{ senderId: personIdFromUrn('urn:li:fsd_profile:ABC')!, senderName: 'Me', text: 'sent' }] }, 'ABC');
+    expect(conversation.messages[0]?.direction).toBe('outbound');
   });
 });
 

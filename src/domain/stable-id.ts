@@ -14,16 +14,59 @@ function canonicalPart(value: unknown): unknown {
   return value ?? null;
 }
 
+export type LinkedInUrn = { entityType: string; value: string; urn: string };
+
+export function parseLinkedInUrn(value?: string): LinkedInUrn | undefined {
+  const urn = normalizeUrn(value);
+  if (!urn) return undefined;
+  const match = urn.match(/^urn:li:([\w-]+):(.+)$/i);
+  if (!match?.[1] || !match[2]) return undefined;
+  return { entityType: match[1], value: match[2], urn };
+}
+
+/** Returns the complete value component. Do not use it as a route ID. */
 export function extractUrnId(value?: string): string | undefined {
-  if (!value) return undefined;
-  const decoded = decodeURIComponent(value);
-  const match = decoded.match(/urn:li:[^:]+:([^?/,)]+)/i);
-  return match?.[1] ?? undefined;
+  return parseLinkedInUrn(value)?.value;
+}
+
+const PERSON_TYPES = /^(?:fsd_profile|fs_miniProfile|miniProfile|messagingParticipant|member|person)$/i;
+const CONVERSATION_TYPES = /^(?:msg_conversation|messagingThread|messagingConversation|conversation)$/i;
+const MESSAGE_TYPES = /^(?:msg_message|messagingMessage|messageEvent|event)$/i;
+
+function typedRouteId(value: string | undefined, expected: RegExp): string | undefined {
+  const parsed = parseLinkedInUrn(value);
+  if (!parsed || !expected.test(parsed.entityType)) return undefined;
+  if (!parsed.value.startsWith('(')) return safeRouteId(parsed.value);
+  const components = splitComposite(parsed.value);
+  return safeRouteId(components.at(-1));
+}
+
+function safeRouteId(value?: string): string | undefined {
+  const clean = value?.trim();
+  return clean && /^[\w.-]+$/u.test(clean) ? clean : undefined;
+}
+
+export function personIdFromUrn(value?: string): string | undefined { return typedRouteId(value, PERSON_TYPES); }
+export function conversationIdFromUrn(value?: string): string | undefined { return typedRouteId(value, CONVERSATION_TYPES); }
+export function messageIdFromUrn(value?: string): string | undefined { return typedRouteId(value, MESSAGE_TYPES); }
+
+export function splitComposite(value: string): string[] {
+  const body = value.startsWith('(') && value.endsWith(')') ? value.slice(1, -1) : value;
+  const output: string[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === '(') depth += 1;
+    else if (body[index] === ')') depth -= 1;
+    else if (body[index] === ',' && depth === 0) { output.push(body.slice(start, index).trim()); start = index + 1; }
+  }
+  output.push(body.slice(start).trim());
+  return output.filter(Boolean);
 }
 
 export function normalizeUrn(value?: string): string | undefined {
   if (!value) return undefined;
-  const candidate = decodeURIComponent(value.trim());
+  let candidate: string;
+  try { candidate = decodeURIComponent(value.trim()); } catch { return undefined; }
   return /^urn:li:[\w-]+:[^\s]+$/i.test(candidate) ? candidate : undefined;
 }
-

@@ -1,5 +1,5 @@
 import { cleanText } from '../../domain/normalize.js';
-import { extractUrnId, normalizeUrn } from '../../domain/stable-id.js';
+import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn } from '../../domain/stable-id.js';
 import type { RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -50,7 +50,7 @@ function participantFrom(value: unknown, index: Map<string, JsonRecord>): RawPar
   const name = cleanText(stringAt(profile, 'name', 'fullName', 'title')) ?? cleanText([first, last].filter(Boolean).join(' '));
   const profileUrl = stringAt(profile, 'publicIdentifier') ? `https://www.linkedin.com/in/${stringAt(profile, 'publicIdentifier')}` : stringAt(profile, 'profileUrl', 'navigationUrl');
   const headline = cleanText(stringAt(profile, 'headline', 'occupation'));
-  const id = extractUrnId(entityUrn) ?? cleanText(stringAt(profile, 'id', 'plainId'));
+  const id = personIdFromUrn(entityUrn) ?? cleanText(stringAt(profile, 'id', 'plainId'));
   if (!id && !entityUrn && !name && !profileUrl) return undefined;
   return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(profileUrl ? { profileUrl } : {}), ...(headline ? { headline } : {}) };
 }
@@ -75,9 +75,9 @@ function messageFrom(obj: JsonRecord, conversationUrn?: string): RawMessage | un
   const senderProfile = senderObj ? profileFrom(senderObj) : undefined;
   const senderName = senderProfile ? cleanText(stringAt(senderProfile, 'name', 'fullName')) ?? cleanText([stringAt(senderProfile, 'firstName'), stringAt(senderProfile, 'lastName')].filter(Boolean).join(' ')) : undefined;
   const senderProfileUrl = senderProfile && stringAt(senderProfile, 'publicIdentifier') ? `https://www.linkedin.com/in/${stringAt(senderProfile, 'publicIdentifier')}` : undefined;
-  const id = extractUrnId(entityUrn) ?? cleanText(stringAt(obj, 'id'));
-  const conversationId = extractUrnId(urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn);
-  const senderId = extractUrnId(senderUrn);
+  const id = messageIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
+  const conversationId = conversationIdFromUrn(urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn);
+  const senderId = personIdFromUrn(senderUrn);
   const messageType = cleanText(stringAt(obj, 'subtype', 'eventType', 'type'));
   return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}) };
 }
@@ -93,7 +93,7 @@ function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>): RawC
   const messageValues = childrenFrom(obj, 'events', 'messages', 'conversationEvents');
   const looksConversation = /(?:messagingThread|conversation)/i.test(entityUrn ?? '') || (participantValues.length > 0 && ('events' in obj || 'messages' in obj));
   if (!looksConversation) return undefined;
-  const id = extractUrnId(entityUrn) ?? cleanText(stringAt(obj, 'id'));
+  const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
   const messages = messageValues.map((m) => typeof m === 'string' ? index.get(m) : m).filter(record).map((m) => messageFrom(m, entityUrn)).filter((m): m is RawMessage => Boolean(m));
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
@@ -140,7 +140,7 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       const entityUrn = urnAt(profile, 'entityUrn', 'objectUrn');
       const name = cleanText(stringAt(profile, 'name')) ?? cleanText([stringAt(profile, 'firstName'), stringAt(profile, 'lastName')].filter(Boolean).join(' '));
       const publicIdentifier = stringAt(profile, 'publicIdentifier');
-      const id = extractUrnId(entityUrn) ?? stringAt(profile, 'plainId');
+      const id = personIdFromUrn(entityUrn) ?? stringAt(profile, 'plainId');
       account = { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(publicIdentifier ? { profileUrl: `https://www.linkedin.com/in/${publicIdentifier}` } : {}) };
     }
   }
