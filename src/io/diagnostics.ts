@@ -1,7 +1,8 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { redact } from '../logger.js';
+import type { Page } from 'playwright';
 
 export type DiagnosticsManifest = {
   runId: string;
@@ -27,3 +28,17 @@ export async function saveManifest(baseDir: string, manifest: DiagnosticsManifes
   return destination;
 }
 
+export async function saveContentDiagnostics(page: Page, baseDir: string, runId: string): Promise<void> {
+  const directory = path.join(baseDir, runId);
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({ path: path.join(directory, 'page.png'), fullPage: false });
+  const sanitized = await page.evaluate(() => {
+    const clone = document.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('script, noscript, input, textarea, meta[http-equiv], meta[name*="token" i]').forEach((node) => node.remove());
+    clone.querySelectorAll('*').forEach((node) => {
+      for (const attribute of [...node.attributes]) if (/^(value|nonce|integrity)$/i.test(attribute.name) || /(csrf|token|session|cookie)/i.test(attribute.name)) node.removeAttribute(attribute.name);
+    });
+    return clone.outerHTML.slice(0, 2_000_000);
+  });
+  await writeFile(path.join(directory, 'page.sanitized.html'), sanitized, 'utf8');
+}
