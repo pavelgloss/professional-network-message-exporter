@@ -382,3 +382,105 @@ nelze považovat za produkčně spolehlivý kvůli RR-02 až RR-04; zejména fal
   0 startup HTTP/POST/WebSocket požadavků před guardem.
 - `git diff --check`: **PASS** i po doplnění této sekce. Re-review nepoužil LinkedIn
   credentials, přihlášenou session ani thread-open fallback.
+
+---
+
+## Třetí re-review opraveného HEAD `074c096`
+
+### Verdikt třetího re-review
+
+**RR-01 je uzavřený a nebyl nalezen žádný zbývající Critical ani High problém,
+který by umožňoval zápis na LinkedIn.** Export nově vzniká ve fresh ephemeral
+contextu pouze ze serializovaného `storageState`; service worker z persistentního
+profilu se nepřenese, nové workery jsou blokované a HTTP POST i WebSocket jsou
+zastavené před serverem.
+
+Projekt ale ještě není připravený označit za hotový ani považovat skutečný export za
+úplný. **RR-02 zůstává otevřený jako High pro integritu dat:** neparsovatelný
+standalone event na kořeni REST `elements` se nezapočítá jako parser miss a běh může
+zapsat neúplná data do hlavního JSON. Proto zatím nedoporučuji vyžadovat reálný login;
+nejprve je vhodné opravit TR-01, aby se uživatelův první běh nemohl tvářit jako úplný.
+Po této opravě je z hlediska account-side mutací rozumné vyžádat
+`npm.cmd run login` a spustit pouze network-only `npm.cmd run export -- --limit 100`
+bez `--allow-thread-open`.
+
+### Zbývající High nález
+
+#### TR-01 / RR-02 — HIGH — Standalone REST event může zmizet bez parser miss a historie zůstane `complete`
+
+- **Soubor/řádky:** `src/linkedin/network/response-parser.ts:103-127`,
+  `src/linkedin/network/response-parser.ts:151-157`,
+  `src/linkedin/network/response-parser.ts:177-190`,
+  `src/linkedin/network/response-parser.ts:193-214`,
+  `src/linkedin/exporter.ts:98-125`
+- **Problém:** opravené počítání `parserMisses` existuje pouze uvnitř
+  `conversationFrom`, tedy pro `events/messages` v conversation wrapperu. REST
+  obálka může mít message eventy přímo v kořenovém `elements`. Ty parser zpracuje
+  jednotlivě přes `nestedMessages`; úspěšný event vytvoří syntetickou conversation,
+  ale neznámý/attachment-only event se beze stopy zahodí. Následné
+  `applyRestEnvelopeHistoryEvidence` vidí u syntetické conversation nula misses a
+  z envelope `paging` nastaví `historyComplete: true`.
+- **Nezávislá reprodukce:** lokální anonymní payload obsahoval v kořenovém
+  `elements` dva eventy stejné conversation: první s podporovaným textem a druhý s
+  neznámým `unsupportedCard`; `paging={start:0,count:2,total:2,hasNextPage:false}`.
+  Aktuální HEAD vrátil jen ID `KNOWN`, ale současně
+  `sourceMetadata.historyComplete === true`, bez `parserMisses`, a
+  `parsed.misses === 0`. Reprodukční test očekávající právě tento chybný stav prošel.
+- **Dopad:** `manifest.counts.parserMisses` zůstane 0, `passiveHistoryComplete` může
+  být true a `partial` false. `persistExportResult` pak nepoužije `.partial`, ale
+  sloučí neúplný výsledek do hlavního `messages.json`. Ochrana posledního úplného
+  exportu je tak stále obejitelná.
+- **Doporučení:** při zpracování history REST resource evidovat všechny kandidátní
+  eventy v konkrétní envelope ještě před filtrováním. Každý event, který vypadá jako
+  message/event, ale `messageFrom` jej nezachová, musí zvýšit resource i conversation
+  parser miss a zneplatnit příslušný history evidence page. Přidat trvalou fixture s
+  top-level validním a neznámým eventem a testovat `misses > 0`,
+  `historyComplete === false` a následné uložení pouze do `.partial` s exit code 5.
+
+### Stav RR-01 až RR-04 na `074c096`
+
+| Nález | Stav | Důkaz / poznámka |
+| --- | --- | --- |
+| RR-01 persistent service worker | **Uzavřeno** | Do fresh persistent profilu byl skutečně nainstalován aktivní worker; po uložení jen `storageState` a otevření přes aktuální export platilo 0 workers, 0 server POST, 0 WebSocket upgrades, `blockedRequests=1` a `blockedWebSockets=1`. |
+| RR-02 parser/completion/cursor | **Částečně otevřeno — High TR-01** | Miss uvnitř conversation wrapperu správně vynutí incomplete; dvě REST stránky dají per-conversation complete a existující Rest.li `(cursor:old,count:20)` se přepíše. Standalone miss ale selže podle TR-01. |
+| RR-03 fallback/alias/schema | **Uzavřeno pro reprodukované scénáře** | Disjunktní pages 2+2 dávají 4, opakovaný snapshot 2; kombinace ID+URN / pouze URN / pouze ID dává jednu raw message. Schema odmítne duplicate conversation/participant/message IDs, mismatch conversation reference i neexistující sender reference. |
+| RR-04 name-only DOM participant | **Uzavřeno** | Pokud existuje autoritativní network participant, name-only DOM participant se nepřidá. |
+
+### Ověření při třetím re-review
+
+- `npm.cmd run check`: **PASS** — 9 test files / 42 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Persistent-SW seed -> storageState -> ephemeral export: **PASS** — worker byl v
+  seed profilu aktivní, v exportu 0 workers a lokální server obdržel 0 POST i 0
+  WebSocket upgrades. Storage state přenesl testovací local storage, nikoliv worker.
+- HTTP/WebSocket guard a lokální mutation canary: **PASS** — 1 POST a 1 WebSocket
+  byly zablokované; Send/Delete canary se neaktivovala. Virtualizovaná fixture
+  akumulovala 6/6 conversations a 6/6 messages.
+- Wrapped parser miss: **PASS** — neznámý event znamená `historyComplete:false`,
+  `parserMisses:1`; standalone parser miss: **FAIL / HIGH** podle TR-01.
+- REST history/pagination: **PASS** pro dvě stránky a per-conversation completion;
+  **PASS** pro náhradu existujícího Rest.li cursoru. Zbytkové fail-closed omezení:
+  první Rest.li template `variables=(count:20)` bez již přítomného cursor key neumí
+  pozorovaný `endCursor` vložit a nevrátí next URL; podle dostupných fixtures to
+  vede spíše k partial než k account-side mutaci, ale reálné obálky je nutné ověřit.
+- Raw merge/schema: **PASS** — 2+2 -> 4, repeated 2, all-alias -> 1; duplicate
+  participant a broken sender/conversation reference jsou odmítnuty.
+- Fresh missing-state CLI smoke s vlastními dočasnými cestami: **PASS** — přes
+  `npm.cmd` se zachoval `--limit 17`, proces skončil `AUTH_REQUIRED`/exit 3 a
+  nevznikl main, `.partial`, manifest ani browser request. Neznámý flag skončil
+  `CONFIG_INVALID`/exit 2 před browser launch.
+- Partial persistence/exit z integračního testu: **PASS** — partial jde vedle main a
+  CLI vrací 5. TR-01 je však cesta, která partial nesprávně nenastaví.
+- Git/secret kontrola: trackovaný je pouze `data/linkedin/.gitkeep`; `.auth` storage
+  state, hlavní export, `.partial`, diagnostics a `.env` jsou ignorované. Review
+  nečetlo ani nepoužilo existující `.auth`, credentials nebo LinkedIn session.
+
+### Zbytková rizika
+
+Bez přihlášené session nebyly a neměly být ověřeny současné produkční LinkedIn
+REST/Voyager/GraphQL obálky, reálných 100 konverzací, plná historie ani opakovaný
+idempotentní produkční běh. Windows `mode: 0o600` také není náhradou za explicitní
+NTFS ACL a uživatelský custom `--state-file` mimo `.auth/` nemusí být automaticky
+gitignored; výchozí dokumentovaná cesta je ignorovaná správně. DOM thread fallback
+zůstává pouze výslovný opt-in, protože samotné otevření vlákna může změnit read/unread
+stav.
