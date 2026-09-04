@@ -29,4 +29,14 @@ describe('DOM fallback against local fixture', () => {
     await page.setContent('<a class="global-nav__primary-link-me-menu-trigger" href="https://www.linkedin.com/feed/" aria-label="Me: Account"></a>');
     expect((await readAccountFromDom(page)).profileUrl).toBeUndefined();
   });
+
+  it('accumulates virtualized list rows and thread messages across viewports', async () => {
+    await page.goto(new URL('../fixtures/dom/virtualized.html', import.meta.url).toString());
+    const list = await collectConversationList(page, 6, { delayMs: 30, timeoutMs: 5_000 });
+    expect(list.conversations.map((conversation) => conversation.id)).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
+    expect(list.complete).toBe(true);
+    const thread = await extractThreadFromPage(page, 'virtual', 'https://www.linkedin.com/in/account', 'self', { delayMs: 30, timeoutMs: 5_000 });
+    expect(thread.messages.map((message) => message.id)).toEqual(['vm1', 'vm2', 'vm3', 'vm4', 'vm5', 'vm6']);
+    expect(thread.complete).toBe(true);
+  });
 });

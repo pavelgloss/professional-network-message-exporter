@@ -1,0 +1,52 @@
+<!doctype html>
+<html><body>
+  <main>
+    <ul id="conversations" aria-label="Conversation list" role="list" style="height:100px;overflow:auto;margin:0;padding:0"></ul>
+    <ul id="messages" aria-label="Message history" role="list" style="height:100px;overflow:auto;margin:0;padding:0"></ul>
+  </main>
+  <script>
+    const conversationBatches = [
+      [['v1', 'Jane 1'], ['v2', 'Jane 2']],
+      [['v3', 'Jane 3'], ['v4', 'Jane 4']],
+      [['v5', 'Jane 5'], ['v6', 'Jane 6']]
+    ];
+    const conversationList = document.querySelector('#conversations');
+    let conversationBatch = 0;
+    let conversationSuppress = false;
+    function renderConversations() {
+      conversationList.innerHTML = conversationBatches[conversationBatch].map(([id, name]) => `<li style="height:70px"><a href="https://www.linkedin.com/messaging/thread/${id}/"><span data-anonymize="person-name">${name}</span></a></li>`).join('');
+    }
+    conversationList.addEventListener('scroll', () => {
+      if (conversationSuppress || conversationList.scrollTop <= 0 || conversationBatch >= conversationBatches.length - 1) return;
+      conversationBatch += 1;
+      renderConversations();
+      conversationSuppress = true;
+      conversationList.scrollTop = 0;
+      setTimeout(() => { conversationSuppress = false; }, 0);
+    });
+    renderConversations();
+
+    const messageBatches = [
+      [['vm1', 'old one'], ['vm2', 'old two']],
+      [['vm3', 'middle one'], ['vm4', 'middle two']],
+      [['vm5', 'new one'], ['vm6', 'new two']]
+    ];
+    const messageList = document.querySelector('#messages');
+    let messageBatch = messageBatches.length - 1;
+    let messageSuppress = false;
+    function renderMessages() {
+      messageList.innerHTML = messageBatches[messageBatch].map(([id, text]) => `<li style="height:70px" data-event-urn="urn:li:messagingMessage:${id}"><a href="https://www.linkedin.com/in/jane-example">Jane</a><time datetime="2026-01-0${Number(id.slice(2))}T00:00:00Z"></time><p data-testid="message-body">${text}</p></li>`).join('');
+    }
+    messageList.addEventListener('scroll', () => {
+      if (messageSuppress || messageList.scrollTop > 0 || messageBatch <= 0) return;
+      messageBatch -= 1;
+      renderMessages();
+      messageSuppress = true;
+      messageList.scrollTop = messageList.scrollHeight;
+      setTimeout(() => { messageSuppress = false; }, 0);
+    });
+    renderMessages();
+    messageList.scrollTop = messageList.scrollHeight;
+  </script>
+</body></html>
+

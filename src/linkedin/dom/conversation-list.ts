@@ -2,33 +2,23 @@ import type { Locator, Page } from 'playwright';
 import { canonicalLinkedInUrl, cleanText } from '../../domain/normalize.js';
 import { conversationIdFromUrn, sha256Id } from '../../domain/stable-id.js';
 import type { RawConversation } from '../../domain/schema.js';
-import { scrollUntilStable } from '../../browser/scrolling.js';
 import { domSelectors } from './selectors.js';
 
+type DomLoopOptions = { maxIterations?: number; stagnationLimit?: number; delayMs?: number; timeoutMs?: number };
+export type ConversationListResult = { conversations: RawConversation[]; strategies: string[]; scrollReason: 'limit' | 'end' | 'stagnation' | 'timeout'; complete: boolean };
+
 async function firstAvailable(scope: Page | Locator, selectors: readonly string[]): Promise<{ locator: Locator; strategy: string } | undefined> {
-  for (const selector of selectors) {
-    const locator = scope.locator(selector);
-    if (await locator.count()) return { locator, strategy: selector };
-  }
+  for (const selector of selectors) { const locator = scope.locator(selector); if (await locator.count()) return { locator, strategy: selector }; }
   return undefined;
 }
 
-export async function collectConversationList(page: Page, limit: number): Promise<{ conversations: RawConversation[]; strategies: string[]; scrollReason: string }> {
-  const containerResult = await firstAvailable(page, domSelectors.conversationContainers);
-  const container = containerResult?.locator.first() ?? page.locator('body');
-  const rowResult = await firstAvailable(container, domSelectors.conversationRows) ?? await firstAvailable(page, domSelectors.conversationRows);
-  if (!rowResult) return { conversations: [], strategies: [], scrollReason: 'no-list-selector' };
-  const scroll = await scrollUntilStable(container, async () => rowResult.locator.count(), { target: limit, maxIterations: 80, timeoutMs: 90_000, delayMs: 600 });
-  const rows = rowResult.locator;
+async function parseVisibleRows(rows: Locator): Promise<RawConversation[]> {
   const conversations: RawConversation[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < Math.min(await rows.count(), limit); i += 1) {
-    const row = rows.nth(i);
+  for (let index = 0; index < await rows.count(); index += 1) {
+    const row = rows.nth(index);
     const href = canonicalLinkedInUrl(await row.getAttribute('href'));
     const urn = await row.evaluate((element) => element.closest('[data-entity-urn]')?.getAttribute('data-entity-urn') ?? null);
-    const id = conversationIdFromUrn(urn ?? undefined) ?? href?.match(/\/messaging\/thread\/([^/]+)/)?.[1] ?? sha256Id('conversation', [href]);
-    if (seen.has(id)) continue;
-    seen.add(id);
+    const id = conversationIdFromUrn(urn ?? undefined) ?? href?.match(/\/messaging\/thread\/([^/]+)/)?.[1] ?? sha256Id('conversation', [href, cleanText(await row.textContent())]);
     let name: string | undefined;
     for (const selector of domSelectors.participantName) {
       const candidate = row.locator(selector).first();
@@ -36,10 +26,37 @@ export async function collectConversationList(page: Page, limit: number): Promis
       const value = cleanText(await candidate.textContent());
       if (value) { name = value; break; }
     }
-    let lastActivityAt: string | undefined;
     const time = row.locator(domSelectors.timestamp.join(',')).first();
-    if (await time.count()) lastActivityAt = cleanText(await time.getAttribute('datetime'));
+    const lastActivityAt = await time.count() ? cleanText(await time.getAttribute('datetime')) : undefined;
     conversations.push({ id, ...(urn ? { entityUrn: urn } : {}), ...(href ? { url: href } : {}), ...(lastActivityAt ? { lastActivityAt } : {}), participants: name ? [{ name }] : [], messages: [] });
   }
-  return { conversations, strategies: [containerResult?.strategy ?? 'body', rowResult.strategy], scrollReason: scroll.reason };
+  return conversations;
+}
+
+export async function collectConversationList(page: Page, limit: number, options: DomLoopOptions = {}): Promise<ConversationListResult> {
+  const containerResult = await firstAvailable(page, domSelectors.conversationContainers);
+  const container = containerResult?.locator.first() ?? page.locator('body');
+  const rowResult = await firstAvailable(container, domSelectors.conversationRows) ?? await firstAvailable(page, domSelectors.conversationRows);
+  if (!rowResult) return { conversations: [], strategies: [], scrollReason: 'stagnation', complete: false };
+  const accumulated = new Map<string, RawConversation>();
+  const startedAt = Date.now();
+  let stagnant = 0;
+  const maxIterations = options.maxIterations ?? 80;
+  const stagnationLimit = options.stagnationLimit ?? 4;
+  let reason: ConversationListResult['scrollReason'] = 'timeout';
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    const before = accumulated.size;
+    for (const conversation of await parseVisibleRows(rowResult.locator)) accumulated.set(conversation.id ?? conversation.url!, conversation);
+    stagnant = accumulated.size > before ? 0 : stagnant + 1;
+    if (accumulated.size >= limit) { reason = 'limit'; break; }
+    if (Date.now() - startedAt >= (options.timeoutMs ?? 90_000)) { reason = 'timeout'; break; }
+    const state = await container.evaluate((element) => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight }));
+    const atBottom = state.top + state.client >= state.height - 2;
+    if (atBottom && stagnant >= 2) { reason = 'end'; break; }
+    if (stagnant >= stagnationLimit) { reason = 'stagnation'; break; }
+    await container.evaluate((element) => { element.scrollTop = Math.min(element.scrollHeight, element.scrollTop + Math.max(element.clientHeight * 0.8, 200)); });
+    await page.waitForTimeout(options.delayMs ?? 600);
+  }
+  const conversations = [...accumulated.values()].slice(0, limit);
+  return { conversations, strategies: [containerResult?.strategy ?? 'body', rowResult.strategy], scrollReason: reason, complete: Boolean(containerResult) && (reason === 'limit' || reason === 'end') };
 }
