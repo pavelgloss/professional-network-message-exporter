@@ -40,10 +40,11 @@ vlákna neotevírá a může být označen `partial`. Po vědomém přijetí riz
 zobrazení threadu může změnit serverový stav read/unread, použijte:
 
 ```powershell
-npm run export -- --limit 100 --allow-thread-open
+npm run export:threads
 ```
 
 Tento opt-in nepovoluje odesílání ani jiné mutace; request guard zůstává aktivní.
+Limit lze změnit proměnnou `LINKEDIN_LIMIT` v lokálním `.env`.
 LinkedIn může měnit neveřejné endpointy/DOM. Striktní blokace POST může zablokovat i
 read-only GraphQL POST, protože jej bez stabilního veřejného kontraktu nelze bezpečně
 odlišit od mutace; v takovém případě export raději skončí neúplný.
@@ -53,4 +54,3 @@ Kontrola projektu:
 ```powershell
 npm run check
 ```
-

@@ -36,7 +36,12 @@ export async function saveContentDiagnostics(page: Page, baseDir: string, runId:
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll('script, noscript, input, textarea, meta[http-equiv], meta[name*="token" i]').forEach((node) => node.remove());
     clone.querySelectorAll('*').forEach((node) => {
-      for (const attribute of [...node.attributes]) if (/^(value|nonce|integrity)$/i.test(attribute.name) || /(csrf|token|session|cookie)/i.test(attribute.name)) node.removeAttribute(attribute.name);
+      for (const attribute of [...node.attributes]) {
+        if (/^(value|nonce|integrity|on.*)$/i.test(attribute.name) || /(csrf|token|session|cookie)/i.test(attribute.name)) node.removeAttribute(attribute.name);
+        else if (/^(href|src|action)$/i.test(attribute.name)) {
+          try { const url = new URL(attribute.value, document.baseURI); url.search = ''; url.hash = ''; node.setAttribute(attribute.name, url.toString()); } catch { node.removeAttribute(attribute.name); }
+        }
+      }
     });
     return clone.outerHTML.slice(0, 2_000_000);
   });

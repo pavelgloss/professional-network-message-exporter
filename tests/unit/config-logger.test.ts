@@ -17,10 +17,9 @@ describe('config', () => {
 
 describe('redaction', () => {
   it('recursively removes secrets and URL queries', () => {
-    const output = JSON.stringify(redact({ cookie: 'canary', nested: { authorization: 'Bearer secret', url: 'https://www.linkedin.com/voyager/api?q=secret' } }));
+    const output = JSON.stringify(redact({ cookie: 'canary', nested: { authorization: 'Bearer secret', url: 'https://www.linkedin.com/voyager/api?q=secret', message: 'failed at https://www.linkedin.com/path?q=secret' } }));
     expect(output).not.toContain('canary');
     expect(output).not.toContain('secret');
     expect(output).not.toContain('?');
   });
 });
-

@@ -9,6 +9,7 @@
   "scripts": {
     "login": "tsx src/cli.ts login",
     "export": "tsx src/cli.ts export",
+    "export:threads": "tsx src/cli.ts export --allow-thread-open",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

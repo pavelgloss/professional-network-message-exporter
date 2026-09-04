@@ -5,6 +5,7 @@ import type { Logger } from '../logger.js';
 export type PolicyDecision = { allow: boolean; reason: string; origin?: string; pathname?: string };
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const forbiddenPaths = /\/(logout|checkpoint\/logout|settings\/.*(?:delete|close)|voyager\/api\/.*(?:delete|archive|send|react|typing|markRead|markUnread))/i;
+const forbiddenQuery = /(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction)/i;
 
 export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   let url: URL;
@@ -13,7 +14,7 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   if (!['http:', 'https:', 'data:', 'blob:'].includes(url.protocol)) return { allow: false, reason: 'unsupported-protocol', ...details };
   if (url.protocol === 'data:' || url.protocol === 'blob:') return { allow: true, reason: 'local-resource', ...details };
   if (!safeMethods.has(method.toUpperCase())) return { allow: false, reason: 'non-read-http-method', ...details };
-  if (/(^|\.)linkedin\.com$/i.test(url.hostname) && forbiddenPaths.test(url.pathname)) return { allow: false, reason: 'known-mutating-path', ...details };
+  if (/(^|\.)linkedin\.com$/i.test(url.hostname) && (forbiddenPaths.test(url.pathname) || forbiddenQuery.test(url.search))) return { allow: false, reason: 'known-mutating-path', ...details };
   return { allow: true, reason: 'read-only-request', ...details };
 }
 
@@ -33,4 +34,3 @@ export async function installRequestGuard(context: BrowserContext, manifest: Dia
     await route.continue();
   });
 }
-
