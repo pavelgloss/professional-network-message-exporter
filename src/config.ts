@@ -31,11 +31,32 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
   return parsed;
 }
 
-function valueAfter(args: string[], name: string): string | undefined {
-  const equals = args.find((a) => a.startsWith(`${name}=`));
-  if (equals) return equals.slice(name.length + 1);
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+type ParsedArgs = { values: Map<string, string>; flags: Set<string> };
+function parseArguments(args: string[], command: Command): ParsedArgs {
+  const valueOptions = new Set(command === 'login' ? ['--profile-dir', '--timeout-ms'] : ['--profile-dir', '--output', '--limit', '--timeout-ms']);
+  const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--allow-thread-open', '--diagnostics-content']);
+  const parsed: ParsedArgs = { values: new Map(), flags: new Set() };
+  for (let index = 1; index < args.length; index += 1) {
+    const argument = args[index]!;
+    const equals = argument.indexOf('=');
+    const name = equals >= 0 ? argument.slice(0, equals) : argument;
+    if (booleanOptions.has(name)) {
+      if (equals >= 0) throw new AppError('CONFIG_INVALID', `Boolean option does not accept a value: ${name}`, 2);
+      if (parsed.flags.has(name)) throw new AppError('CONFIG_INVALID', `Duplicate option: ${name}`, 2);
+      parsed.flags.add(name);
+      continue;
+    }
+    if (valueOptions.has(name)) {
+      if (parsed.values.has(name)) throw new AppError('CONFIG_INVALID', `Duplicate option: ${name}`, 2);
+      const value = equals >= 0 ? argument.slice(equals + 1) : args[++index];
+      if (!value || value.startsWith('--')) throw new AppError('CONFIG_INVALID', `Missing value for option: ${name}`, 2);
+      parsed.values.set(name, value);
+      continue;
+    }
+    if (argument.startsWith('--')) throw new AppError('CONFIG_INVALID', `Unknown option: ${name}`, 2);
+    throw new AppError('CONFIG_INVALID', `Unexpected argument: ${argument}`, 2);
+  }
+  return parsed;
 }
 
 function safePath(value: string, cwd: string, label: string): string {
@@ -48,10 +69,11 @@ function safePath(value: string, cwd: string, label: string): string {
 export function parseConfig(args = process.argv.slice(2), env = process.env, cwd = process.cwd()): AppConfig {
   const command = args[0];
   if (command !== 'login' && command !== 'export') throw new AppError('CONFIG_INVALID', 'Usage: npm run login | npm run export -- [options]', 2);
-  const profileDir = safePath(valueAfter(args, '--profile-dir') ?? env.LINKEDIN_PROFILE_DIR ?? '.auth/linkedin-chromium', cwd, 'profile directory');
-  const outputPath = safePath(valueAfter(args, '--output') ?? env.LINKEDIN_OUTPUT ?? 'data/linkedin/messages.json', cwd, 'output path');
-  const limit = int(valueAfter(args, '--limit') ?? env.LINKEDIN_LIMIT, 100, 1, 500, 'limit');
-  const timeoutMs = int(valueAfter(args, '--timeout-ms') ?? env.LINKEDIN_TIMEOUT_MS, 30_000, 5_000, 300_000, 'timeout');
+  const parsed = parseArguments(args, command);
+  const profileDir = safePath(parsed.values.get('--profile-dir') ?? env.LINKEDIN_PROFILE_DIR ?? '.auth/linkedin-chromium', cwd, 'profile directory');
+  const outputPath = safePath(parsed.values.get('--output') ?? env.LINKEDIN_OUTPUT ?? 'data/linkedin/messages.json', cwd, 'output path');
+  const limit = int(parsed.values.get('--limit') ?? env.LINKEDIN_LIMIT, 100, 1, 500, 'limit');
+  const timeoutMs = int(parsed.values.get('--timeout-ms') ?? env.LINKEDIN_TIMEOUT_MS, 30_000, 5_000, 300_000, 'timeout');
   return {
     command,
     profileDir,
@@ -59,9 +81,8 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
     diagnosticsDir: path.join(path.dirname(outputPath), 'diagnostics'),
     limit,
     timeoutMs,
-    headless: args.includes('--headed') ? false : bool(env.LINKEDIN_HEADLESS, true),
-    allowThreadOpen: args.includes('--allow-thread-open'),
-    diagnosticsContent: args.includes('--diagnostics-content'),
+    headless: parsed.flags.has('--headed') ? false : bool(env.LINKEDIN_HEADLESS, true),
+    allowThreadOpen: parsed.flags.has('--allow-thread-open'),
+    diagnosticsContent: parsed.flags.has('--diagnostics-content'),
   };
 }
-

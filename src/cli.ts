@@ -15,7 +15,10 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     else {
       if (config.allowThreadOpen) logger.warn('read-state-warning', { message: 'Thread opening is enabled and may change LinkedIn read/unread state. No sends, deletes, reactions, archives, or profile changes are permitted.' });
       const result = await exportMessages(config, logger);
-      if (result.stats.partial) logger.warn('partial-export', { warnings: result.stats.warnings });
+      if (result.stats.partial) {
+        logger.error('PARTIAL_EXPORT', { message: `Coverage is incomplete. Candidate saved to ${config.outputPath}.partial; the last complete export was not changed.`, warnings: result.stats.warnings });
+        return 5;
+      }
     }
     return 0;
   } catch (error) {

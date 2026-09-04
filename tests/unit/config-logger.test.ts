@@ -13,6 +13,12 @@ describe('config', () => {
   it('rejects dangerous roots', () => {
     expect(() => parseConfig(['export', '--output', 'C:\\'], {}, 'C:\\workspace')).toThrow(/root/);
   });
+  it('rejects unknown, orphaned, duplicate, and missing arguments', () => {
+    expect(() => parseConfig(['export', '--unknown'], {}, 'C:\\workspace')).toThrow(/Unknown option/);
+    expect(() => parseConfig(['export', '17'], {}, 'C:\\workspace')).toThrow(/Unexpected argument/);
+    expect(() => parseConfig(['export', '--limit'], {}, 'C:\\workspace')).toThrow(/Missing value/);
+    expect(() => parseConfig(['export', '--limit', '1', '--limit=2'], {}, 'C:\\workspace')).toThrow(/Duplicate option/);
+  });
 });
 
 describe('redaction', () => {
