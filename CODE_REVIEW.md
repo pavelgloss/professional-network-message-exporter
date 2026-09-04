@@ -228,3 +228,157 @@ ověřeno načtení skutečného Messaging inboxu, reálné současné LinkedIn 
 takový autentizovaný run nemá provádět před opravou WebSocket guardu. Současné testy
 navíc neověřují runtime redirect guard, již existující service worker, skutečný
 partial/failure overwrite, GraphQL/cursor pagination ani virtualizovaný DOM.
+
+---
+
+## Re-review opraveného HEAD `4cf97d9`
+
+### Verdikt re-review
+
+**Zatím není bezpečné vyžádat jednorázový login ani spustit autentizovaný export.**
+Oprava WebSocket guardu funguje, ale re-review prokázal kritický bypass přes service
+worker uložený v persistentním profilu. To je přímo relevantní: login režim nyní
+service workery povoluje a stejný profil se následně otevírá pro export.
+
+Po odstranění RR-01 bude z hlediska síťových mutací rozumné provést pouze
+**network-only diagnostický export bez `--allow-thread-open`**. Jeho JSON ale zatím
+nelze považovat za produkčně spolehlivý kvůli RR-02 až RR-04; zejména falešné
+`historyComplete` může obejít novou ochranu partial candidate.
+
+### Nové a přetrvávající nálezy
+
+#### RR-01 — CRITICAL — Persistovaný service worker obchází HTTP guard a odešle POST
+
+- **Soubor/řádky:** `src/browser/context.ts:8-23`, `src/auth/login.ts:7-11`,
+  `src/browser/request-guard.ts:21-43`
+- **Problém:** `serviceWorkers: 'block'` zabrání novým registracím, ale v persistentním
+  `userDataDir` nezneškodní již uložený service worker. `context.route` požadavky
+  převzaté service workerem nevidí. Login context naopak používá
+  `serviceWorkers: 'allow'`, takže si LinkedIn může worker během legitimního loginu
+  uložit právě do profilu později použitého exportem.
+- **Ověření:** v novém dočasném persistent profilu byl v login-like contextu
+  zaregistrován lokální service worker. Po zavření a opětovném otevření téhož profilu
+  přes aktuální `launchContext(..., 'export')` platilo:
+  `context.serviceWorkers().length === 1`; `fetch('/mutate', {method:'POST'})`
+  skončil úspěšně a lokální server přijal jeden POST. Request guard jej nezablokoval
+  ani nezapočítal. Test nepoužil LinkedIn ani credentials.
+- **Dopad:** nejdůležitější read-only invariant je znovu obejitelný a manifest může
+  hlásit nula blokovaných mutací, přestože request opustil prohlížeč. Samotné zavření
+  startup stránky ani WebSocket route tento kanál neřeší.
+- **Doporučení:** export nesmí startovat z browser contextu, ve kterém může být
+  persistovaný worker. Bezpečná varianta je po ručním loginu uchovat pouze ignorovaný
+  storage state/cookies a každý export spouštět v novém ephemeral contextu se
+  service workers blokovanými před vznikem první stránky. Alternativně vytvořit
+  exportní kopii profilu bez SW storage ještě před spuštěním Chromium. Login režim
+  má také service workery blokovat. Pro staré profily přidat fail-closed preflight;
+  pouhé `context.serviceWorkers().length` až po launch není úplná prevence, protože
+  worker už mohl při startu provést background práci. Přidat přesně výše popsaný
+  persistent-profile integration test a neprovádět reálný login před jeho průchodem.
+
+#### RR-02 — HIGH — Parser může označit historii za úplnou, i když event ztratil
+
+- **Soubor/řádky:** `src/linkedin/network/response-parser.ts:100-114`,
+  `src/linkedin/network/response-parser.ts:126-173`,
+  `src/linkedin/exporter.ts:98-125`, `src/linkedin/network/pagination.ts:10-30`
+- **Problém:** `historyComplete` používá počet raw `messageValues` a
+  `pageInfo.hasNextPage === false`, ale neověřuje, že se každý raw event skutečně
+  převedl na validní message. Proto i částečně neznámý formát dostane příznak úplnosti.
+  Naopak u REST/Voyager paging na úrovni envelope se dosažení poslední stránky vůbec
+  nepropíše ke konkrétní conversation; test historie ověřuje jen IDs, nikoliv
+  completion. Cursor derivace navíc umí pouze JSON v parametru `variables`, ne běžný
+  Rest.li tvar `(cursor:old,count:20)`.
+- **Ověření:** anonymní payload se dvěma eventy (`m1` podporovaný, `m2` s neznámým
+  content tvarem) vrátil pouze `m1`, ale současně
+  `sourceMetadata.historyComplete === true`. Samostatný cursor probe s
+  `variables=(cursor:old,count:20)` nevyprodukoval žádnou next URL.
+- **Dopad:** network-only běh může nastavit `partial:false` a přepsat hlavní
+  `messages.json`, přestože některé zprávy chybí. Tím se obchází správně zavedený
+  `.partial` candidate/exit 5 mechanismus. U REST envelope naopak ani kompletně
+  dočtený export neumí prokázat úplnost a zůstane navždy candidate.
+- **Doporučení:** completion musí vyžadovat nulový parser miss pro všechny relevantní
+  events a být sledovaná na úrovni konkrétního resource/conversation napříč stránkami.
+  Envelope end state je nutné propagovat po merge. Neznámý message event nesmí dát
+  `historyComplete:true`; má vynutit partial. Přidat negativní fixture se ztraceným
+  eventem, REST end-to-end completion test a skutečný pozorovaný Rest.li cursor tvar.
+
+#### RR-03 — HIGH — CR-07 stále ztrácí disjunktní fallback messages a raw alias umí duplicitu
+
+- **Soubor/řádky:** `src/linkedin/exporter.ts:150-203`,
+  `src/linkedin/exporter.ts:206-223`, `src/domain/merge.ts:100-121`
+- **Problém:** fallback buckets se mezi dvěma vstupy slučují na
+  `max(left.length, right.length)`. To je správné jen tehdy, když jde o dvě pozorování
+  stejných zpráv, nikoliv o dvě disjunktní pagination dávky. Kód nemá source/page
+  identitu, takže situace nerozliší. Stable větev navíc indexuje pouze jeden map key,
+  ne všechny aliasy: záznam `{id:'M', entityUrn:'...:M'}` a následný záznam pouze
+  `{entityUrn:'...:M'}` vytvoří dvě raw messages; po normalizaci mají obě `id='M'`.
+  Schema ani merge unikátnost message ID nevynucují.
+- **Ověření:** dvě disjunktní dávky po dvou fallback zprávách se stejným obsahem a
+  časem, ale `sourceOrder` 0–1 a 2–3, daly pouze 2 zprávy místo 4 (zůstaly orders 2–3).
+  ID/URN alias probe dal 2 raw messages a normalizované IDs `['M', 'M']`.
+- **Dopad:** pagination může stále zahodit legitimní zprávy; jiná kombinace adapterů
+  může naopak exportovat jednu zprávu dvakrát se stejným ID. CR-07 tedy není uzavřený
+  a idempotence není obecně zaručená.
+- **Doporučení:** každé pozorování opatřit source response/page identitou a fallback
+  multiset skládat podle prokazatelného overlapu, nikoliv globálním `max`. Stable
+  raw entries indexovat všemi aliasy stejně jako finální merge. Schema-level
+  validace musí odmítnout duplicitní conversation/message/participant IDs a rozbité
+  sender reference.
+
+#### RR-04 — MEDIUM — Network participant a DOM name-only participant se zdvojí
+
+- **Soubor/řádky:** `src/linkedin/dom/conversation-list.ts:15-31`,
+  `src/linkedin/exporter.ts:206-220`, `src/domain/merge.ts:35-89`
+- **Problém:** DOM conversation list přidává participanta pouze se jménem. Pokud
+  network data téhož člověka obsahují ID/profile URL, raw i finální alias merge nemají
+  společný klíč a ponechají dva participanty. Jméno samotné správně není bezpečný
+  globální alias, ale DOM list record se má při existenci silnějších network dat
+  použít jen jako doplněk, ne jako další osoba.
+- **Ověření:** sloučení network `{id:'p', name:'Jane', profileUrl:'.../in/jane'}` a
+  DOM `{name:'Jane'}` ve stejné conversation vytvořilo participanty `p` a
+  `member_edf...`, oba se jménem Jane.
+- **Dopad:** participants/recruiter data jsou zavádějící a další agent může jednu
+  osobu chápat jako dvě. U skupinového threadu může být DOM combined label ještě
+  horší.
+- **Doporučení:** pokud stejná conversation již má autoritativní network
+  participants, name-only list participanty nepřidávat; používat je jen pro prázdnou
+  network sadu nebo jako nízko-důvěryhodné prezentační metadata.
+
+### Stav původních CR-01 až CR-10
+
+| Původní nález | Stav na `4cf97d9` | Re-review důkaz / poznámka |
+| --- | --- | --- |
+| CR-01 WebSocket bypass | WebSocket část uzavřena; safety invariant zůstává otevřený přes RR-01 | Skutečný `launchContext` probe: 0 upgrade/frames, `blockedWebSockets=1`; persistovaný SW samostatně odeslal POST. |
+| CR-02 direction fail-open | Uzavřeno | Missing/unlinked sender a unknown DOM direction nyní fail-closed; outbound/inbound kontroluje self vazbu. |
+| CR-03 composite URN | Základní network případ uzavřen | Composite value zůstává celé a typed conversation route ID je `2-XYZ`. DOM stále používá hrubé `entityUrn.split(':')` (`src/linkedin/dom/thread.ts:81`), což je zbytkové riziko pro composite DOM URN. |
+| CR-04 alias merge/account | Hlavní persisted merge uzavřen; raw/participant mezery viz RR-03/RR-04 | URN/plain ID/route reprodukce dává 1 conversation; silnější account se zachová. |
+| CR-05 virtualized DOM | Uzavřeno pro podporovaný scroll model | Virtualized fixture akumulovala 6/6 conversations i messages, `complete=true`; Send/Delete canary zůstal neaktivní. Fyzický top/bottom bez explicitního LinkedIn end markeru zůstává heuristika. |
+| CR-06 parser/pagination | Částečně otevřeno, viz RR-02 | Relative paging, synthetic JSON cursor a druhá history page fungují; completeness a Rest.li cursor ne. |
+| CR-07 fallback collisions | Otevřeno, viz RR-03 | Opakované stejné snapshoty projdou, disjunktní stejné pagination dávky se stále ztratí. |
+| CR-08 account identity | Uzavřeno pro review scénáře | Captured stable account candidate se používá; obecný `/feed/` odkaz už není profile identity. |
+| CR-09 partial overwrite/exit | Mechanismus uzavřen; může jej obejít RR-02 | Partial zapisuje `.partial`, main zůstal byte-identický a CLI vrací 5. |
+| CR-10 PowerShell CLI | Uzavřeno pro dokumentovanou cestu | README používá `npm.cmd`; space-separated options se zachovaly a neznámý flag skončil `CONFIG_INVALID`, exit 2. |
+
+### Ověření při re-review
+
+- `npm.cmd run check`: **PASS** — 8 test files / 35 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- WebSocket probe přes skutečný fresh persistent `launchContext`: **PASS** — 0
+  serverových upgrades/frames, 1 blokovaný WebSocket, operational page vznikla až po
+  guardu.
+- Persisted service-worker probe: **FAIL / CRITICAL** — po reopen v export mode byl
+  worker aktivní a lokální server přijal POST mimo guard (RR-01).
+- Virtualized DOM + mutation canary: **PASS** — 6/6 list items, 6/6 messages,
+  `complete=true`, žádný Send/Delete handler se nespustil.
+- Alias/direction/URN: původní reprodukce **PASS**; rozšířený raw alias/fallback probe
+  **FAIL** podle RR-03.
+- Partial persistence: **PASS** — candidate obsahoval 2 messages, main 1 message a
+  SHA-256 hlavního souboru zůstal byte-identický.
+- Strict PowerShell CLI: **PASS** — `npm.cmd` zachovalo `--limit 17`; neznámý flag
+  vrátil `CONFIG_INVALID`, exit 2, před browser launch.
+- Fresh dočasný profile/output network-only smoke: **PASS pro auth fail-closed** —
+  `AUTH_REQUIRED`, exit 3, nevznikl main ani `.partial`; manifest měl 16 povolených
+  HTTP requests, 0 blocked HTTP a žádný WebSocket.
+- Persistent startup-page probe: **PASS** — Chromium neobnovil seed stránku;
+  0 startup HTTP/POST/WebSocket požadavků před guardem.
+- `git diff --check`: **PASS** i po doplnění této sekce. Re-review nepoužil LinkedIn
+  credentials, přihlášenou session ani thread-open fallback.
