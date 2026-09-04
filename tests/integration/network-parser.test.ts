@@ -147,6 +147,46 @@ describe('network parser', () => {
     expect(parsed.conversations).toHaveLength(0);
   });
 
+  it('preserves ordered id-less event multiplicity and deterministic fallback IDs', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-idless-events.json', import.meta.url), 'utf8')) as Record<'different' | 'identical', unknown>;
+    for (const name of ['different', 'identical'] as const) {
+      const sourceUrl = `https://www.linkedin.com/voyager/api/messaging/history?case=${name}&start=0&count=2`;
+      const first = parseNetworkPayload(fixture[name], sourceUrl);
+      const repeated = parseNetworkPayload(fixture[name], sourceUrl);
+      expect(first.misses).toBe(0);
+      expect(first.conversations[0]?.messages).toHaveLength(2);
+      expect(first.conversations[0]?.sourceMetadata?.historyComplete).toBe(true);
+
+      const coalesced = coalesceRaw([...first.conversations, ...repeated.conversations]);
+      expect(coalesced[0]?.messages).toHaveLength(2);
+      const normalized = normalizeConversation(coalesced[0]!, 'SELF');
+      const normalizedAgain = normalizeConversation(coalesced[0]!, 'SELF');
+      expect(new Set(normalized.messages.map((message) => message.id)).size).toBe(2);
+      expect(normalizedAgain.messages.map((message) => message.id)).toEqual(normalized.messages.map((message) => message.id));
+      expect(normalized.messages.map((message) => message.text)).toEqual(name === 'different'
+        ? ['first anonymous event', 'second anonymous event']
+        : ['identical anonymous event', 'identical anonymous event']);
+      if (name === 'identical') expect(normalized.messages[1]?.id).toBe(`${normalized.messages[0]?.id}_2`);
+    }
+  });
+
+  it('does not collapse undefined aliases in the generic nested-message path', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-idless-events.json', import.meta.url), 'utf8')) as { identical: unknown };
+    const parsed = parseNetworkPayload(fixture.identical, 'https://www.linkedin.com/voyager/api/messaging/conversations');
+    expect(parsed.conversations[0]?.messages).toHaveLength(2);
+  });
+
+  it('deduplicates an actually repeated stable top-level URN reference', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-referenced-parser-miss.json', import.meta.url), 'utf8'));
+    fixture.elements = ['urn:li:messagingMessage:KNOWN-REF', 'urn:li:messagingMessage:KNOWN-REF'];
+    fixture.included = fixture.included.filter((value: { entityUrn?: string }) => value.entityUrn !== 'urn:li:messagingMessage:UNKNOWN-REF');
+    fixture.paging = { start: 0, count: 1, total: 1, hasNextPage: false };
+    const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=1');
+    expect(parsed.misses).toBe(0);
+    expect(parsed.conversations[0]?.messages?.map((message) => message.id)).toEqual(['KNOWN-REF']);
+    expect(parsed.conversations[0]?.sourceMetadata?.historyComplete).toBe(true);
+  });
+
   it('derives an observed Rest.li cursor without changing the GET template', async () => {
     const fixture = JSON.parse(await readFile(new URL('../fixtures/network/graphql-composite.json', import.meta.url), 'utf8'));
     const source = 'https://www.linkedin.com/voyager/api/graphql?queryId=messengerConversations&variables=(cursor:cursor-old,count:20)';

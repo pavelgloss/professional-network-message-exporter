@@ -1,0 +1,46 @@
+{
+  "different": {
+    "elements": [
+      {
+        "conversationId": "idless-different",
+        "from": "urn:li:fsd_profile:EXT-IDLESS",
+        "createdAt": 1000,
+        "eventContent": { "attributedBody": { "text": "first anonymous event" } }
+      },
+      {
+        "conversationId": "idless-different",
+        "from": "urn:li:fsd_profile:EXT-IDLESS",
+        "createdAt": 2000,
+        "eventContent": { "attributedBody": { "text": "second anonymous event" } }
+      }
+    ],
+    "included": [{
+      "entityUrn": "urn:li:fsd_profile:EXT-IDLESS",
+      "firstName": "External",
+      "lastName": "Anonymous"
+    }],
+    "paging": { "start": 0, "count": 2, "total": 2, "hasNextPage": false }
+  },
+  "identical": {
+    "elements": [
+      {
+        "conversationId": "idless-identical",
+        "from": "urn:li:fsd_profile:EXT-IDLESS",
+        "createdAt": 3000,
+        "eventContent": { "attributedBody": { "text": "identical anonymous event" } }
+      },
+      {
+        "conversationId": "idless-identical",
+        "from": "urn:li:fsd_profile:EXT-IDLESS",
+        "createdAt": 3000,
+        "eventContent": { "attributedBody": { "text": "identical anonymous event" } }
+      }
+    ],
+    "included": [{
+      "entityUrn": "urn:li:fsd_profile:EXT-IDLESS",
+      "firstName": "External",
+      "lastName": "Anonymous"
+    }],
+    "paging": { "start": 0, "count": 2, "total": 2, "hasNextPage": false }
+  }
+}

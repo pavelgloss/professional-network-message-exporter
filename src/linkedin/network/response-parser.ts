@@ -124,7 +124,7 @@ function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
-function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string): RawConversation | undefined {
+function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, wrappedMessageObjects?: WeakSet<object>): RawConversation | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
@@ -133,7 +133,11 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
   const resolvedMessageValues = messageValues.map((value) => resolveIncludedReference(value, index).object);
-  const messages = resolvedMessageValues.filter(record).map((m) => messageFrom(m, index, sourcePage, entityUrn)).filter((m): m is RawMessage => Boolean(m));
+  resolvedMessageValues.filter(record).forEach((value) => wrappedMessageObjects?.add(value));
+  const messages: RawMessage[] = resolvedMessageValues.filter(record).flatMap((m, sourceOrder) => {
+    const message = messageFrom(m, index, sourcePage, entityUrn);
+    return message ? [{ ...message, sourceOrder }] : [];
+  });
   const parserMisses = messageValues.length - messages.length;
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
   const url = id ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/` : undefined;
@@ -166,24 +170,35 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
   const objects: JsonRecord[] = [];
   walk(payload, (obj) => objects.push(obj));
   const index = buildIncludedIndex(payload);
-  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage)).filter((c): c is RawConversation => Boolean(c));
+  const wrappedMessageObjects = new WeakSet<object>();
+  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage, wrappedMessageObjects)).filter((c): c is RawConversation => Boolean(c));
   const wrappedMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
-  const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value) => {
+  const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value, sourceOrder) => {
     const resolution = resolveIncludedReference(value, index);
-    return { value, resolved: resolution.object, candidate: resolution.messageLike };
+    return { value, resolved: resolution.object, candidate: resolution.messageLike, sourceOrder };
   }).filter((entry) => entry.candidate) : [];
-  const standaloneMisses = standaloneCandidates
-    .map((entry) => ({ ...entry, parsed: entry.resolved ? messageFrom(entry.resolved, index, sourcePage) : undefined }))
-    .filter((result) => !result.parsed?.conversationId);
-  const nestedMessages = objects.map((obj) => messageFrom(obj, index, sourcePage)).filter((m): m is RawMessage => Boolean(m));
-  for (const message of nestedMessages) {
+  const standaloneResults = standaloneCandidates.map((entry) => {
+    const parsed = entry.resolved ? messageFrom(entry.resolved, index, sourcePage) : undefined;
+    return { ...entry, parsed: parsed ? { ...parsed, sourceOrder: entry.sourceOrder } : undefined };
+  });
+  const standaloneMisses = standaloneResults.filter((result) => !result.parsed?.conversationId);
+  const standaloneObjects = new WeakSet(standaloneResults.map((entry) => entry.resolved).filter(record));
+  const nestedMessages: RawMessage[] = objects.flatMap((obj, sourceOrder) => {
+    if (wrappedMessageObjects.has(obj) || standaloneObjects.has(obj)) return [];
+    const message = messageFrom(obj, index, sourcePage);
+    return message ? [{ ...message, sourceOrder }] : [];
+  });
+  const standaloneMessages: RawMessage[] = standaloneResults.flatMap((entry) => entry.parsed?.conversationId ? [entry.parsed] : []);
+  for (const message of [...standaloneMessages, ...nestedMessages]) {
     if (!message.conversationId) continue;
     let conversation = conversations.find((c) => c.id === message.conversationId);
     if (!conversation) { conversation = { id: message.conversationId, participants: [], messages: [] }; conversations.push(conversation); }
     if (message.senderId && !(conversation.participants ?? []).some((participant) => participant.id === message.senderId)) {
       (conversation.participants ??= []).push({ id: message.senderId, ...(message.senderName ? { name: message.senderName } : {}), ...(message.senderProfileUrl ? { profileUrl: message.senderProfileUrl } : {}) });
     }
-    if (!(conversation.messages ?? []).some((m) => (m.entityUrn ?? m.id) === (message.entityUrn ?? message.id))) (conversation.messages ??= []).push(message);
+    const aliases = rawNetworkMessageAliases(message);
+    const duplicate = aliases.size > 0 && (conversation.messages ?? []).some((prior) => intersectsAliases(rawNetworkMessageAliases(prior), aliases));
+    if (!duplicate) (conversation.messages ??= []).push(message);
   }
   let unassignedStandaloneMisses = 0;
   for (const { resolved } of standaloneMisses) {
@@ -243,16 +258,42 @@ function looksLikeMessageReference(value: string): boolean {
 }
 
 function uniqueEnvelopeElements(values: unknown[]): unknown[] {
-  const unique = new Map<string, unknown>();
+  const seenAliases = new Set<string>();
+  const unique: unknown[] = [];
   for (const value of values) {
-    const identity = typeof value === 'string'
-      ? normalizeUrn(value) ?? `string:${value}`
-      : record(value)
-        ? urnAt(value, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn') ?? sha256Id('envelope-object', [value])
-        : sha256Id('envelope-value', [value]);
-    if (!unique.has(identity)) unique.set(identity, value);
+    const aliases = envelopeElementAliases(value);
+    const duplicate = aliases.size > 0 && [...aliases].some((alias) => seenAliases.has(alias));
+    aliases.forEach((alias) => seenAliases.add(alias));
+    if (!duplicate) unique.push(value);
   }
-  return [...unique.values()];
+  return unique;
+}
+
+function envelopeElementAliases(value: unknown): Set<string> {
+  const aliases = new Set<string>();
+  const urn = typeof value === 'string' ? normalizeUrn(value) : record(value) ? urnAt(value, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn') : undefined;
+  if (urn) aliases.add(`urn:${urn}`);
+  const urnId = messageIdFromUrn(urn);
+  if (urnId) aliases.add(`id:${urnId}`);
+  if (record(value)) {
+    const id = cleanText(stringAt(value, 'id'));
+    if (id) aliases.add(`id:${id}`);
+  }
+  return aliases;
+}
+
+function rawNetworkMessageAliases(message: RawMessage): Set<string> {
+  const aliases = new Set<string>();
+  if (message.id) aliases.add(`id:${message.id}`);
+  const urn = normalizeUrn(message.entityUrn);
+  if (urn) aliases.add(`urn:${urn}`);
+  const urnId = messageIdFromUrn(urn);
+  if (urnId) aliases.add(`id:${urnId}`);
+  return aliases;
+}
+
+function intersectsAliases(left: Set<string>, right: Set<string>): boolean {
+  return [...left].some((alias) => right.has(alias));
 }
 
 function buildIncludedIndex(payload: unknown): IncludedIndex {
