@@ -1,0 +1,16 @@
+<!doctype html>
+<html><body>
+  <button id="send" onclick="window.mutationCanary='send'">Send</button>
+  <button id="delete" onclick="window.mutationCanary='delete'">Delete</button>
+  <main>
+    <ul aria-label="Conversation list" role="list" style="height:300px;overflow:auto">
+      <li><a href="https://www.linkedin.com/messaging/thread/conv-a/"><span data-anonymize="person-name">Jane Example</span><time datetime="2026-08-01T10:00:00Z"></time></a></li>
+      <li><a href="https://www.linkedin.com/messaging/thread/conv-b/"><span data-anonymize="person-name">Alex Example</span></a></li>
+    </ul>
+    <ul aria-label="Message history" role="list">
+      <li data-event-urn="urn:li:messagingMessage:m1"><a href="https://www.linkedin.com/in/jane-example">Jane Example</a><time datetime="2026-08-01T10:00:00Z"></time><p data-testid="message-body">Hello there</p></li>
+      <li data-event-urn="urn:li:messagingMessage:m2" data-is-self="true"><a href="https://www.linkedin.com/in/account-owner">Account Owner</a><time datetime="2026-08-01T11:00:00Z"></time><p data-testid="message-body">Thank you</p></li>
+    </ul>
+  </main>
+</body></html>
+
