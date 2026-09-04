@@ -484,3 +484,60 @@ NTFS ACL a uživatelský custom `--state-file` mimo `.auth/` nemusí být automa
 gitignored; výchozí dokumentovaná cesta je ignorovaná správně. DOM thread fallback
 zůstává pouze výslovný opt-in, protože samotné otevření vlákna může změnit read/unread
 stav.
+
+---
+
+## Finální úzký re-review HEAD `d093528`
+
+### Verdikt
+
+Oprava uzavírá přesně reprodukovaný TR-01 pro top-level REST **event objekty**:
+validní event se zachová včetně participant dat z `included`, neznámý event dá
+`misses:1`, `parserMisses:1`, `historyComplete:false` a `partial:true`; kandidát se
+uloží pouze do `.partial`, hlavní soubor zůstane byte-identický a partial CLI cesta
+vrací exit 5.
+
+**Critical nálezy: žádné. Account-side mutation Critical/High: žádné. Zůstává ale
+jeden High nález úplnosti dat (FR-01), proto zatím nedoporučuji vyžádat skutečný
+login ani spouštět produkční export.** Po rozšíření téže opravy na referenced
+top-level elements bude z hlediska ověřených safety invariantů bezpečné požádat
+uživatele o `npm.cmd run login` a poté spustit pouze network-only
+`npm.cmd run export -- --limit 100`, bez `--allow-thread-open`.
+
+### FR-01 / TR-01 — HIGH — Referenced top-level REST event stále zmizí bez parser miss
+
+- **Soubor/řádky:** `src/linkedin/network/response-parser.ts:155-180`,
+  `src/linkedin/network/response-parser.ts:224-253`,
+  `src/linkedin/exporter.ts:98-125`
+- **Problém:** `restEnvelopeElements(payload).filter(record)` zahodí URN string
+  references dříve, než je může resolver převést přes již vytvořený `index` z
+  `included`. Rekurzivní `nestedMessages` pak sice z `included` zachová validní event,
+  ale neparsovatelný referenced event zmizí a nevstoupí do `standaloneMisses`.
+- **Nezávislá reprodukce:** history payload měl
+  `elements=['urn:...:KNOWN-REF','urn:...:UNKNOWN-REF']`, oba event objekty a sender
+  profile v `included` a finální `paging={start:0,count:2,total:2,hasNextPage:false}`.
+  Výsledek obsahoval pouze `KNOWN-REF`, ale `parsed.misses === 0`, bez
+  `parserMisses`, a `historyComplete === true`.
+- **Dopad:** stejně jako původní TR-01 může být neúplný výsledek označen jako úplný a
+  sloučen do hlavního JSON místo `.partial`. To je v rozporu s požadavkem parseru na
+  běžné Voyager/GraphQL included/reference obálky.
+- **Doporučení:** top-level elements nejprve resolve-nout (`record(value) ? value :
+  typeof value === 'string' ? index.get(value) : undefined`) a teprve nad rozřešenými
+  message candidates počítat parsed/missed. Trvalý negativní test má použít dvě URN
+  references do `included` a ověřit stejný partial/main/exit kontrakt jako nový
+  object test.
+
+### Ověření
+
+- `npm.cmd run check`: **PASS** — 9 test files / 43 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Cílené parser/store/CLI testy: **PASS** — object TR-01, `.partial`, byte-stable
+  main a exit 5. Vlastní přímý object probe vrátil `misses=1`, `historyComplete=false`,
+  validního participanta a `partial=true`.
+- Ephemeral storageState/SW/HTTP/WebSocket regression: **PASS** — service worker se
+  nepřenesl ani nezaregistroval a lokální POST/WebSocket nedorazily na server.
+  Mutation canary i virtualized DOM testy také prošly.
+- Fresh missing-state smoke: **PASS** — `AUTH_REQUIRED`, exit 3, bez main,
+  `.partial`, manifestu nebo browser requestu.
+- Review nepoužilo LinkedIn, credentials ani existující session; implementační kód
+  nebyl změněn.
