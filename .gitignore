@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.auth/
+playwright-report/
+test-results/
+coverage/
+data/linkedin/messages.json
+data/linkedin/messages.json.*
+data/linkedin/diagnostics/
+*.log
+
