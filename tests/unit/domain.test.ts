@@ -4,6 +4,7 @@ import { classifyRecruiter } from '../../src/domain/recruiter.js';
 import { conversationIdFromUrn, extractUrnId, personIdFromUrn, sha256Id } from '../../src/domain/stable-id.js';
 import { mergeExports } from '../../src/domain/merge.js';
 import type { LinkedInExport } from '../../src/domain/schema.js';
+import { coalesceRaw } from '../../src/linkedin/exporter.js';
 
 describe('normalization and stable IDs', () => {
   it('normalizes time and strips URL tracking', () => {
@@ -33,6 +34,15 @@ describe('normalization and stable IDs', () => {
     const messages = normalizeConversation(raw, 'me').messages;
     expect(messages).toHaveLength(2);
     expect(messages[1]?.id).toBe(`${messages[0]?.id}_2`);
+  });
+
+  it('preserves the multiset of identical raw fallback messages through coalescing', () => {
+    const duplicate = { conversationId: 'c', senderId: 'me', senderName: 'Me', sentAt: '2026-01-01T00:00:00Z', text: 'same' };
+    const conversations = coalesceRaw([
+      { id: 'c', messages: [{ ...duplicate }, { ...duplicate }] },
+      { id: 'c', messages: [{ ...duplicate }, { ...duplicate }] },
+    ]);
+    expect(conversations[0]?.messages).toHaveLength(2);
   });
 
   it('fails closed for missing or unlinked sender identity', () => {
@@ -83,8 +93,11 @@ describe('merge', () => {
     old.conversations = [];
     const next = make([]);
     next.account = { id: 'self_weak', name: 'Localized label', profileUrl: 'https://www.linkedin.com/in/account' };
-    next.conversations = [];
-    expect(mergeExports(old, next).account).toMatchObject({ id: 'ABC', entityUrn: 'urn:li:fsd_profile:ABC', profileUrl: 'https://www.linkedin.com/in/account' });
+    next.conversations[0]!.participants[0]!.id = 'self_weak';
+    next.conversations[0]!.messages = [{ id: 'out', conversationId: 'c1', senderId: 'self_weak', senderName: 'Localized label', direction: 'outbound', sequence: 0, text: 'sent' }];
+    const merged = mergeExports(old, next);
+    expect(merged.account).toMatchObject({ id: 'ABC', entityUrn: 'urn:li:fsd_profile:ABC', profileUrl: 'https://www.linkedin.com/in/account' });
+    expect(merged.conversations[0]?.messages[0]?.senderId).toBe('ABC');
   });
 
   it('upgrades fallback message identity through an unambiguous fingerprint', () => {

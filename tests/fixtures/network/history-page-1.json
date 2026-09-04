@@ -1,0 +1,9 @@
+{
+  "elements": [{
+    "entityUrn": "urn:li:messagingThread:history",
+    "participants": [{ "entityUrn": "urn:li:fsd_profile:EXT", "firstName": "External", "lastName": "Person" }],
+    "events": [{ "entityUrn": "urn:li:messagingMessage:H1", "from": "urn:li:fsd_profile:EXT", "createdAt": 1000, "eventContent": { "attributedBody": { "text": "page one" } } }]
+  }],
+  "paging": { "start": 0, "count": 1, "total": 2, "links": [{ "href": "?start=1&count=1" }] }
+}
+

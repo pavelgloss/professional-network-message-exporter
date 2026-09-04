@@ -3,6 +3,7 @@ import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { AppError } from '../errors.js';
 import { ExportSchema, type LinkedInExport } from '../domain/schema.js';
+import { mergeExports } from '../domain/merge.js';
 
 export async function loadExport(filePath: string): Promise<LinkedInExport | undefined> {
   try {
@@ -22,3 +23,11 @@ export async function saveExport(filePath: string, data: LinkedInExport): Promis
   await writeFileAtomic(filePath, serializeExport(data), { encoding: 'utf8', fsync: true });
 }
 
+export async function persistExportResult(filePath: string, next: LinkedInExport): Promise<{ data: LinkedInExport; destination: string }> {
+  const main = await loadExport(filePath);
+  const destination = next.stats.partial ? `${filePath}.partial` : filePath;
+  const baseline = next.stats.partial ? await loadExport(destination) ?? main : main;
+  const data = mergeExports(baseline, next);
+  await saveExport(destination, data);
+  return { data, destination };
+}

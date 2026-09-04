@@ -1,0 +1,27 @@
+{
+  "data": {
+    "messengerConversations": {
+      "elements": [{
+        "entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-XYZ)",
+        "*participants": ["urn:li:messagingParticipant:SELF", "urn:li:messagingParticipant:EXT"],
+        "*events": ["urn:li:messagingMessage:M-1"],
+        "pageInfo": { "hasNextPage": false }
+      }],
+      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-next" }
+    }
+  },
+  "included": [
+    { "entityUrn": "urn:li:messagingParticipant:SELF", "*miniProfile": "urn:li:fsd_profile:SELF" },
+    { "entityUrn": "urn:li:messagingParticipant:EXT", "*miniProfile": "urn:li:fs_miniProfile:EXT" },
+    { "entityUrn": "urn:li:fsd_profile:SELF", "firstName": "Account", "lastName": "Owner", "publicIdentifier": "account-owner" },
+    { "entityUrn": "urn:li:fs_miniProfile:EXT", "firstName": "External", "lastName": "Person", "publicIdentifier": "external-person" },
+    {
+      "entityUrn": "urn:li:messagingMessage:M-1",
+      "*conversation": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-XYZ)",
+      "*from": "urn:li:fsd_profile:SELF",
+      "createdAt": 1725000000000,
+      "eventContent": { "attributedBody": { "text": "Composite outbound" } }
+    }
+  ]
+}
+

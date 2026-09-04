@@ -34,7 +34,7 @@ export function attachNetworkCapture(page: Page, manifest: DiagnosticsManifest, 
     try {
       const body = await response.body();
       if (body.byteLength > MAX_RESPONSE_BYTES) { manifest.warnings.push('NETWORK_RESPONSE_TOO_LARGE'); return; }
-      const parsed = parseNetworkPayload(JSON.parse(body.toString('utf8')), `${url.origin}${url.pathname}`);
+      const parsed = parseNetworkPayload(JSON.parse(body.toString('utf8')), response.url());
       conversations.push(...parsed.conversations);
       if (parsed.account) accountCandidates.push(parsed.account);
       parsed.paginationUrls.forEach((href) => paginationUrls.add(href));
@@ -54,4 +54,3 @@ export function attachNetworkCapture(page: Page, manifest: DiagnosticsManifest, 
     detach() { page.off('response', handle); },
   };
 }
-

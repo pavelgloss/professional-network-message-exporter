@@ -152,10 +152,32 @@ function mergeAccount(old: LinkedInExport['account'] | undefined, next: LinkedIn
   const oldStrength = accountStrength(old);
   const nextStrength = accountStrength(next);
   if (oldStrength >= 3 && nextStrength >= 3 && old.id !== next.id) throw new AppError('VALIDATION_FAILED', 'The export belongs to a different LinkedIn account');
+  if (old.profileUrl && next.profileUrl && profileAlias(old.profileUrl) !== profileAlias(next.profileUrl)) throw new AppError('VALIDATION_FAILED', 'The export profile URL belongs to a different LinkedIn account');
   const identity = nextStrength > oldStrength ? next : old;
   const entityUrn = identity.entityUrn ?? old.entityUrn ?? next.entityUrn;
   const profileUrl = next.profileUrl ?? old.profileUrl;
   return { id: identity.id, ...(entityUrn ? { entityUrn } : {}), name: next.name || old.name, ...(profileUrl ? { profileUrl } : {}) };
+}
+
+function remapAccountIdentity(conversations: Conversation[], sourceAccount: LinkedInExport['account'], account: LinkedInExport['account']): Conversation[] {
+  if (sourceAccount.id === account.id) return conversations;
+  return conversations.map((conversation) => {
+    const participants = conversation.participants.map((participant) => participant.isSelf ? {
+      ...participant,
+      id: account.id,
+      ...(account.entityUrn ? { entityUrn: account.entityUrn } : {}),
+      name: account.name,
+      ...(account.profileUrl ? { profileUrl: account.profileUrl } : {}),
+    } : participant);
+    const uniqueParticipants = [...new Map(participants.map((participant) => [participant.id, participant])).values()];
+    const messages = conversation.messages.map((message) => message.direction === 'outbound' ? {
+      ...message,
+      senderId: account.id,
+      senderName: account.name,
+      ...(account.profileUrl ? { senderProfileUrl: account.profileUrl } : {}),
+    } : message);
+    return { ...conversation, participants: uniqueParticipants, messages };
+  });
 }
 
 export function mergeExports(old: LinkedInExport | undefined, next: LinkedInExport): LinkedInExport {
@@ -172,10 +194,11 @@ export function mergeExports(old: LinkedInExport | undefined, next: LinkedInExpo
       conversationAliases(entry.value).forEach((alias) => entry.aliases.add(alias));
     }
   }
-  const sorted = entries.map((entry) => entry.value).sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id));
+  const account = mergeAccount(old?.account, next.account);
+  const sorted = remapAccountIdentity(entries.map((entry) => entry.value), next.account, account).sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id));
   return ExportSchema.parse({
     ...next,
-    account: mergeAccount(old?.account, next.account),
+    account,
     conversations: sorted,
     stats: {
       ...next.stats,
@@ -186,4 +209,3 @@ export function mergeExports(old: LinkedInExport | undefined, next: LinkedInExpo
     },
   });
 }
-
