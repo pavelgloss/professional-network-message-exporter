@@ -65,4 +65,34 @@ describe('merge', () => {
     expect(mergeExports(first, first).conversations[0]?.messages).toHaveLength(1);
     expect(mergeExports(first, make(['one', 'two'])).conversations[0]?.messages.map((m) => m.text)).toEqual(['one', 'two']);
   });
+
+  it('merges conversation URN, plain ID, and route aliases without duplication', () => {
+    const old = make(['one']);
+    old.conversations[0]!.entityUrn = 'urn:li:messagingThread:c1';
+    old.conversations[0]!.url = 'https://www.linkedin.com/messaging/thread/c1';
+    const next = make(['one', 'two']);
+    delete next.conversations[0]!.entityUrn;
+    const merged = mergeExports(old, next);
+    expect(merged.conversations).toHaveLength(1);
+    expect(merged.conversations[0]?.messages).toHaveLength(2);
+  });
+
+  it('preserves stronger account identity across a weak partial run', () => {
+    const old = make([]);
+    old.account = { id: 'ABC', entityUrn: 'urn:li:fsd_profile:ABC', name: 'Stable', profileUrl: 'https://www.linkedin.com/in/account' };
+    old.conversations = [];
+    const next = make([]);
+    next.account = { id: 'self_weak', name: 'Localized label', profileUrl: 'https://www.linkedin.com/in/account' };
+    next.conversations = [];
+    expect(mergeExports(old, next).account).toMatchObject({ id: 'ABC', entityUrn: 'urn:li:fsd_profile:ABC', profileUrl: 'https://www.linkedin.com/in/account' });
+  });
+
+  it('upgrades fallback message identity through an unambiguous fingerprint', () => {
+    const old = make(['one']);
+    old.conversations[0]!.messages[0]!.id = 'message_fallback';
+    const next = make(['one']);
+    next.conversations[0]!.messages[0]!.id = 'linkedin-message-id';
+    const merged = mergeExports(old, next);
+    expect(merged.conversations[0]?.messages.map((message) => message.id)).toEqual(['linkedin-message-id']);
+  });
 });

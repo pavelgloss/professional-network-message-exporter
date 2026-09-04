@@ -51,7 +51,7 @@ export function normalizeConversation(raw: RawConversation, selfId?: string): Co
   const entityUrn = normalizeUrn(raw.entityUrn);
   const url = canonicalLinkedInUrl(raw.url);
   const rawParticipants = raw.participants ?? [];
-  const provisionalIds = rawParticipants.map((p) => cleanText(p.id) ?? personIdFromUrn(normalizeUrn(p.entityUrn)) ?? sha256Id('member', [canonicalLinkedInUrl(p.profileUrl), cleanText(p.name) ?? 'Unknown participant']));
+  const provisionalIds = rawParticipants.map((p) => p.isSelf && selfId ? selfId : cleanText(p.id) ?? personIdFromUrn(normalizeUrn(p.entityUrn)) ?? sha256Id('member', [canonicalLinkedInUrl(p.profileUrl), cleanText(p.name) ?? 'Unknown participant']));
   const id = cleanText(raw.id) ?? conversationIdFromUrn(entityUrn) ?? url?.match(/\/messaging\/thread\/([^/]+)/)?.[1] ?? sha256Id('conversation', [[...provisionalIds].sort(), url]);
   const rawMessages = raw.messages ?? [];
   const participants = rawParticipants.map((p, i) => participant({ ...p, id: provisionalIds[i]!, isSelf: p.isSelf ?? provisionalIds[i] === selfId }, rawMessages));

@@ -65,7 +65,28 @@ export const ExportSchema = z.object({
     warnings: z.array(nonEmpty),
   }).strict(),
   conversations: z.array(ConversationSchema),
-}).strict();
+}).strict().superRefine((data, context) => {
+  const conversationIds = new Set<string>();
+  for (const conversation of data.conversations) {
+    if (conversationIds.has(conversation.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate conversation ID: ${conversation.id}` });
+    conversationIds.add(conversation.id);
+    const participantIds = new Set<string>();
+    for (const participant of conversation.participants) {
+      if (participantIds.has(participant.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate participant ID: ${participant.id}` });
+      participantIds.add(participant.id);
+      if (participant.isSelf && participant.id !== data.account.id) context.addIssue({ code: z.ZodIssueCode.custom, message: `Self participant does not match account: ${participant.id}` });
+    }
+    const messageIds = new Set<string>();
+    for (const message of conversation.messages) {
+      if (messageIds.has(message.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate message ID: ${message.id}` });
+      messageIds.add(message.id);
+      if (message.conversationId !== conversation.id) context.addIssue({ code: z.ZodIssueCode.custom, message: `Message conversation reference mismatch: ${message.id}` });
+      const isAccount = message.senderId === data.account.id;
+      if (!isAccount && !participantIds.has(message.senderId)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown message sender: ${message.id}` });
+      if ((isAccount && message.direction !== 'outbound') || (!isAccount && message.direction !== 'inbound')) context.addIssue({ code: z.ZodIssueCode.custom, message: `Message direction mismatch: ${message.id}` });
+    }
+  }
+});
 
 export type Attachment = z.infer<typeof AttachmentSchema>;
 export type Participant = z.infer<typeof ParticipantSchema>;

@@ -15,7 +15,8 @@ export async function readAccountFromDom(page: Page): Promise<Account> {
   for (const selector of candidates) {
     const element = page.locator(selector).first();
     if (await element.count()) {
-      profileUrl = canonicalLinkedInUrl(await element.getAttribute('href'));
+      const candidateUrl = canonicalLinkedInUrl(await element.getAttribute('href'));
+      profileUrl = candidateUrl && /^https:\/\/www\.linkedin\.com\/in\/[^/]+$/i.test(candidateUrl) ? candidateUrl : undefined;
       name = cleanText(await element.getAttribute('aria-label'))?.replace(/^Me[:,]?\s*/i, '') || undefined;
       const image = element.locator('img').first();
       if (!name && await image.count()) name = cleanText(await image.getAttribute('alt'))?.replace(/'s profile photo$/i, '');
@@ -25,4 +26,3 @@ export async function readAccountFromDom(page: Page): Promise<Account> {
   name ??= 'LinkedIn account owner';
   return { id: sha256Id('self', [profileUrl, name]), name, ...(profileUrl ? { profileUrl } : {}) };
 }
-

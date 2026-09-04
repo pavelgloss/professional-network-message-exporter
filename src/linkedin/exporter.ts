@@ -13,7 +13,7 @@ import { followObservedPagination } from './network/pagination.js';
 import { collectConversationList } from './dom/conversation-list.js';
 import { collectThread } from './dom/thread.js';
 import { normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
-import { sha256Id } from '../domain/stable-id.js';
+import { personIdFromUrn, sha256Id } from '../domain/stable-id.js';
 import { ExportSchema, type LinkedInExport, type RawConversation, type RawMessage, type RawParticipant } from '../domain/schema.js';
 import { mergeExports } from '../domain/merge.js';
 
@@ -26,6 +26,7 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     logger.info('export-started', { limit: config.limit, threadOpen: config.allowThreadOpen });
     await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
     assertAuthenticated(await detectAuthState(page));
+    await capture.drain();
 
     let account: Account;
     let reliableSelfId: string | undefined;
@@ -36,8 +37,15 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
       account = { id: me.id, name: me.name, ...(me.entityUrn ? { entityUrn: me.entityUrn } : {}), ...(me.profileUrl ? { profileUrl: me.profileUrl } : {}) };
       reliableSelfId = me.id;
     } catch {
-      account = await readAccountFromDom(page);
-      manifest.warnings.push('ACCOUNT_STABLE_ID_UNAVAILABLE');
+      const captured = capture.accountCandidates.find((candidate) => candidate.id && candidate.name && candidate.entityUrn && personIdFromUrn(candidate.entityUrn) === candidate.id);
+      if (captured?.id && captured.name) {
+        account = { id: captured.id, name: captured.name, ...(captured.entityUrn ? { entityUrn: captured.entityUrn } : {}), ...(captured.profileUrl ? { profileUrl: captured.profileUrl } : {}) };
+        reliableSelfId = captured.id;
+        manifest.strategies.push('account:captured-network');
+      } else {
+        account = await readAccountFromDom(page);
+        manifest.warnings.push('ACCOUNT_STABLE_ID_UNAVAILABLE');
+      }
     }
 
     const domList = await collectConversationList(page, config.limit);
