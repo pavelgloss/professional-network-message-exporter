@@ -1,7 +1,7 @@
 import type { AppConfig } from '../config.js';
 import { AppError } from '../errors.js';
 import type { Logger } from '../logger.js';
-import { createManifest, saveContentDiagnostics, saveManifest } from '../io/diagnostics.js';
+import { createManifest, saveContentDiagnostics, saveContentDiagnosticsOnFailure, saveManifest } from '../io/diagnostics.js';
 import { persistExportResult } from '../io/export-store.js';
 import { closeContext, launchContext } from '../browser/context.js';
 import { detectAuthState, assertAuthenticated } from './auth-check.js';
@@ -21,10 +21,12 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
   const context = await launchContext(config, 'export', manifest, logger);
   let page = context.pages()[0] ?? await context.newPage();
   const capture = attachNetworkCapture(page, manifest, logger);
+  let authenticated = false;
   try {
     logger.info('export-started', { limit: config.limit, threadOpen: config.allowThreadOpen });
     await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
     assertAuthenticated(await detectAuthState(page));
+    authenticated = true;
     await capture.drain();
 
     let account: Account;
@@ -131,6 +133,15 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     return merged;
   } catch (error) {
     manifest.status = error instanceof AppError ? error.code : 'FAILED';
+    try {
+      const saved = await saveContentDiagnosticsOnFailure(page, config.diagnosticsDir, manifest.runId, { enabled: config.diagnosticsContent, authenticated, ...(error instanceof AppError ? { errorCode: error.code } : {}) });
+      if (saved) {
+        manifest.warnings.push('CONTENT_DIAGNOSTICS_SAVED_AFTER_PARSER_NO_DATA');
+        logger.warn('content-diagnostics-saved', { reason: 'PARSER_NO_DATA' });
+      }
+    } catch {
+      manifest.warnings.push('CONTENT_DIAGNOSTICS_SAVE_FAILED');
+    }
     throw error;
   } finally {
     capture.detach();
