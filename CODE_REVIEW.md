@@ -611,3 +611,66 @@ výhradně network-only `npm.cmd run export -- --limit 100`, bez
   `.partial`, manifest ani browser request.
 - `git diff --check`: **PASS**. Review nepoužilo LinkedIn, credentials ani existující
   session a nezměnilo implementační kód.
+
+---
+
+## Finální závěr pro HEAD `fdce32f`
+
+### Definitivní verdikt
+
+**Nezůstává žádný reprodukovatelný Critical ani High nález v dosud otevřených
+oblastech. FV-01 je uzavřený a read-only safety boundary zůstala bez regrese.**
+
+**GO:** je nyní bezpečné požádat uživatele, aby ručně spustil
+`npm.cmd run login`, a po úspěšném přihlášení provést pouze network-only export:
+
+```powershell
+npm.cmd run export -- --limit 100
+```
+
+První skutečný běh musí zůstat bez `--allow-thread-open`. Pokud skončí partial/exit
+5, má se vyhodnotit pouze `.partial` kandidát; nesmí se automaticky přejít na DOM
+thread fallback, protože otevření vláken může změnit read/unread stav.
+
+### Stav všech dosavadních Critical/High
+
+| Oblast | Finální stav |
+| --- | --- |
+| HTTP, redirect, WebSocket a service-worker read-only boundary | **Uzavřeno** |
+| Direction/sender/participant reference a composite URN | **Uzavřeno** |
+| Partial-only zápis, byte-stable main a exit 5 | **Uzavřeno** |
+| Wrapped, object, referenced a unresolved parser miss | **Uzavřeno** |
+| REST/Rest.li pagination a per-conversation completion | **Uzavřeno pro anonymizované reprodukce** |
+| Raw aliases, fallback multiset, schema unikátnost a opakovaný merge | **Uzavřeno** |
+| Virtualizovaný DOM a mutation canary | **Uzavřeno pro lokální fixture; thread-open zůstává opt-in** |
+| FV-01 id-less top-level event multiplicity | **Uzavřeno** |
+
+### Nezávislé reprodukce FV-01
+
+- Dvě různé id-less top-level REST messages: **2/2**, `misses=0`,
+  `historyComplete=true`, dvě různá deterministická fallback IDs.
+- Dvě obsahově identické id-less messages: **2/2**, deterministická unikátní IDs
+  `message_…` a `message_…_2`.
+- Opakované parsování stejné source page a `coalesceRaw`: stále **2**, ne 4; IDs se
+  mezi normalizacemi nemění.
+- Opakovaný finální `mergeExports`: první i druhý run mají **2 messages**, dvě
+  unikátní stejná IDs a `exportedMessageCount=2`.
+- Opakovaná stabilní top-level URN reference: **1 message**, `misses=0`,
+  `historyComplete=true`.
+- Dřívější known+unsupported URN refs, unresolved message ref, profile ref,
+  duplicate refs a reference cycle testy dál procházejí fail-closed kontraktem.
+
+### Finální ověření
+
+- `npm.cmd run check`: **PASS** — 9 test files / 49 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Cílené session-isolation, service-worker, POST/WebSocket guard, DOM mutation canary
+  a virtualized tests: **PASS**.
+- Fresh missing-state export: **PASS** — `AUTH_REQUIRED`, exit 3, bez main,
+  `.partial`, manifestu nebo browser requestu.
+- `git diff --check`: **PASS**. Review nepoužilo LinkedIn, přihlašovací údaje ani
+  existující session; implementační kód nebyl změněn a review nebylo commitováno.
+
+Zbytkové provozní riziko je stejné jako v předchozích sekcích: současné neveřejné
+LinkedIn obálky lze potvrdit až prvním uživatelským network-only během. Neznámý tvar
+musí skončit partial, nikoliv oslabením guardu nebo automatickým otevřením vláken.
