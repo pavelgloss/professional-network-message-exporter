@@ -1,0 +1,27 @@
+{
+  "data": {
+    "elements": [{
+      "entityUrn": "urn:li:messagingThread:conv-1",
+      "lastActivityAt": 1725000000000,
+      "participants": ["urn:li:messagingParticipant:person-2"],
+      "events": [{
+        "entityUrn": "urn:li:messagingMessage:msg-1",
+        "from": "urn:li:fs_miniProfile:person-2",
+        "createdAt": 1725000000000,
+        "eventContent": { "attributedBody": { "text": "Hello from fixture" } }
+      }]
+    }]
+  },
+  "included": [{
+    "entityUrn": "urn:li:messagingParticipant:person-2",
+    "miniProfile": {
+      "entityUrn": "urn:li:fs_miniProfile:person-2",
+      "firstName": "Jane",
+      "lastName": "Example",
+      "publicIdentifier": "jane-example",
+      "occupation": "Talent Acquisition Partner"
+    }
+  }],
+  "paging": { "links": [{ "href": "https://www.linkedin.com/voyager/api/messaging/conversations?start=20" }] }
+}
+
