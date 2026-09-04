@@ -67,23 +67,38 @@ function textFrom(obj: JsonRecord): string | undefined {
   return undefined;
 }
 
+function conversationIdForMessage(obj: JsonRecord, conversationUrn?: string): string | undefined {
+  const reference = urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn;
+  return conversationIdFromUrn(reference) ?? cleanText(stringAt(obj, 'conversationId'));
+}
+
+function looksLikeMessageCandidate(obj: JsonRecord): boolean {
+  const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
+  const entityType = entityUrn?.match(/^urn:li:([^:]+):/i)?.[1];
+  if (/(?:message|event)/i.test(entityType ?? '')) return true;
+  const hasSender = Boolean(urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn'));
+  const hasConversation = Boolean(conversationIdForMessage(obj));
+  const hasTimestamp = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created') !== undefined;
+  const hasContentShape = ['text', 'body', 'messageBody', 'eventContent', 'content', 'attachments'].some((key) => key in obj);
+  return hasSender && hasConversation && hasTimestamp && hasContentShape;
+}
+
 function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
-  const looksMessage = /(?:message|event)/i.test(entityUrn ?? '') || Boolean(text && senderUrn && sentAt !== undefined);
   // Unknown/attachment-only content must not be counted as parsed history. Until an
   // explicit adapter preserves that shape, fail coverage closed instead of silently
   // exporting an empty message and claiming completeness.
-  if (!looksMessage || !text) return undefined;
+  if (!looksLikeMessageCandidate(obj) || !text) return undefined;
   const senderValue = ['from', '*from', 'sender', '*sender', 'actor', '*actor'].map((key) => obj[key]).find((value) => record(value) || typeof value === 'string');
   const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? index.get(senderValue) : undefined;
   const senderProfile = senderObj ? profileFrom(senderObj, index) : undefined;
   const senderName = senderProfile ? cleanText(stringAt(senderProfile, 'name', 'fullName')) ?? cleanText([stringAt(senderProfile, 'firstName'), stringAt(senderProfile, 'lastName')].filter(Boolean).join(' ')) : undefined;
   const senderProfileUrl = senderProfile && stringAt(senderProfile, 'publicIdentifier') ? `https://www.linkedin.com/in/${stringAt(senderProfile, 'publicIdentifier')}` : undefined;
   const id = messageIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
-  const conversationId = conversationIdFromUrn(urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn);
+  const conversationId = conversationIdForMessage(obj, conversationUrn);
   const senderId = personIdFromUrn(senderUrn);
   const messageType = cleanText(stringAt(obj, 'subtype', 'eventType', 'type'));
   return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}), sourceMetadata: { sourcePage } };
@@ -149,12 +164,32 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
     }
   }
   const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage)).filter((c): c is RawConversation => Boolean(c));
+  const wrappedMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
+  const standaloneCandidates = isHistoryResource(sourceUrl) ? restEnvelopeElements(payload).filter(record).filter(looksLikeMessageCandidate) : [];
+  const standaloneMisses = standaloneCandidates
+    .map((candidate) => ({ candidate, parsed: messageFrom(candidate, index, sourcePage) }))
+    .filter((result) => !result.parsed?.conversationId);
   const nestedMessages = objects.map((obj) => messageFrom(obj, index, sourcePage)).filter((m): m is RawMessage => Boolean(m));
   for (const message of nestedMessages) {
     if (!message.conversationId) continue;
     let conversation = conversations.find((c) => c.id === message.conversationId);
-    if (!conversation) { conversation = { id: message.conversationId, messages: [] }; conversations.push(conversation); }
+    if (!conversation) { conversation = { id: message.conversationId, participants: [], messages: [] }; conversations.push(conversation); }
+    if (message.senderId && !(conversation.participants ?? []).some((participant) => participant.id === message.senderId)) {
+      (conversation.participants ??= []).push({ id: message.senderId, ...(message.senderName ? { name: message.senderName } : {}), ...(message.senderProfileUrl ? { profileUrl: message.senderProfileUrl } : {}) });
+    }
     if (!(conversation.messages ?? []).some((m) => (m.entityUrn ?? m.id) === (message.entityUrn ?? message.id))) (conversation.messages ??= []).push(message);
+  }
+  let unassignedStandaloneMisses = 0;
+  for (const { candidate } of standaloneMisses) {
+    const conversationId = conversationIdForMessage(candidate);
+    if (!conversationId) { unassignedStandaloneMisses += 1; continue; }
+    let conversation = conversations.find((value) => value.id === conversationId);
+    if (!conversation) { conversation = { id: conversationId, participants: [], messages: [] }; conversations.push(conversation); }
+    conversation.sourceMetadata = {
+      ...conversation.sourceMetadata,
+      parserMisses: Number(conversation.sourceMetadata?.parserMisses ?? 0) + 1,
+      historyComplete: false,
+    };
   }
   const paginationUrls = new Set<string>();
   for (const obj of objects) {
@@ -174,7 +209,7 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       if (next) paginationUrls.add(next);
     }
   }
-  applyRestEnvelopeHistoryEvidence(payload, sourceUrl, sourcePage, conversations);
+  applyRestEnvelopeHistoryEvidence(payload, sourceUrl, sourcePage, conversations, unassignedStandaloneMisses);
   let account: ParsedNetworkData['account'];
   if (/\/voyager\/api\/me(?:[/?#]|$)/i.test(sourceUrl)) {
     const profile = objects.find((obj) => stringAt(obj, 'plainId', 'publicIdentifier') && (stringAt(obj, 'firstName') || stringAt(obj, 'name')));
@@ -186,11 +221,17 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       account = { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(publicIdentifier ? { profileUrl: `https://www.linkedin.com/in/${publicIdentifier}` } : {}) };
     }
   }
-  const relevantMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
+  const relevantMisses = wrappedMisses + standaloneMisses.length;
   return { conversations, ...(account ? { account } : {}), paginationUrls: [...paginationUrls], strategies: conversations.length ? ['network:recursive-voyager'] : [], misses: relevantMisses };
 }
 
-function applyRestEnvelopeHistoryEvidence(payload: unknown, sourceUrl: string, sourcePage: string, conversations: RawConversation[]): void {
+function restEnvelopeElements(payload: unknown): unknown[] {
+  if (!record(payload)) return [];
+  if (Array.isArray(payload.elements)) return payload.elements;
+  return record(payload.data) && Array.isArray(payload.data.elements) ? payload.data.elements : [];
+}
+
+function applyRestEnvelopeHistoryEvidence(payload: unknown, sourceUrl: string, sourcePage: string, conversations: RawConversation[], resourceMisses = 0): void {
   if (!isHistoryResource(sourceUrl) || !record(payload)) return;
   const data = record(payload.data) ? payload.data : undefined;
   const paging = record(payload.paging) ? payload.paging : data && record(data.paging) ? data.paging : undefined;
@@ -202,7 +243,7 @@ function applyRestEnvelopeHistoryEvidence(payload: unknown, sourceUrl: string, s
   const end = paging.hasNextPage === false || (total !== undefined && start + count >= total);
   const resource = historyResourceId(sourceUrl);
   for (const conversation of conversations) {
-    const parserMisses = Number(conversation.sourceMetadata?.parserMisses ?? 0);
+    const parserMisses = Number(conversation.sourceMetadata?.parserMisses ?? 0) + resourceMisses;
     const priorEvidence = readEvidence(conversation.sourceMetadata?.historyEvidence);
     const evidence = [...priorEvidence, { resource, page: sourcePage, start, count, ...(total !== undefined ? { total } : {}), end, valid: parserMisses === 0 }];
     conversation.sourceMetadata = {

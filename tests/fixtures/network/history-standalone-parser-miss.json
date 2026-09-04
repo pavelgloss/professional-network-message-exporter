@@ -1,0 +1,31 @@
+{
+  "elements": [
+    {
+      "entityUrn": "urn:li:messagingMessage:KNOWN-TOP",
+      "conversationUrn": "urn:li:messagingThread:standalone-history",
+      "from": "urn:li:fsd_profile:EXT",
+      "createdAt": 1000,
+      "eventContent": { "attributedBody": { "text": "known top-level shape" } }
+    },
+    {
+      "entityUrn": "urn:li:messagingMessage:UNKNOWN-TOP",
+      "conversationUrn": "urn:li:messagingThread:standalone-history",
+      "from": "urn:li:fsd_profile:EXT",
+      "createdAt": 2000,
+      "eventContent": { "unsupportedAttachment": { "mediaType": "application/octet-stream" } }
+    }
+  ],
+  "included": [
+    {
+      "entityUrn": "urn:li:fsd_profile:EXT",
+      "firstName": "External",
+      "lastName": "Person",
+      "publicIdentifier": "external-person"
+    },
+    {
+      "entityUrn": "urn:li:messagingParticipant:EXT",
+      "miniProfile": "urn:li:fsd_profile:EXT"
+    }
+  ],
+  "paging": { "start": 0, "count": 2, "total": 2, "hasNextPage": false, "links": [] }
+}

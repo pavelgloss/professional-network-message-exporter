@@ -99,7 +99,7 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     const listCoverageComplete = raw.length >= config.limit || domList.complete;
     const passiveHistoryComplete = raw.length > 0 && raw.every((conversation) => conversation.sourceMetadata?.historyComplete === true);
     const historyCoverageComplete = config.allowThreadOpen ? threadCoverageComplete : passiveHistoryComplete;
-    const partial = incomplete || !listCoverageComplete || !historyCoverageComplete || Number(manifest.counts.parserMisses ?? 0) > 0 || manifest.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
+    const partial = coverageIsPartial({ incomplete, listCoverageComplete, historyCoverageComplete, parserMisses: Number(manifest.counts.parserMisses ?? 0), warnings: manifest.warnings });
     if (Number(manifest.counts.parserMisses ?? 0) > 0) manifest.warnings.push('RELEVANT_NETWORK_EVENTS_SKIPPED');
     if (!config.allowThreadOpen && !passiveHistoryComplete) manifest.warnings.push('THREAD_HISTORY_NOT_CONFIRMED');
     if (!listCoverageComplete) manifest.warnings.push(`CONVERSATION_LIST_${domList.scrollReason.toUpperCase()}`);
@@ -138,6 +138,10 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     await closeContext(context);
     await saveManifest(config.diagnosticsDir, manifest).catch(() => undefined);
   }
+}
+
+export function coverageIsPartial(input: { incomplete: boolean; listCoverageComplete: boolean; historyCoverageComplete: boolean; parserMisses: number; warnings: string[] }): boolean {
+  return input.incomplete || !input.listCoverageComplete || !input.historyCoverageComplete || input.parserMisses > 0 || input.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
 }
 
 function rawKey(conversation: RawConversation): string {
