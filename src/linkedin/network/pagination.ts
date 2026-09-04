@@ -4,7 +4,7 @@ import type { RawConversation } from '../../domain/schema.js';
 import { parseNetworkPayload } from './response-parser.js';
 import { assertAllowedReadUrl, readJson } from './read-client.js';
 
-export async function followObservedPagination(request: APIRequestContext, seedUrls: Iterable<string>, manifest: DiagnosticsManifest, maxPages = 30): Promise<RawConversation[]> {
+export async function followObservedPagination(request: APIRequestContext, seedUrls: Iterable<string>, manifest: DiagnosticsManifest, maxPages = 30, csrfToken?: string): Promise<RawConversation[]> {
   const queue: string[] = [];
   for (const value of seedUrls) {
     try { queue.push(assertAllowedReadUrl(value).toString()); } catch { manifest.warnings.push('PAGINATION_URL_BLOCKED'); }
@@ -16,7 +16,7 @@ export async function followObservedPagination(request: APIRequestContext, seedU
     if (visited.has(url)) continue;
     visited.add(url);
     try {
-      const payload = await readJson(request, url);
+      const payload = await readJson(request, url, csrfToken);
       const parsed = parseNetworkPayload(payload, new URL(url).pathname);
       conversations.push(...parsed.conversations);
       for (const next of parsed.paginationUrls) if (!visited.has(next)) queue.push(next);
@@ -26,4 +26,3 @@ export async function followObservedPagination(request: APIRequestContext, seedU
   manifest.counts.paginationPages = visited.size;
   return conversations;
 }
-

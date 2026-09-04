@@ -19,6 +19,13 @@ describe('normalization and stable IDs', () => {
     expect(a.id).toBe(b.id);
     expect(a.messages[0]).toMatchObject({ direction: 'inbound', text: 'Hi\nthere', sequence: 0 });
   });
+
+  it('keeps deterministic ordinal IDs for identical fallback messages', () => {
+    const raw = { id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [0, 1].map(() => ({ senderId: 'me', senderName: 'Me', sentAt: '2026-01-01T00:00:00Z', text: 'same' })) };
+    const messages = normalizeConversation(raw, 'me').messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.id).toBe(`${messages[0]?.id}_2`);
+  });
 });
 
 describe('recruiter classification', () => {
@@ -41,4 +48,3 @@ describe('merge', () => {
     expect(mergeExports(first, make(['one', 'two'])).conversations[0]?.messages.map((m) => m.text)).toEqual(['one', 'two']);
   });
 });
-

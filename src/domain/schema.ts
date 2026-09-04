@@ -92,9 +92,12 @@ export type RawMessage = {
   sourceMetadata?: Record<string, string | number | boolean>;
   sourceOrder?: number;
 };
-export type RawConversation = Partial<Omit<Conversation, 'participants' | 'messages'>> & {
+export type RawConversation = {
   id?: string;
+  entityUrn?: string;
+  url?: string;
   lastActivityAt?: string | number;
   participants?: RawParticipant[];
   messages?: RawMessage[];
+  sourceMetadata?: Record<string, string | number | boolean>;
 };

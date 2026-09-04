@@ -5,14 +5,14 @@ import type { RawMessage } from '../../domain/schema.js';
 import { scrollUntilStable } from '../../browser/scrolling.js';
 import { domSelectors } from './selectors.js';
 
-export async function collectThread(page: Page, conversationId: string, conversationUrl: string, selfProfileUrl?: string): Promise<{ messages: RawMessage[]; strategies: string[]; warnings: string[] }> {
+export async function collectThread(page: Page, conversationId: string, conversationUrl: string, selfProfileUrl?: string, selfId?: string): Promise<{ messages: RawMessage[]; strategies: string[]; warnings: string[] }> {
   const url = canonicalLinkedInUrl(conversationUrl);
   if (!url || !url.includes('/messaging/thread/')) throw new Error('Refusing to open a non-thread URL');
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  return extractThreadFromPage(page, conversationId, selfProfileUrl);
+  return extractThreadFromPage(page, conversationId, selfProfileUrl, selfId);
 }
 
-export async function extractThreadFromPage(page: Page, conversationId: string, selfProfileUrl?: string): Promise<{ messages: RawMessage[]; strategies: string[]; warnings: string[] }> {
+export async function extractThreadFromPage(page: Page, conversationId: string, selfProfileUrl?: string, selfId?: string): Promise<{ messages: RawMessage[]; strategies: string[]; warnings: string[] }> {
   const containerSelector = await firstPresent(page, domSelectors.messageContainers);
   const container = containerSelector ? page.locator(containerSelector).first() : page.locator('main');
   const rowSelector = await firstPresent(container, domSelectors.messageRows);
@@ -44,7 +44,7 @@ export async function extractThreadFromPage(page: Page, conversationId: string, 
     const confidentlyExternal = Boolean(senderProfileUrl && selfProfileUrl && senderProfileUrl !== canonicalLinkedInUrl(selfProfileUrl));
     const direction = isSelf ? 'outbound' as const : confidentlyExternal ? 'inbound' as const : undefined;
     if (!direction) warnings.push(`DIRECTION_UNKNOWN:${explicitId ?? entityUrn ?? i}`);
-    const senderId = sha256Id(isSelf ? 'self' : 'member', [senderProfileUrl, senderName]);
+    const senderId = isSelf && selfId ? selfId : sha256Id(isSelf ? 'self' : 'member', [senderProfileUrl, senderName]);
     const id = explicitId ?? (entityUrn ? entityUrn.split(':').at(-1) : undefined) ?? sha256Id('message', [conversationId, senderId, sentAt, text]);
     messages.push({ id, ...(entityUrn ? { entityUrn } : {}), conversationId, senderId, ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt ? { sentAt } : {}), ...(direction ? { direction } : {}), text, sourceOrder: i });
   }

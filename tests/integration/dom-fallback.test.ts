@@ -17,8 +17,9 @@ describe('DOM fallback against local fixture', () => {
   it('reads list and messages without activating mutation bait', async () => {
     const list = await collectConversationList(page, 100);
     expect(list.conversations.map((c) => c.id)).toEqual(['conv-a', 'conv-b']);
-    const thread = await extractThreadFromPage(page, 'conv-a', 'https://www.linkedin.com/in/account-owner');
+    const thread = await extractThreadFromPage(page, 'conv-a', 'https://www.linkedin.com/in/account-owner', 'self-id');
     expect(thread.messages.map((m) => m.direction)).toEqual(['inbound', 'outbound']);
+    expect(thread.messages[1]?.senderId).toBe('self-id');
     const canary = await page.evaluate(() => (window as unknown as { mutationCanary?: string }).mutationCanary);
     expect(canary).toBeUndefined();
   });

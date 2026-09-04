@@ -2,6 +2,9 @@ import { classifyRecruiter } from './recruiter.js';
 import { ExportSchema, type Conversation, type LinkedInExport, type Message, type Participant } from './schema.js';
 
 function present<T>(next: T | undefined, old: T | undefined): T | undefined { return next ?? old; }
+function latest(...values: Array<string | undefined>): string | undefined {
+  return values.filter((value): value is string => Boolean(value)).sort().at(-1);
+}
 
 function mergeParticipant(old: Participant | undefined, next: Participant, messages: Message[]): Participant {
   const merged = {
@@ -36,7 +39,7 @@ function mergeConversation(old: Conversation | undefined, next: Conversation): C
     id: next.id,
     ...(present(next.entityUrn, old?.entityUrn) ? { entityUrn: present(next.entityUrn, old?.entityUrn)! } : {}),
     ...(present(next.url, old?.url) ? { url: present(next.url, old?.url)! } : {}),
-    ...(present(next.lastActivityAt, latestMessage ?? old?.lastActivityAt) ? { lastActivityAt: present(next.lastActivityAt, latestMessage ?? old?.lastActivityAt)! } : {}),
+    ...(latest(next.lastActivityAt, latestMessage, old?.lastActivityAt) ? { lastActivityAt: latest(next.lastActivityAt, latestMessage, old?.lastActivityAt)! } : {}),
     participants,
     messages,
     ...(present(next.sourceMetadata, old?.sourceMetadata) ? { sourceMetadata: present(next.sourceMetadata, old?.sourceMetadata)! } : {}),
@@ -57,9 +60,8 @@ export function mergeExports(old: LinkedInExport | undefined, next: LinkedInExpo
       ...next.stats,
       exportedConversationCount: sorted.length,
       exportedMessageCount: sorted.reduce((sum, c) => sum + c.messages.length, 0),
-      warnings: [...new Set([...(old?.stats.warnings ?? []), ...next.stats.warnings])].sort(),
+      warnings: [...new Set(next.stats.warnings)].sort(),
       partial: next.stats.partial,
     },
   });
 }
-

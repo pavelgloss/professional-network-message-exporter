@@ -13,9 +13,9 @@ export function assertAllowedReadUrl(rawUrl: string): URL {
   return url;
 }
 
-export async function readJson(request: APIRequestContext, rawUrl: string): Promise<unknown> {
+export async function readJson(request: APIRequestContext, rawUrl: string, csrfToken?: string): Promise<unknown> {
   const url = assertAllowedReadUrl(rawUrl);
-  const response = await request.get(url.toString(), { maxRedirects: 0, failOnStatusCode: false });
+  const response = await request.get(url.toString(), { maxRedirects: 0, failOnStatusCode: false, ...(csrfToken ? { headers: { 'csrf-token': csrfToken } } : {}) });
   if (response.status() >= 300 && response.status() < 400) {
     const location = response.headers().location;
     if (!location) throw new AppError('READ_POLICY_BLOCK', 'Read endpoint redirected without a location');
@@ -27,4 +27,3 @@ export async function readJson(request: APIRequestContext, rawUrl: string): Prom
   if (body.byteLength > 8 * 1024 * 1024) throw new Error('LinkedIn read response exceeded safe size limit');
   return JSON.parse(body.toString('utf8'));
 }
-

@@ -55,14 +55,17 @@ export function normalizeConversation(raw: RawConversation, selfId?: string): Co
   const rawMessages = raw.messages ?? [];
   const participants = rawParticipants.map((p, i) => participant({ ...p, id: provisionalIds[i]!, isSelf: p.isSelf ?? provisionalIds[i] === selfId }, rawMessages));
   const byId = new Map(participants.map((p) => [p.id, p]));
-  const messages = rawMessages.map((message, sourceOrder) => normalizeMessage(message, id, byId, selfId, sourceOrder));
+  const selfIds = new Set(participants.filter((p) => p.isSelf).map((p) => p.id));
+  if (selfId) selfIds.add(selfId);
+  const fallbackCounts = new Map<string, number>();
+  const messages = rawMessages.map((message, sourceOrder) => normalizeMessage(message, id, byId, selfIds, sourceOrder, fallbackCounts));
   messages.sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '') || Number(a.sourceMetadata?.sourceOrder ?? 0) - Number(b.sourceMetadata?.sourceOrder ?? 0) || a.id.localeCompare(b.id));
   messages.forEach((message, sequence) => { message.sequence = sequence; });
   const lastActivityAt = normalizeTimestamp(raw.lastActivityAt) ?? [...messages].reverse().find((m) => m.sentAt)?.sentAt;
   return { id, ...(entityUrn ? { entityUrn } : {}), ...(url ? { url } : {}), ...(lastActivityAt ? { lastActivityAt } : {}), participants, messages };
 }
 
-function normalizeMessage(raw: RawMessage, conversationId: string, participants: Map<string, ReturnType<typeof participant>>, selfId: string | undefined, sourceOrder: number) {
+function normalizeMessage(raw: RawMessage, conversationId: string, participants: Map<string, ReturnType<typeof participant>>, selfIds: Set<string>, sourceOrder: number, fallbackCounts: Map<string, number>) {
   const entityUrn = normalizeUrn(raw.entityUrn);
   const senderId = cleanText(raw.senderId) ?? sha256Id('member', [cleanText(raw.senderName) ?? 'Unknown sender']);
   const sender = participants.get(senderId);
@@ -72,7 +75,11 @@ function normalizeMessage(raw: RawMessage, conversationId: string, participants:
   const text = cleanText(raw.text) ?? '';
   const messageType = cleanText(raw.messageType);
   const attachments = raw.attachments?.map((a) => ({ ...(cleanText(a.id) ? { id: cleanText(a.id)! } : {}), ...(cleanText(a.name) ? { name: cleanText(a.name)! } : {}), ...(cleanText(a.type) ? { type: cleanText(a.type)! } : {}), ...(canonicalLinkedInUrl(a.url) ? { url: canonicalLinkedInUrl(a.url)! } : {}) })).filter((a) => Object.keys(a).length);
-  const id = cleanText(raw.id) ?? extractUrnId(entityUrn) ?? sha256Id('message', [conversationId, senderId, sentAt, messageType, text, attachments]);
-  const direction = raw.direction ?? (selfId && senderId === selfId ? 'outbound' : 'inbound');
+  const stableId = cleanText(raw.id) ?? extractUrnId(entityUrn);
+  const fallbackId = sha256Id('message', [conversationId, senderId, sentAt, messageType, text, attachments]);
+  const ordinal = (fallbackCounts.get(fallbackId) ?? 0) + 1;
+  if (!stableId) fallbackCounts.set(fallbackId, ordinal);
+  const id = stableId ?? (ordinal === 1 ? fallbackId : `${fallbackId}_${ordinal}`);
+  const direction = raw.direction ?? (selfIds.has(senderId) ? 'outbound' : 'inbound');
   return { id, ...(entityUrn ? { entityUrn } : {}), conversationId, senderId, senderName, ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt ? { sentAt } : {}), direction, sequence: sourceOrder, text, ...(messageType ? { messageType } : {}), ...(attachments?.length ? { attachments } : {}), sourceMetadata: { sourceOrder: raw.sourceOrder ?? sourceOrder } };
 }
