@@ -1,0 +1,29 @@
+{
+  "elements": [
+    "urn:li:messagingMessage:KNOWN-REF",
+    "urn:li:messagingMessage:UNKNOWN-REF"
+  ],
+  "included": [
+    {
+      "entityUrn": "urn:li:messagingMessage:KNOWN-REF",
+      "conversationUrn": "urn:li:messagingThread:referenced-history",
+      "from": "urn:li:fsd_profile:EXT-REF",
+      "createdAt": 1000,
+      "eventContent": { "attributedBody": { "text": "known referenced shape" } }
+    },
+    {
+      "entityUrn": "urn:li:messagingMessage:UNKNOWN-REF",
+      "conversationUrn": "urn:li:messagingThread:referenced-history",
+      "from": "urn:li:fsd_profile:EXT-REF",
+      "createdAt": 2000,
+      "eventContent": { "unsupportedAttachment": { "mediaType": "application/octet-stream" } }
+    },
+    {
+      "entityUrn": "urn:li:fsd_profile:EXT-REF",
+      "firstName": "External",
+      "lastName": "Reference",
+      "publicIdentifier": "external-reference"
+    }
+  ],
+  "paging": { "start": 0, "count": 2, "total": 2, "hasNextPage": false, "links": [] }
+}

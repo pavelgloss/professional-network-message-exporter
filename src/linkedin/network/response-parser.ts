@@ -3,6 +3,7 @@ import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn,
 import type { RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
 
 type JsonRecord = Record<string, unknown>;
+type IncludedIndex = { records: Map<string, JsonRecord>; ambiguous: Set<string> };
 export type ParsedNetworkData = {
   conversations: RawConversation[];
   account?: { id?: string; entityUrn?: string; name?: string; profileUrl?: string };
@@ -33,17 +34,25 @@ function urnAt(obj: JsonRecord, ...keys: string[]): string | undefined {
   return undefined;
 }
 
-function profileFrom(value: JsonRecord, index: Map<string, JsonRecord>): JsonRecord {
+function lookupIncluded(index: IncludedIndex, value: string): JsonRecord | undefined {
+  const key = normalizeUrn(value) ?? value;
+  return index.ambiguous.has(key) ? undefined : index.records.get(key);
+}
+
+function profileFrom(value: JsonRecord, index: IncludedIndex): JsonRecord {
   for (const key of ['miniProfile', 'profile', 'participant', 'actor', '*miniProfile', '*profile']) {
     if (record(value[key])) return value[key] as JsonRecord;
-    if (typeof value[key] === 'string' && index.has(value[key] as string)) return index.get(value[key] as string)!;
+    if (typeof value[key] === 'string') {
+      const resolved = lookupIncluded(index, value[key] as string);
+      if (resolved) return resolved;
+    }
   }
   return value;
 }
 
-function participantFrom(value: unknown, index: Map<string, JsonRecord>): RawParticipant | undefined {
+function participantFrom(value: unknown, index: IncludedIndex): RawParticipant | undefined {
   let obj: JsonRecord | undefined;
-  if (typeof value === 'string') obj = index.get(value);
+  if (typeof value === 'string') obj = lookupIncluded(index, value);
   else if (record(value)) obj = value;
   if (!obj) return undefined;
   const profile = profileFrom(obj, index);
@@ -83,7 +92,7 @@ function looksLikeMessageCandidate(obj: JsonRecord): boolean {
   return hasSender && hasConversation && hasTimestamp && hasContentShape;
 }
 
-function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
+function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
@@ -93,7 +102,7 @@ function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage
   // exporting an empty message and claiming completeness.
   if (!looksLikeMessageCandidate(obj) || !text) return undefined;
   const senderValue = ['from', '*from', 'sender', '*sender', 'actor', '*actor'].map((key) => obj[key]).find((value) => record(value) || typeof value === 'string');
-  const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? index.get(senderValue) : undefined;
+  const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? lookupIncluded(index, senderValue) : undefined;
   const senderProfile = senderObj ? profileFrom(senderObj, index) : undefined;
   const senderName = senderProfile ? cleanText(stringAt(senderProfile, 'name', 'fullName')) ?? cleanText([stringAt(senderProfile, 'firstName'), stringAt(senderProfile, 'lastName')].filter(Boolean).join(' ')) : undefined;
   const senderProfileUrl = senderProfile && stringAt(senderProfile, 'publicIdentifier') ? `https://www.linkedin.com/in/${stringAt(senderProfile, 'publicIdentifier')}` : undefined;
@@ -115,7 +124,7 @@ function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
-function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage: string): RawConversation | undefined {
+function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string): RawConversation | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
@@ -123,7 +132,7 @@ function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourc
   if (!looksConversation) return undefined;
   const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
-  const resolvedMessageValues = messageValues.map((m) => typeof m === 'string' ? index.get(m) : m);
+  const resolvedMessageValues = messageValues.map((value) => resolveIncludedReference(value, index).object);
   const messages = resolvedMessageValues.filter(record).map((m) => messageFrom(m, index, sourcePage, entityUrn)).filter((m): m is RawMessage => Boolean(m));
   const parserMisses = messageValues.length - messages.length;
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
@@ -156,18 +165,15 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
   const sourcePage = sha256Id('network-page', [sourceUrl || 'inline']);
   const objects: JsonRecord[] = [];
   walk(payload, (obj) => objects.push(obj));
-  const index = new Map<string, JsonRecord>();
-  for (const obj of objects) {
-    for (const key of ['entityUrn', 'urn', 'objectUrn']) {
-      const urn = stringAt(obj, key);
-      if (urn?.includes('urn:li:')) index.set(urn, obj);
-    }
-  }
+  const index = buildIncludedIndex(payload);
   const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage)).filter((c): c is RawConversation => Boolean(c));
   const wrappedMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
-  const standaloneCandidates = isHistoryResource(sourceUrl) ? restEnvelopeElements(payload).filter(record).filter(looksLikeMessageCandidate) : [];
+  const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value) => {
+    const resolution = resolveIncludedReference(value, index);
+    return { value, resolved: resolution.object, candidate: resolution.messageLike };
+  }).filter((entry) => entry.candidate) : [];
   const standaloneMisses = standaloneCandidates
-    .map((candidate) => ({ candidate, parsed: messageFrom(candidate, index, sourcePage) }))
+    .map((entry) => ({ ...entry, parsed: entry.resolved ? messageFrom(entry.resolved, index, sourcePage) : undefined }))
     .filter((result) => !result.parsed?.conversationId);
   const nestedMessages = objects.map((obj) => messageFrom(obj, index, sourcePage)).filter((m): m is RawMessage => Boolean(m));
   for (const message of nestedMessages) {
@@ -180,8 +186,8 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
     if (!(conversation.messages ?? []).some((m) => (m.entityUrn ?? m.id) === (message.entityUrn ?? message.id))) (conversation.messages ??= []).push(message);
   }
   let unassignedStandaloneMisses = 0;
-  for (const { candidate } of standaloneMisses) {
-    const conversationId = conversationIdForMessage(candidate);
+  for (const { resolved } of standaloneMisses) {
+    const conversationId = resolved ? conversationIdForMessage(resolved) : undefined;
     if (!conversationId) { unassignedStandaloneMisses += 1; continue; }
     let conversation = conversations.find((value) => value.id === conversationId);
     if (!conversation) { conversation = { id: conversationId, participants: [], messages: [] }; conversations.push(conversation); }
@@ -229,6 +235,72 @@ function restEnvelopeElements(payload: unknown): unknown[] {
   if (!record(payload)) return [];
   if (Array.isArray(payload.elements)) return payload.elements;
   return record(payload.data) && Array.isArray(payload.data.elements) ? payload.data.elements : [];
+}
+
+function looksLikeMessageReference(value: string): boolean {
+  const entityType = normalizeUrn(value)?.match(/^urn:li:([^:]+):/i)?.[1];
+  return /(?:message|event)/i.test(entityType ?? '');
+}
+
+function uniqueEnvelopeElements(values: unknown[]): unknown[] {
+  const unique = new Map<string, unknown>();
+  for (const value of values) {
+    const identity = typeof value === 'string'
+      ? normalizeUrn(value) ?? `string:${value}`
+      : record(value)
+        ? urnAt(value, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn') ?? sha256Id('envelope-object', [value])
+        : sha256Id('envelope-value', [value]);
+    if (!unique.has(identity)) unique.set(identity, value);
+  }
+  return [...unique.values()];
+}
+
+function buildIncludedIndex(payload: unknown): IncludedIndex {
+  const index: IncludedIndex = { records: new Map(), ambiguous: new Set() };
+  walk(payload, (container) => {
+    const included = Array.isArray(container.included)
+      ? container.included
+      : record(container.included) && Array.isArray(container.included.elements)
+        ? container.included.elements
+        : undefined;
+    if (!included) return;
+    for (const value of included) {
+      if (!record(value)) continue;
+      for (const key of ['entityUrn', 'urn', 'objectUrn', 'eventUrn', 'messageUrn']) {
+        const raw = stringAt(value, key);
+        const urn = normalizeUrn(raw);
+        if (!urn || index.ambiguous.has(urn)) continue;
+        const prior = index.records.get(urn);
+        if (prior && prior !== value) { index.records.delete(urn); index.ambiguous.add(urn); }
+        else index.records.set(urn, value);
+      }
+    }
+  });
+  return index;
+}
+
+type ReferenceResolution = { object?: JsonRecord; messageLike: boolean };
+
+function resolveIncludedReference(value: unknown, index: IncludedIndex, depth = 0, seen = new Set<string>()): ReferenceResolution {
+  if (depth > 8) return { messageLike: typeof value === 'string' && looksLikeMessageReference(value) };
+  if (record(value)) {
+    if (looksLikeMessageCandidate(value)) return { object: value, messageLike: true };
+    const nested = ['*event', 'event', '*message', 'message', '*entity', 'entity']
+      .map((key) => ({ key, value: value[key] }))
+      .find((candidate) => typeof candidate.value === 'string' || record(candidate.value));
+    if (!nested) return { object: value, messageLike: false };
+    const resolution = resolveIncludedReference(nested.value, index, depth + 1, seen);
+    return { ...resolution, messageLike: /event|message/i.test(nested.key) || resolution.messageLike };
+  }
+  if (typeof value !== 'string') return { messageLike: false };
+  const messageLike = looksLikeMessageReference(value);
+  const reference = normalizeUrn(value);
+  if (!reference || seen.has(reference)) return { messageLike };
+  seen.add(reference);
+  const resolved = lookupIncluded(index, reference);
+  if (!resolved) return { messageLike };
+  const nested = resolveIncludedReference(resolved, index, depth + 1, seen);
+  return { ...nested, messageLike: messageLike || nested.messageLike };
 }
 
 function applyRestEnvelopeHistoryEvidence(payload: unknown, sourceUrl: string, sourcePage: string, conversations: RawConversation[], resourceMisses = 0): void {

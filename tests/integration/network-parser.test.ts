@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseNetworkPayload } from '../../src/linkedin/network/response-parser.js';
+import { parseNetworkPayload, type ParsedNetworkData } from '../../src/linkedin/network/response-parser.js';
 import { assertAllowedReadUrl } from '../../src/linkedin/network/read-client.js';
 import { createManifest } from '../../src/io/diagnostics.js';
 import { followObservedPagination } from '../../src/linkedin/network/pagination.js';
@@ -11,6 +11,40 @@ import { coalesceRaw, coverageIsPartial } from '../../src/linkedin/exporter.js';
 import { normalizeConversation } from '../../src/domain/normalize.js';
 import { loadExport, persistExportResult, saveExport } from '../../src/io/export-store.js';
 import type { LinkedInExport } from '../../src/domain/schema.js';
+
+async function expectPartialPersistence(parsed: ParsedNetworkData, prefix: string): Promise<void> {
+  const partial = coverageIsPartial({
+    incomplete: false,
+    listCoverageComplete: true,
+    historyCoverageComplete: parsed.conversations.every((conversation) => conversation.sourceMetadata?.historyComplete === true),
+    parserMisses: parsed.misses,
+    warnings: [],
+  });
+  expect(partial).toBe(true);
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  const output = path.join(directory, 'messages.json');
+  const complete: LinkedInExport = {
+    schemaVersion: 1,
+    exportedAt: '2026-01-01T00:00:00.000Z',
+    account: { id: 'SELF', name: 'Account Owner' },
+    stats: { requestedConversationLimit: 100, exportedConversationCount: 0, exportedMessageCount: 0, partial: false, warnings: [] },
+    conversations: [],
+  };
+  await saveExport(output, complete);
+  const completeBytes = await readFile(output, 'utf8');
+  const conversations = parsed.conversations.map((conversation) => normalizeConversation(conversation, 'SELF'));
+  const candidate: LinkedInExport = {
+    ...complete,
+    exportedAt: '2026-01-02T00:00:00.000Z',
+    stats: { requestedConversationLimit: 100, exportedConversationCount: conversations.length, exportedMessageCount: conversations.reduce((sum, conversation) => sum + conversation.messages.length, 0), partial, warnings: ['RELEVANT_NETWORK_EVENTS_SKIPPED'] },
+    conversations,
+  };
+  const persisted = await persistExportResult(output, candidate);
+  expect(persisted.destination).toBe(`${output}.partial`);
+  expect(await readFile(output, 'utf8')).toBe(completeBytes);
+  expect((await loadExport(`${output}.partial`))?.stats.partial).toBe(true);
+}
 
 describe('network parser', () => {
   it('parses anonymized Voyager envelopes and explicit pagination', async () => {
@@ -70,37 +104,47 @@ describe('network parser', () => {
     expect(parsed.misses).toBe(1);
     expect(parsed.conversations[0]?.sourceMetadata).toMatchObject({ parserMisses: 1, historyComplete: false });
 
-    const partial = coverageIsPartial({
-      incomplete: false,
-      listCoverageComplete: true,
-      historyCoverageComplete: parsed.conversations.every((conversation) => conversation.sourceMetadata?.historyComplete === true),
-      parserMisses: parsed.misses,
-      warnings: [],
-    });
-    expect(partial).toBe(true);
+    await expectPartialPersistence(parsed, 'linkedin-standalone-miss-');
+  });
 
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'linkedin-standalone-miss-'));
-    const output = path.join(directory, 'messages.json');
-    const complete: LinkedInExport = {
-      schemaVersion: 1,
-      exportedAt: '2026-01-01T00:00:00.000Z',
-      account: { id: 'SELF', name: 'Account Owner' },
-      stats: { requestedConversationLimit: 100, exportedConversationCount: 0, exportedMessageCount: 0, partial: false, warnings: [] },
-      conversations: [],
-    };
-    await saveExport(output, complete);
-    const completeBytes = await readFile(output, 'utf8');
-    const conversations = parsed.conversations.map((conversation) => normalizeConversation(conversation, 'SELF'));
-    const candidate: LinkedInExport = {
-      ...complete,
-      exportedAt: '2026-01-02T00:00:00.000Z',
-      stats: { requestedConversationLimit: 100, exportedConversationCount: conversations.length, exportedMessageCount: 1, partial, warnings: ['RELEVANT_NETWORK_EVENTS_SKIPPED'] },
-      conversations,
-    };
-    const persisted = await persistExportResult(output, candidate);
-    expect(persisted.destination).toBe(`${output}.partial`);
-    expect(await readFile(output, 'utf8')).toBe(completeBytes);
-    expect((await loadExport(`${output}.partial`))?.stats.partial).toBe(true);
+  it('resolves top-level event references and fails closed for referenced unsupported content', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-referenced-parser-miss.json', import.meta.url), 'utf8'));
+    const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');
+    expect(parsed.conversations).toHaveLength(1);
+    expect(parsed.conversations[0]?.messages?.map((message) => message.id)).toEqual(['KNOWN-REF']);
+    expect(parsed.conversations[0]?.participants).toEqual([expect.objectContaining({ id: 'EXT-REF', name: 'External Reference' })]);
+    expect(parsed.misses).toBe(1);
+    expect(parsed.conversations[0]?.sourceMetadata).toMatchObject({ parserMisses: 1, historyComplete: false });
+    await expectPartialPersistence(parsed, 'linkedin-reference-miss-');
+  });
+
+  it('counts unresolved message refs, ignores profile refs, and deduplicates repeated refs', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-referenced-parser-miss.json', import.meta.url), 'utf8'));
+    fixture.elements = [
+      'urn:li:messagingMessage:KNOWN-REF',
+      'urn:li:messagingMessage:KNOWN-REF',
+      'urn:li:messagingMessage:MISSING-REF',
+      'urn:li:messagingMessage:MISSING-REF',
+      'urn:li:fsd_profile:MISSING-PROFILE',
+    ];
+    fixture.paging = { start: 0, count: 2, total: 2, hasNextPage: false, links: [] };
+    const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');
+    expect(parsed.conversations[0]?.messages?.map((message) => message.id)).toEqual(['KNOWN-REF']);
+    expect(parsed.misses).toBe(1);
+    expect(parsed.conversations[0]?.sourceMetadata?.historyComplete).toBe(false);
+  });
+
+  it('bounds cyclic included reference resolution and fails an event chain closed', () => {
+    const parsed = parseNetworkPayload({
+      elements: ['urn:li:collection:CHAIN-A'],
+      included: [
+        { entityUrn: 'urn:li:collection:CHAIN-A', '*event': 'urn:li:collection:CHAIN-B' },
+        { entityUrn: 'urn:li:collection:CHAIN-B', '*event': 'urn:li:collection:CHAIN-A' },
+      ],
+      paging: { start: 0, count: 1, total: 1, hasNextPage: false },
+    }, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=1');
+    expect(parsed.misses).toBe(1);
+    expect(parsed.conversations).toHaveLength(0);
   });
 
   it('derives an observed Rest.li cursor without changing the GET template', async () => {
