@@ -19,6 +19,14 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
 }
 
 export async function installRequestGuard(context: BrowserContext, manifest: DiagnosticsManifest, logger: Logger): Promise<void> {
+  await context.routeWebSocket('**/*', async (webSocket) => {
+    manifest.counts.blockedWebSockets = (manifest.counts.blockedWebSockets ?? 0) + 1;
+    let origin = 'invalid';
+    let pathname = '/';
+    try { const url = new URL(webSocket.url()); origin = url.origin; pathname = url.pathname; } catch { /* redacted defaults */ }
+    logger.warn('websocket-blocked', { origin, pathname });
+    await webSocket.close({ code: 1008, reason: 'Read-only export blocks WebSockets' });
+  });
   await context.route('**/*', async (route: Route) => {
     const request = route.request();
     const decision = requestPolicy(request.method(), request.url());
