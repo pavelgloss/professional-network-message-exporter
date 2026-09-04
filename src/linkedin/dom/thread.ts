@@ -79,7 +79,7 @@ async function parseVisibleMessages(rows: Locator, conversationId: string, selfP
     if (!direction) warnings.push(`DIRECTION_UNKNOWN:${explicitId ?? entityUrn ?? index}`);
     const senderId = isSelf && selfId ? selfId : senderProfileUrl || senderName ? sha256Id(isSelf ? 'self' : 'member', [senderProfileUrl, senderName]) : undefined;
     const id = explicitId ?? (entityUrn ? entityUrn.split(':').at(-1) : undefined);
-    messages.push({ ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), conversationId, ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt ? { sentAt } : {}), ...(direction ? { direction } : {}), text, sourceOrder: index });
+    messages.push({ ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), conversationId, ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt ? { sentAt } : {}), ...(direction ? { direction } : {}), text, sourceOrder: index, ...(!direction ? { sourceMetadata: { directionEvidence: 'unknown-dom' } } : {}) });
   }
   return { messages, warnings };
 }

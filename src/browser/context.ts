@@ -15,7 +15,11 @@ export async function launchContext(config: AppConfig, mode: 'login' | 'export',
     acceptDownloads: false,
   });
   context.setDefaultTimeout(config.timeoutMs);
-  if (mode === 'export') await installRequestGuard(context, manifest, logger);
+  if (mode === 'export') {
+    await installRequestGuard(context, manifest, logger);
+    // launchPersistentContext may create an initial about:blank page. Recreate it so
+    // every operational export page is born only after HTTP and WebSocket guards.
+    await Promise.all(context.pages().map((page) => page.close()));
+  }
   return context;
 }
-

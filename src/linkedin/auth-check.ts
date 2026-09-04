@@ -16,7 +16,6 @@ export async function detectAuthState(page: Page): Promise<AuthState> {
 }
 
 export function assertAuthenticated(state: AuthState): void {
-  if (state === 'challenge') throw new AppError('AUTH_CHALLENGE', 'LinkedIn requires MFA/CAPTCHA. Run: npm run login', 3);
-  if (state === 'required') throw new AppError('AUTH_REQUIRED', 'LinkedIn session is missing or expired. Run: npm run login', 3);
+  if (state === 'challenge') throw new AppError('AUTH_CHALLENGE', 'LinkedIn requires MFA/CAPTCHA. Run: npm.cmd run login', 3);
+  if (state === 'required') throw new AppError('AUTH_REQUIRED', 'LinkedIn session is missing or expired. Run: npm.cmd run login', 3);
 }
-

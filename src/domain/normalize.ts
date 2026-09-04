@@ -84,6 +84,7 @@ function normalizeMessage(raw: RawMessage, conversationId: string, participants:
   if (!stableId) fallbackCounts.set(fallbackId, ordinal);
   const id = stableId ?? (ordinal === 1 ? fallbackId : `${fallbackId}_${ordinal}`);
   let direction = raw.direction;
+  if (!direction && raw.sourceMetadata?.directionEvidence === 'unknown-dom') throw new AppError('VALIDATION_FAILED', `DOM message direction is ambiguous in conversation ${conversationId}`);
   if (direction === 'outbound' && !selfIds.has(senderId)) throw new AppError('VALIDATION_FAILED', `Outbound sender does not match the account in conversation ${conversationId}`);
   if (direction === 'inbound' && selfIds.has(senderId)) throw new AppError('VALIDATION_FAILED', `Inbound sender matches the account in conversation ${conversationId}`);
   if (!direction) {

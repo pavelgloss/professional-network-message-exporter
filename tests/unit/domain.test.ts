@@ -48,6 +48,7 @@ describe('normalization and stable IDs', () => {
   it('fails closed for missing or unlinked sender identity', () => {
     expect(() => normalizeConversation({ id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [{ text: 'ambiguous' }] }, 'me')).toThrow(/sender identity/);
     expect(() => normalizeConversation({ id: 'c', participants: [{ id: 'other', name: 'Other' }], messages: [{ senderId: 'unlinked', senderName: 'Unknown', text: 'ambiguous' }] }, 'me')).toThrow(/cannot be proven/);
+    expect(() => normalizeConversation({ id: 'c', participants: [{ id: 'other', name: 'Other' }], messages: [{ senderId: 'other', senderName: 'Other', text: 'ambiguous DOM', sourceMetadata: { directionEvidence: 'unknown-dom' } }] }, 'me')).toThrow(/DOM message direction is ambiguous/);
   });
 
   it('matches self across supported person URN namespaces', () => {
