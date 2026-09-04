@@ -8,7 +8,7 @@ describe('config', () => {
     const config = parseConfig(['export', '--limit', '17'], {}, 'C:\\workspace');
     expect(config.limit).toBe(17);
     expect(config.allowThreadOpen).toBe(false);
-    expect(path.isAbsolute(config.profileDir)).toBe(true);
+    expect(path.isAbsolute(config.statePath)).toBe(true);
   });
   it('rejects dangerous roots', () => {
     expect(() => parseConfig(['export', '--output', 'C:\\'], {}, 'C:\\workspace')).toThrow(/root/);

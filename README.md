@@ -21,7 +21,10 @@ npm.cmd run login
 ```
 
 Dokončete login, MFA nebo CAPTCHA ručně pouze v otevřeném Chromium. Aplikace heslo
-nečte. Session se uloží do ignorované složky `.auth/linkedin-chromium/`.
+nečte. Login používá nový dočasný browser context se zakázanými service workery a
+atomicky uloží pouze cookies/local storage do tajného, ignorovaného souboru
+`.auth/linkedin-storage-state.json`. Staré persistentní browser profily aplikace
+nepoužívá.
 
 ## Export
 
@@ -30,6 +33,9 @@ Bezpečný network-first režim:
 ```powershell
 npm.cmd run export -- --limit 100
 ```
+
+Každý export vytvoří fresh ephemeral Chromium context, načte pouze storage state,
+zakáže service workery a nainstaluje HTTP/WebSocket guardy před vytvořením stránky.
 
 Úplný výsledek je v `data/linkedin/messages.json`; reálný export, session i diagnostika
 jsou v `.gitignore`. Neúplný běh vrátí nenulový exit code `5`, uloží bezpečný kandidát

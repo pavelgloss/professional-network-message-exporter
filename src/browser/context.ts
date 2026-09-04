@@ -1,25 +1,36 @@
-import { mkdir } from 'node:fs/promises';
 import { chromium, type BrowserContext } from 'playwright';
 import type { AppConfig } from '../config.js';
+import { loadStorageState } from '../auth/session.js';
 import type { DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
 import { installRequestGuard } from './request-guard.js';
 
-export async function launchContext(config: AppConfig, mode: 'login' | 'export', manifest: DiagnosticsManifest, logger: Logger): Promise<BrowserContext> {
-  await mkdir(config.profileDir, { recursive: true });
-  const context = await chromium.launchPersistentContext(config.profileDir, {
-    headless: mode === 'login' ? false : config.headless,
-    serviceWorkers: mode === 'export' ? 'block' : 'allow',
-    viewport: { width: 1440, height: 1000 },
-    locale: 'en-US',
-    acceptDownloads: false,
-  });
-  context.setDefaultTimeout(config.timeoutMs);
-  if (mode === 'export') {
-    await installRequestGuard(context, manifest, logger);
-    // launchPersistentContext may create an initial about:blank page. Recreate it so
-    // every operational export page is born only after HTTP and WebSocket guards.
-    await Promise.all(context.pages().map((page) => page.close()));
+type LaunchOptions = { headless?: boolean };
+
+export async function launchContext(config: AppConfig, mode: 'login' | 'export', manifest: DiagnosticsManifest, logger: Logger, options: LaunchOptions = {}): Promise<BrowserContext> {
+  // Read and validate secret state before launching a browser. Missing state cannot
+  // accidentally trigger a request to LinkedIn.
+  const storageState = mode === 'export' ? await loadStorageState(config.statePath) : undefined;
+  const browser = await chromium.launch({ headless: options.headless ?? (mode === 'login' ? false : config.headless) });
+  try {
+    const context = await browser.newContext({
+      ...(storageState ? { storageState } : {}),
+      serviceWorkers: 'block',
+      viewport: { width: 1440, height: 1000 },
+      locale: 'en-US',
+      acceptDownloads: false,
+    });
+    context.setDefaultTimeout(config.timeoutMs);
+    if (mode === 'export') await installRequestGuard(context, manifest, logger);
+    return context;
+  } catch (error) {
+    await browser.close();
+    throw error;
   }
-  return context;
+}
+
+export async function closeContext(context: BrowserContext): Promise<void> {
+  const browser = context.browser();
+  await context.close().catch(() => undefined);
+  await browser?.close().catch(() => undefined);
 }

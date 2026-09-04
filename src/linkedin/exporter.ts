@@ -3,7 +3,7 @@ import { AppError } from '../errors.js';
 import type { Logger } from '../logger.js';
 import { createManifest, saveContentDiagnostics, saveManifest } from '../io/diagnostics.js';
 import { persistExportResult } from '../io/export-store.js';
-import { launchContext } from '../browser/context.js';
+import { closeContext, launchContext } from '../browser/context.js';
 import { detectAuthState, assertAuthenticated } from './auth-check.js';
 import { readAccountFromDom, type Account } from './account.js';
 import { attachNetworkCapture } from './network/capture.js';
@@ -134,7 +134,7 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
   } finally {
     capture.detach();
     manifest.finishedAt = new Date().toISOString();
-    await context.close().catch(() => undefined);
+    await closeContext(context);
     await saveManifest(config.diagnosticsDir, manifest).catch(() => undefined);
   }
 }

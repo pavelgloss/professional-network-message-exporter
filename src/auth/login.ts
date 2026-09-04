@@ -3,6 +3,8 @@ import type { Logger } from '../logger.js';
 import { createManifest } from '../io/diagnostics.js';
 import { launchContext } from '../browser/context.js';
 import { detectAuthState } from '../linkedin/auth-check.js';
+import { saveStorageState } from './session.js';
+import { closeContext } from '../browser/context.js';
 
 export async function login(config: AppConfig, logger: Logger): Promise<void> {
   const context = await launchContext(config, 'login', createManifest(), logger);
@@ -13,6 +15,7 @@ export async function login(config: AppConfig, logger: Logger): Promise<void> {
     const deadline = Date.now() + Math.max(config.timeoutMs, 10 * 60_000);
     while (Date.now() < deadline) {
       if (await detectAuthState(page) === 'authenticated') {
+        await saveStorageState(context, config.statePath);
         logger.info('session-ready');
         return;
       }
@@ -20,7 +23,6 @@ export async function login(config: AppConfig, logger: Logger): Promise<void> {
     }
     throw new Error('Login timed out; run npm run login again.');
   } finally {
-    await context.close();
+    await closeContext(context);
   }
 }
-

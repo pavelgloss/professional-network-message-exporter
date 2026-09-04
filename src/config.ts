@@ -8,7 +8,7 @@ loadDotenv({ quiet: true });
 export type Command = 'login' | 'export';
 export type AppConfig = {
   command: Command;
-  profileDir: string;
+  statePath: string;
   outputPath: string;
   diagnosticsDir: string;
   limit: number;
@@ -33,7 +33,7 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
 
 type ParsedArgs = { values: Map<string, string>; flags: Set<string> };
 function parseArguments(args: string[], command: Command): ParsedArgs {
-  const valueOptions = new Set(command === 'login' ? ['--profile-dir', '--timeout-ms'] : ['--profile-dir', '--output', '--limit', '--timeout-ms']);
+  const valueOptions = new Set(command === 'login' ? ['--state-file', '--timeout-ms'] : ['--state-file', '--output', '--limit', '--timeout-ms']);
   const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--allow-thread-open', '--diagnostics-content']);
   const parsed: ParsedArgs = { values: new Map(), flags: new Set() };
   for (let index = 1; index < args.length; index += 1) {
@@ -70,13 +70,13 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
   const command = args[0];
   if (command !== 'login' && command !== 'export') throw new AppError('CONFIG_INVALID', 'Usage: npm run login | npm run export -- [options]', 2);
   const parsed = parseArguments(args, command);
-  const profileDir = safePath(parsed.values.get('--profile-dir') ?? env.LINKEDIN_PROFILE_DIR ?? '.auth/linkedin-chromium', cwd, 'profile directory');
+  const statePath = safePath(parsed.values.get('--state-file') ?? env.LINKEDIN_STATE_FILE ?? '.auth/linkedin-storage-state.json', cwd, 'session state file');
   const outputPath = safePath(parsed.values.get('--output') ?? env.LINKEDIN_OUTPUT ?? 'data/linkedin/messages.json', cwd, 'output path');
   const limit = int(parsed.values.get('--limit') ?? env.LINKEDIN_LIMIT, 100, 1, 500, 'limit');
   const timeoutMs = int(parsed.values.get('--timeout-ms') ?? env.LINKEDIN_TIMEOUT_MS, 30_000, 5_000, 300_000, 'timeout');
   return {
     command,
-    profileDir,
+    statePath,
     outputPath,
     diagnosticsDir: path.join(path.dirname(outputPath), 'diagnostics'),
     limit,

@@ -38,7 +38,7 @@ describe('unauthenticated CLI', () => {
 
   it('npm.cmd preserves space-separated options and the CLI rejects unknown ones', () => {
     if (process.platform !== 'win32') return;
-    const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd run export -- --limit 17 --profile-dir C:\\Temp\\linkedin-cli-profile --definitely-unknown'], {
+    const result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd run export -- --limit 17 --state-file C:\\Temp\\linkedin-state.json --definitely-unknown'], {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
       encoding: 'utf8',
       timeout: 15_000,
