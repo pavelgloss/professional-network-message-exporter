@@ -1,0 +1,11 @@
+{
+  "elements": [{
+    "entityUrn": "urn:li:messagingThread:history-miss",
+    "participants": [{ "entityUrn": "urn:li:fsd_profile:EXT", "firstName": "External", "lastName": "Person" }],
+    "events": [
+      { "entityUrn": "urn:li:messagingMessage:KNOWN", "from": "urn:li:fsd_profile:EXT", "createdAt": 1000, "eventContent": { "attributedBody": { "text": "known shape" } } },
+      { "entityUrn": "urn:li:messagingMessage:UNKNOWN", "from": "urn:li:fsd_profile:EXT", "createdAt": 2000, "eventContent": { "unsupportedCard": { "value": "not parsed as text" } } }
+    ],
+    "pageInfo": { "hasNextPage": false }
+  }]
+}

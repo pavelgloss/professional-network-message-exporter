@@ -3,7 +3,7 @@ import { normalizeConversation, normalizeTimestamp, canonicalLinkedInUrl } from 
 import { classifyRecruiter } from '../../src/domain/recruiter.js';
 import { conversationIdFromUrn, extractUrnId, personIdFromUrn, sha256Id } from '../../src/domain/stable-id.js';
 import { mergeExports } from '../../src/domain/merge.js';
-import type { LinkedInExport } from '../../src/domain/schema.js';
+import { ExportSchema, type LinkedInExport } from '../../src/domain/schema.js';
 import { coalesceRaw } from '../../src/linkedin/exporter.js';
 
 describe('normalization and stable IDs', () => {
@@ -43,6 +43,31 @@ describe('normalization and stable IDs', () => {
       { id: 'c', messages: [{ ...duplicate }, { ...duplicate }] },
     ]);
     expect(conversations[0]?.messages).toHaveLength(2);
+  });
+
+  it('adds disjoint fallback pages but does not duplicate a repeated page snapshot', () => {
+    const duplicate = { conversationId: 'c', senderId: 'me', senderName: 'Me', sentAt: '2026-01-01T00:00:00Z', text: 'same' };
+    const page = (sourcePage: string, offset: number) => ({ id: 'c', messages: [0, 1].map((index) => ({ ...duplicate, sourceOrder: offset + index, sourceMetadata: { sourcePage } })) });
+    expect(coalesceRaw([page('page-1', 0), page('page-2', 2)])[0]?.messages).toHaveLength(4);
+    expect(coalesceRaw([page('page-1', 0), page('page-1', 0)])[0]?.messages).toHaveLength(2);
+  });
+
+  it('indexes stable raw messages by both plain ID and URN aliases', () => {
+    const base = { conversationId: 'c', senderId: 'me', senderName: 'Me', text: 'same' };
+    const conversation = coalesceRaw([
+      { id: 'c', messages: [{ ...base, id: 'M', entityUrn: 'urn:li:messagingMessage:M' }] },
+      { id: 'c', messages: [{ ...base, entityUrn: 'urn:li:messagingMessage:M' }] },
+    ])[0]!;
+    expect(conversation.messages).toHaveLength(1);
+    expect(normalizeConversation({ ...conversation, participants: [{ id: 'me', name: 'Me', isSelf: true }] }, 'me').messages.map((message) => message.id)).toEqual(['M']);
+  });
+
+  it('does not add a name-only DOM participant beside authoritative network participants', () => {
+    const conversation = coalesceRaw([
+      { id: 'c', participants: [{ id: 'p', entityUrn: 'urn:li:fsd_profile:p', name: 'Jane', profileUrl: 'https://www.linkedin.com/in/jane' }] },
+      { id: 'c', participants: [{ name: 'Jane' }] },
+    ])[0]!;
+    expect(conversation.participants).toEqual([expect.objectContaining({ id: 'p', name: 'Jane' })]);
   });
 
   it('fails closed for missing or unlinked sender identity', () => {
@@ -108,5 +133,19 @@ describe('merge', () => {
     next.conversations[0]!.messages[0]!.id = 'linkedin-message-id';
     const merged = mergeExports(old, next);
     expect(merged.conversations[0]?.messages.map((message) => message.id)).toEqual(['linkedin-message-id']);
+  });
+
+  it('schema rejects duplicate IDs and broken sender references', () => {
+    const duplicate = make(['one']);
+    duplicate.conversations.push(structuredClone(duplicate.conversations[0]!));
+    expect(() => ExportSchema.parse(duplicate)).toThrow(/Duplicate conversation ID/);
+
+    const broken = make(['one']);
+    broken.conversations[0]!.messages[0]!.senderId = 'missing-participant';
+    expect(() => ExportSchema.parse(broken)).toThrow(/Unknown message sender/);
+
+    const duplicateMessage = make(['one', 'two']);
+    duplicateMessage.conversations[0]!.messages[1]!.id = duplicateMessage.conversations[0]!.messages[0]!.id;
+    expect(() => ExportSchema.parse(duplicateMessage)).toThrow(/Duplicate message ID/);
   });
 });

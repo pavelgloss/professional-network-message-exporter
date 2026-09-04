@@ -12,8 +12,8 @@ import { readJson } from './network/read-client.js';
 import { createPaginationState, followObservedPagination } from './network/pagination.js';
 import { collectConversationList } from './dom/conversation-list.js';
 import { collectThread } from './dom/thread.js';
-import { normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
-import { personIdFromUrn, sha256Id } from '../domain/stable-id.js';
+import { canonicalLinkedInUrl, normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
+import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../domain/stable-id.js';
 import { ExportSchema, type LinkedInExport, type RawConversation, type RawMessage, type RawParticipant } from '../domain/schema.js';
 
 export async function exportMessages(config: AppConfig, logger: Logger): Promise<LinkedInExport> {
@@ -99,7 +99,8 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     const listCoverageComplete = raw.length >= config.limit || domList.complete;
     const passiveHistoryComplete = raw.length > 0 && raw.every((conversation) => conversation.sourceMetadata?.historyComplete === true);
     const historyCoverageComplete = config.allowThreadOpen ? threadCoverageComplete : passiveHistoryComplete;
-    const partial = incomplete || !listCoverageComplete || !historyCoverageComplete || manifest.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
+    const partial = incomplete || !listCoverageComplete || !historyCoverageComplete || Number(manifest.counts.parserMisses ?? 0) > 0 || manifest.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
+    if (Number(manifest.counts.parserMisses ?? 0) > 0) manifest.warnings.push('RELEVANT_NETWORK_EVENTS_SKIPPED');
     if (!config.allowThreadOpen && !passiveHistoryComplete) manifest.warnings.push('THREAD_HISTORY_NOT_CONFIRMED');
     if (!listCoverageComplete) manifest.warnings.push(`CONVERSATION_LIST_${domList.scrollReason.toUpperCase()}`);
     if (incomplete) manifest.warnings.push('CONVERSATIONS_WITHOUT_MESSAGES');
@@ -147,40 +148,63 @@ function participantKey(participant: RawParticipant): string {
   return participant.id ?? participant.entityUrn ?? participant.profileUrl ?? sha256Id('member', [participant.name]);
 }
 
-function messageKey(message: RawMessage): string {
-  return message.id ?? message.entityUrn ?? messageFingerprintRaw(message);
+function rawMessageAliases(message: RawMessage): Set<string> {
+  const aliases = new Set<string>();
+  if (message.id) aliases.add(`id:${message.id}`);
+  const urn = normalizeUrn(message.entityUrn);
+  if (urn) aliases.add(`urn:${urn}`);
+  const urnId = messageIdFromUrn(urn);
+  if (urnId) aliases.add(`id:${urnId}`);
+  return aliases;
 }
 
 function messageFingerprintRaw(message: RawMessage): string { return sha256Id('message', [message.conversationId, message.senderId, normalizeTimestamp(message.sentAt), message.messageType, message.text, message.attachments]); }
 
 function hasStableRawId(message: RawMessage): boolean { return Boolean(message.id || message.entityUrn); }
 
+function sourcePage(message: RawMessage): string {
+  const value = message.sourceMetadata?.sourcePage;
+  return typeof value === 'string' && value ? value : 'unscoped';
+}
+
 export function mergeRawMessages(left: RawMessage[], right: RawMessage[]): RawMessage[] {
-  const stable = new Map<string, RawMessage>();
+  const stable: Array<{ value: RawMessage; aliases: Set<string> }> = [];
   const addStable = (message: RawMessage) => {
-    const aliases = [message.id, message.entityUrn].filter((value): value is string => Boolean(value));
-    const priorKey = [...stable.keys()].find((key) => aliases.includes(key));
-    const key = priorKey ?? aliases[0]!;
-    stable.set(key, stable.has(key) ? definedMerge(stable.get(key)!, message) : message);
+    const aliases = rawMessageAliases(message);
+    const matches = stable.map((entry, index) => intersectsAliases(entry.aliases, aliases) ? index : -1).filter((index) => index >= 0);
+    if (!matches.length) { stable.push({ value: message, aliases }); return; }
+    const target = stable[matches[0]!]!;
+    target.value = definedMerge(target.value, message);
+    aliases.forEach((alias) => target.aliases.add(alias));
+    for (const index of matches.slice(1).sort((a, b) => b - a)) {
+      const duplicate = stable[index]!;
+      target.value = definedMerge(target.value, duplicate.value);
+      duplicate.aliases.forEach((alias) => target.aliases.add(alias));
+      stable.splice(index, 1);
+    }
   };
   left.filter(hasStableRawId).forEach(addStable);
   right.filter(hasStableRawId).forEach(addStable);
-  const stableValues = [...stable.values()];
-  const group = (messages: RawMessage[]) => {
-    const buckets = new Map<string, RawMessage[]>();
+  const groupFallback = (messages: RawMessage[]) => {
+    const buckets = new Map<string, Map<string, RawMessage[]>>();
     for (const message of messages.filter((value) => !hasStableRawId(value))) {
-      const key = messageKey(message);
-      const bucket = buckets.get(key) ?? [];
+      const key = messageFingerprintRaw(message);
+      const pages = buckets.get(key) ?? new Map<string, RawMessage[]>();
+      const bucket = pages.get(sourcePage(message)) ?? [];
       bucket.push(message);
-      buckets.set(key, bucket);
+      pages.set(sourcePage(message), bucket);
+      buckets.set(key, pages);
     }
     return buckets;
   };
-  const leftBuckets = group(left);
-  const rightBuckets = group(right);
+  const leftBuckets = groupFallback(left);
+  const rightBuckets = groupFallback(right);
   const stableCounts = (messages: RawMessage[]) => {
     const counts = new Map<string, number>();
-    for (const message of messages.filter(hasStableRawId)) counts.set(messageFingerprintRaw(message), (counts.get(messageFingerprintRaw(message)) ?? 0) + 1);
+    for (const message of messages.filter(hasStableRawId)) {
+      const key = `${messageFingerprintRaw(message)}:${sourcePage(message)}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
     return counts;
   };
   const leftStableCounts = stableCounts(left);
@@ -188,39 +212,156 @@ export function mergeRawMessages(left: RawMessage[], right: RawMessage[]): RawMe
   const fingerprints = new Set([...leftBuckets.keys(), ...rightBuckets.keys()]);
   const fallbackValues: RawMessage[] = [];
   for (const fingerprint of fingerprints) {
-    const leftBucket = leftBuckets.get(fingerprint) ?? [];
-    const rightBucket = rightBuckets.get(fingerprint) ?? [];
-    const leftRemaining = leftBucket.slice(rightStableCounts.get(fingerprint) ?? 0);
-    const rightRemaining = rightBucket.slice(leftStableCounts.get(fingerprint) ?? 0);
-    const wanted = Math.max(leftRemaining.length, rightRemaining.length);
-    for (let index = 0; index < wanted; index += 1) {
-      const old = leftRemaining[index];
-      const next = rightRemaining[index];
-      if (old && next) fallbackValues.push(definedMerge(old, next));
-      else fallbackValues.push((next ?? old)!);
+    const leftPages = leftBuckets.get(fingerprint) ?? new Map<string, RawMessage[]>();
+    const rightPages = rightBuckets.get(fingerprint) ?? new Map<string, RawMessage[]>();
+    for (const page of new Set([...leftPages.keys(), ...rightPages.keys()])) {
+      const stableKey = `${fingerprint}:${page}`;
+      const leftRemaining = (leftPages.get(page) ?? []).slice(rightStableCounts.get(stableKey) ?? 0);
+      const rightRemaining = (rightPages.get(page) ?? []).slice(leftStableCounts.get(stableKey) ?? 0);
+      const wanted = Math.max(leftRemaining.length, rightRemaining.length);
+      for (let index = 0; index < wanted; index += 1) {
+        const old = leftRemaining[index];
+        const next = rightRemaining[index];
+        fallbackValues.push(old && next ? definedMerge(old, next) : (next ?? old)!);
+      }
     }
   }
-  return [...stableValues, ...fallbackValues];
+  return [...stable.map((entry) => entry.value), ...fallbackValues];
 }
 
 export function coalesceRaw(input: RawConversation[]): RawConversation[] {
-  const map = new Map<string, RawConversation>();
+  const entries: Array<{ value: RawConversation; aliases: Set<string> }> = [];
   for (const conversation of input) {
-    const key = rawKey(conversation);
-    const prior = map.get(key);
-    if (!prior) { map.set(key, conversation); continue; }
-    const participants = new Map((prior.participants ?? []).map((participant) => [participantKey(participant), participant]));
-    for (const participant of conversation.participants ?? []) {
-      const pKey = participantKey(participant);
-      participants.set(pKey, definedMerge(participants.get(pKey) ?? {}, participant));
-    }
-    map.set(key, {
-      ...definedMerge(prior, conversation),
-      participants: [...participants.values()],
-      messages: mergeRawMessages(prior.messages ?? [], conversation.messages ?? []),
-    });
+    const aliases = rawConversationAliases(conversation);
+    const index = entries.findIndex((entry) => intersectsAliases(entry.aliases, aliases));
+    if (index < 0) { entries.push({ value: conversation, aliases }); continue; }
+    const entry = entries[index]!;
+    entry.value = mergeRawConversation(entry.value, conversation);
+    aliases.forEach((alias) => entry.aliases.add(alias));
+    rawConversationAliases(entry.value).forEach((alias) => entry.aliases.add(alias));
   }
-  return [...map.values()];
+  return entries.map((entry) => entry.value);
+}
+
+function intersectsAliases(left: Set<string>, right: Set<string>): boolean {
+  return [...left].some((alias) => right.has(alias));
+}
+
+function rawConversationAliases(conversation: RawConversation): Set<string> {
+  const aliases = new Set<string>();
+  if (conversation.id) aliases.add(`id:${conversation.id}`);
+  const urn = normalizeUrn(conversation.entityUrn);
+  if (urn) aliases.add(`urn:${urn}`);
+  const urnId = conversationIdFromUrn(urn);
+  if (urnId) aliases.add(`id:${urnId}`);
+  const routeId = canonicalLinkedInUrl(conversation.url)?.match(/\/messaging\/thread\/([^/]+)/i)?.[1];
+  if (routeId) aliases.add(`id:${decodeURIComponent(routeId)}`);
+  if (!aliases.size) aliases.add(`fallback:${rawKey(conversation)}`);
+  return aliases;
+}
+
+function strongParticipant(participant: RawParticipant): boolean {
+  return Boolean(participant.id || participant.entityUrn || canonicalLinkedInUrl(participant.profileUrl)?.match(/\/in\/[^/]+$/i));
+}
+
+function rawParticipantAliases(participant: RawParticipant): Set<string> {
+  const aliases = new Set<string>();
+  if (participant.id) aliases.add(`id:${participant.id}`);
+  const urn = normalizeUrn(participant.entityUrn);
+  if (urn) aliases.add(`urn:${urn}`);
+  const urnId = personIdFromUrn(urn);
+  if (urnId) aliases.add(`id:${urnId}`);
+  const profile = canonicalLinkedInUrl(participant.profileUrl)?.match(/^https:\/\/www\.linkedin\.com\/in\/([^/]+)$/i)?.[1];
+  if (profile) aliases.add(`profile:${profile.toLowerCase()}`);
+  if (!aliases.size) aliases.add(`fallback:${participantKey(participant)}`);
+  return aliases;
+}
+
+function mergeRawParticipants(left: RawParticipant[], right: RawParticipant[]): RawParticipant[] {
+  const authoritative = [...left, ...right].some(strongParticipant);
+  const candidates = authoritative ? [...left, ...right].filter(strongParticipant) : [...left, ...right];
+  const participants: Array<{ value: RawParticipant; aliases: Set<string> }> = [];
+  for (const participant of candidates) {
+    const aliases = rawParticipantAliases(participant);
+    const matches = participants.map((entry, index) => intersectsAliases(entry.aliases, aliases) ? index : -1).filter((index) => index >= 0);
+    if (!matches.length) { participants.push({ value: participant, aliases }); continue; }
+    const target = participants[matches[0]!]!;
+    target.value = definedMerge(target.value, participant);
+    aliases.forEach((alias) => target.aliases.add(alias));
+    for (const index of matches.slice(1).sort((a, b) => b - a)) {
+      const duplicate = participants[index]!;
+      target.value = definedMerge(target.value, duplicate.value);
+      duplicate.aliases.forEach((alias) => target.aliases.add(alias));
+      participants.splice(index, 1);
+    }
+  }
+  return participants.map((entry) => entry.value);
+}
+
+function mergeRawConversation(old: RawConversation, next: RawConversation): RawConversation {
+  return {
+    ...definedMerge(old, next),
+    participants: mergeRawParticipants(old.participants ?? [], next.participants ?? []),
+    messages: mergeRawMessages(old.messages ?? [], next.messages ?? []),
+    ...mergeHistoryMetadata(old.sourceMetadata, next.sourceMetadata),
+  };
+}
+
+type HistoryEvidence = { resource: string; page: string; start: number; count: number; total?: number; end: boolean; valid: boolean };
+
+function parseHistoryEvidence(value: unknown): HistoryEvidence[] {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as HistoryEvidence[];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.resource === 'string' && typeof item.page === 'string' && Number.isFinite(item.start) && Number.isFinite(item.count)) : [];
+  } catch { return []; }
+}
+
+function completeEvidence(evidence: HistoryEvidence[]): boolean {
+  if (!evidence.length || evidence.some((item) => !item.valid)) return false;
+  const resources = new Map<string, HistoryEvidence[]>();
+  for (const item of evidence) {
+    const pages = resources.get(item.resource) ?? [];
+    pages.push(item);
+    resources.set(item.resource, pages);
+  }
+  return [...resources.values()].some((pages) => {
+    const sorted = [...pages].sort((a, b) => a.start - b.start || a.count - b.count);
+    if (sorted[0]?.start !== 0) return false;
+    const totals = new Set(sorted.map((item) => item.total).filter((value): value is number => value !== undefined));
+    if (totals.size > 1) return false;
+    let coveredUntil = 0;
+    let observedEnd = false;
+    for (const page of sorted) {
+      if (page.start > coveredUntil) return false;
+      coveredUntil = Math.max(coveredUntil, page.start + page.count);
+      if (page.end) observedEnd = true;
+    }
+    const total = [...totals][0];
+    return observedEnd && (total === undefined || coveredUntil >= total);
+  });
+}
+
+function mergeHistoryMetadata(old: RawConversation['sourceMetadata'], next: RawConversation['sourceMetadata']): Pick<RawConversation, 'sourceMetadata'> | Record<string, never> {
+  if (!old && !next) return {};
+  const evidenceByPage = new Map<string, HistoryEvidence>();
+  for (const item of [...parseHistoryEvidence(old?.historyEvidence), ...parseHistoryEvidence(next?.historyEvidence)]) {
+    const key = `${item.resource}:${item.page}`;
+    const prior = evidenceByPage.get(key);
+    evidenceByPage.set(key, prior ? { ...prior, ...item, valid: prior.valid && item.valid, end: prior.end || item.end } : item);
+  }
+  const evidence = [...evidenceByPage.values()];
+  const misses = evidence.filter((item) => !item.valid).length || Math.max(Number(old?.parserMisses ?? 0), Number(next?.parserMisses ?? 0));
+  const historyComplete = evidence.length ? completeEvidence(evidence) : old?.historyComplete === true || next?.historyComplete === true;
+  return {
+    sourceMetadata: {
+      ...old,
+      ...next,
+      ...(evidence.length ? { historyEvidence: JSON.stringify(evidence) } : {}),
+      ...(misses ? { parserMisses: misses } : {}),
+      historyComplete: historyComplete && misses === 0,
+    },
+  };
 }
 
 function definedMerge<T extends object>(old: T, next: Partial<T>): T {

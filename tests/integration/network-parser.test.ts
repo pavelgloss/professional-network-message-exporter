@@ -5,6 +5,7 @@ import { assertAllowedReadUrl } from '../../src/linkedin/network/read-client.js'
 import { createManifest } from '../../src/io/diagnostics.js';
 import { followObservedPagination } from '../../src/linkedin/network/pagination.js';
 import type { APIRequestContext } from 'playwright';
+import { coalesceRaw } from '../../src/linkedin/exporter.js';
 
 describe('network parser', () => {
   it('parses anonymized Voyager envelopes and explicit pagination', async () => {
@@ -44,6 +45,24 @@ describe('network parser', () => {
     const manifest = createManifest();
     const conversations = await followObservedPagination(fakeRequest, ['https://www.linkedin.com/voyager/api/messaging/history?start=0&count=1'], manifest);
     expect(conversations.flatMap((conversation) => conversation.messages ?? []).map((message) => message.id)).toEqual(['H1', 'H2']);
+    expect(coalesceRaw(conversations)[0]?.sourceMetadata?.historyComplete).toBe(true);
     expect(manifest.counts.paginationPages).toBe(2);
+  });
+
+  it('fails history completion closed when any relevant event misses the parser', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-parser-miss.json', import.meta.url), 'utf8'));
+    const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');
+    expect(parsed.conversations[0]?.messages?.map((message) => message.id)).toEqual(['KNOWN']);
+    expect(parsed.conversations[0]?.sourceMetadata).toMatchObject({ historyComplete: false, parserMisses: 1 });
+    expect(parsed.misses).toBeGreaterThan(0);
+  });
+
+  it('derives an observed Rest.li cursor without changing the GET template', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/graphql-composite.json', import.meta.url), 'utf8'));
+    const source = 'https://www.linkedin.com/voyager/api/graphql?queryId=messengerConversations&variables=(cursor:cursor-old,count:20)';
+    const parsed = parseNetworkPayload(fixture, source);
+    const next = decodeURIComponent(parsed.paginationUrls[0] ?? '');
+    expect(next).toContain('variables=(cursor:cursor-next,count:20)');
+    expect(next).toContain('queryId=messengerConversations');
   });
 });

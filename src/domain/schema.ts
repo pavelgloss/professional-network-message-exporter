@@ -82,7 +82,7 @@ export const ExportSchema = z.object({
       messageIds.add(message.id);
       if (message.conversationId !== conversation.id) context.addIssue({ code: z.ZodIssueCode.custom, message: `Message conversation reference mismatch: ${message.id}` });
       const isAccount = message.senderId === data.account.id;
-      if (!isAccount && !participantIds.has(message.senderId)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown message sender: ${message.id}` });
+      if (!participantIds.has(message.senderId)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown message sender: ${message.id}` });
       if ((isAccount && message.direction !== 'outbound') || (!isAccount && message.direction !== 'inbound')) context.addIssue({ code: z.ZodIssueCode.custom, message: `Message direction mismatch: ${message.id}` });
     }
   }

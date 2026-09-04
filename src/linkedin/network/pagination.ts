@@ -21,6 +21,7 @@ export async function followObservedPagination(request: APIRequestContext, seedU
       const payload = await readJson(request, url, csrfToken);
       const parsed = parseNetworkPayload(payload, url);
       conversations.push(...parsed.conversations);
+      manifest.counts.parserMisses = (manifest.counts.parserMisses ?? 0) + parsed.misses;
       for (const next of parsed.paginationUrls) if (!state.visited.has(next)) queue.push(next);
       await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 250)));
     } catch { manifest.warnings.push('PAGINATION_READ_FAILED'); }

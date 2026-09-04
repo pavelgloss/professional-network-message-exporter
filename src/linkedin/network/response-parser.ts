@@ -1,5 +1,5 @@
 import { cleanText } from '../../domain/normalize.js';
-import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn } from '../../domain/stable-id.js';
+import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../../domain/stable-id.js';
 import type { RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -67,13 +67,16 @@ function textFrom(obj: JsonRecord): string | undefined {
   return undefined;
 }
 
-function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, conversationUrn?: string): RawMessage | undefined {
+function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
   const looksMessage = /(?:message|event)/i.test(entityUrn ?? '') || Boolean(text && senderUrn && sentAt !== undefined);
-  if (!looksMessage || (!text && !record(obj.eventContent))) return undefined;
+  // Unknown/attachment-only content must not be counted as parsed history. Until an
+  // explicit adapter preserves that shape, fail coverage closed instead of silently
+  // exporting an empty message and claiming completeness.
+  if (!looksMessage || !text) return undefined;
   const senderValue = ['from', '*from', 'sender', '*sender', 'actor', '*actor'].map((key) => obj[key]).find((value) => record(value) || typeof value === 'string');
   const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? index.get(senderValue) : undefined;
   const senderProfile = senderObj ? profileFrom(senderObj, index) : undefined;
@@ -83,7 +86,7 @@ function messageFrom(obj: JsonRecord, index: Map<string, JsonRecord>, conversati
   const conversationId = conversationIdFromUrn(urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn);
   const senderId = personIdFromUrn(senderUrn);
   const messageType = cleanText(stringAt(obj, 'subtype', 'eventType', 'type'));
-  return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}) };
+  return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}), sourceMetadata: { sourcePage } };
 }
 
 function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
@@ -97,7 +100,7 @@ function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
-function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>): RawConversation | undefined {
+function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>, sourcePage: string): RawConversation | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
@@ -105,13 +108,24 @@ function conversationFrom(obj: JsonRecord, index: Map<string, JsonRecord>): RawC
   if (!looksConversation) return undefined;
   const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
-  const messages = messageValues.map((m) => typeof m === 'string' ? index.get(m) : m).filter(record).map((m) => messageFrom(m, index, entityUrn)).filter((m): m is RawMessage => Boolean(m));
+  const resolvedMessageValues = messageValues.map((m) => typeof m === 'string' ? index.get(m) : m);
+  const messages = resolvedMessageValues.filter(record).map((m) => messageFrom(m, index, sourcePage, entityUrn)).filter((m): m is RawMessage => Boolean(m));
+  const parserMisses = messageValues.length - messages.length;
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
   const url = id ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/` : undefined;
   const paging = record(obj.paging) ? obj.paging : record(obj.pageInfo) ? obj.pageInfo : undefined;
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
-  const historyComplete = messageValues.length > 0 && (paging?.hasNextPage === false || (total !== undefined && messages.length >= total));
-  return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(url ? { url } : {}), ...(lastActivityAt !== undefined ? { lastActivityAt } : {}), participants, messages, ...(historyComplete ? { sourceMetadata: { historyComplete: true } } : {}) };
+  const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));
+  const evidence = historyComplete || parserMisses > 0 ? JSON.stringify([{ resource: `conversation:${id ?? entityUrn ?? 'unknown'}`, page: sourcePage, start: 0, count: messageValues.length, total: messageValues.length, end: historyComplete, valid: parserMisses === 0 }]) : undefined;
+  return {
+    ...(id ? { id } : {}),
+    ...(entityUrn ? { entityUrn } : {}),
+    ...(url ? { url } : {}),
+    ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
+    participants,
+    messages,
+    ...((historyComplete || parserMisses > 0) ? { sourceMetadata: { historyComplete, ...(parserMisses ? { parserMisses } : {}), ...(evidence ? { historyEvidence: evidence } : {}) } } : {}),
+  };
 }
 
 function walk(value: unknown, visit: (obj: JsonRecord) => void, seen = new WeakSet<object>()): void {
@@ -124,6 +138,7 @@ function walk(value: unknown, visit: (obj: JsonRecord) => void, seen = new WeakS
 }
 
 export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNetworkData {
+  const sourcePage = sha256Id('network-page', [sourceUrl || 'inline']);
   const objects: JsonRecord[] = [];
   walk(payload, (obj) => objects.push(obj));
   const index = new Map<string, JsonRecord>();
@@ -133,8 +148,8 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       if (urn?.includes('urn:li:')) index.set(urn, obj);
     }
   }
-  const conversations = objects.map((obj) => conversationFrom(obj, index)).filter((c): c is RawConversation => Boolean(c));
-  const nestedMessages = objects.map((obj) => messageFrom(obj, index)).filter((m): m is RawMessage => Boolean(m));
+  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage)).filter((c): c is RawConversation => Boolean(c));
+  const nestedMessages = objects.map((obj) => messageFrom(obj, index, sourcePage)).filter((m): m is RawMessage => Boolean(m));
   for (const message of nestedMessages) {
     if (!message.conversationId) continue;
     let conversation = conversations.find((c) => c.id === message.conversationId);
@@ -159,6 +174,7 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       if (next) paginationUrls.add(next);
     }
   }
+  applyRestEnvelopeHistoryEvidence(payload, sourceUrl, sourcePage, conversations);
   let account: ParsedNetworkData['account'];
   if (/\/voyager\/api\/me(?:[/?#]|$)/i.test(sourceUrl)) {
     const profile = objects.find((obj) => stringAt(obj, 'plainId', 'publicIdentifier') && (stringAt(obj, 'firstName') || stringAt(obj, 'name')));
@@ -170,7 +186,61 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNet
       account = { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(publicIdentifier ? { profileUrl: `https://www.linkedin.com/in/${publicIdentifier}` } : {}) };
     }
   }
-  return { conversations, ...(account ? { account } : {}), paginationUrls: [...paginationUrls], strategies: conversations.length ? ['network:recursive-voyager'] : [], misses: conversations.length ? 0 : 1 };
+  const relevantMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
+  return { conversations, ...(account ? { account } : {}), paginationUrls: [...paginationUrls], strategies: conversations.length ? ['network:recursive-voyager'] : [], misses: relevantMisses };
+}
+
+function applyRestEnvelopeHistoryEvidence(payload: unknown, sourceUrl: string, sourcePage: string, conversations: RawConversation[]): void {
+  if (!isHistoryResource(sourceUrl) || !record(payload)) return;
+  const data = record(payload.data) ? payload.data : undefined;
+  const paging = record(payload.paging) ? payload.paging : data && record(data.paging) ? data.paging : undefined;
+  if (!paging) return;
+  const start = typeof paging.start === 'number' ? paging.start : undefined;
+  const count = typeof paging.count === 'number' ? paging.count : undefined;
+  const total = typeof paging.total === 'number' ? paging.total : undefined;
+  if (start === undefined || count === undefined) return;
+  const end = paging.hasNextPage === false || (total !== undefined && start + count >= total);
+  const resource = historyResourceId(sourceUrl);
+  for (const conversation of conversations) {
+    const parserMisses = Number(conversation.sourceMetadata?.parserMisses ?? 0);
+    const priorEvidence = readEvidence(conversation.sourceMetadata?.historyEvidence);
+    const evidence = [...priorEvidence, { resource, page: sourcePage, start, count, ...(total !== undefined ? { total } : {}), end, valid: parserMisses === 0 }];
+    conversation.sourceMetadata = {
+      ...conversation.sourceMetadata,
+      historyEvidence: JSON.stringify(evidence),
+      // A single REST page is complete only when it covers the resource from zero.
+      historyComplete: parserMisses === 0 && start === 0 && end,
+    };
+  }
+}
+
+type HistoryEvidence = { resource: string; page: string; start: number; count: number; total?: number; end: boolean; valid: boolean };
+
+function readEvidence(value: unknown): HistoryEvidence[] {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is HistoryEvidence => record(item) && typeof item.resource === 'string' && typeof item.page === 'string') : [];
+  } catch { return []; }
+}
+
+function isHistoryResource(sourceUrl: string): boolean {
+  try { return /\/(?:events|messages|history)(?:[/?#]|$)/i.test(new URL(sourceUrl, 'https://www.linkedin.com').pathname); }
+  catch { return false; }
+}
+
+function historyResourceId(sourceUrl: string): string {
+  try {
+    const url = new URL(sourceUrl, 'https://www.linkedin.com');
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(?:start|count|cursor|paginationToken)$/i.test(key)) url.searchParams.delete(key);
+      else {
+        const value = url.searchParams.get(key);
+        if (value && /(?:cursor|paginationToken):/i.test(value)) url.searchParams.set(key, value.replace(/((?:cursor|paginationToken):)[^,)]+/gi, '$1*'));
+      }
+    }
+    return sha256Id('history-resource', [url.origin, url.pathname, [...url.searchParams.entries()].sort()]);
+  } catch { return sha256Id('history-resource', [sourceUrl]); }
 }
 
 function normalizePaginationUrl(href: string, sourceUrl: string): string | undefined {
@@ -197,6 +267,12 @@ function deriveCursorUrl(sourceUrl: string, cursor: string): string | undefined 
     if (directKey) return deriveQueryUrl(sourceUrl, directKey, cursor);
     const variables = url.searchParams.get('variables');
     if (!variables) return undefined;
+    if (/^\s*\(/.test(variables)) {
+      const replaced = variables.replace(/(^|[,(])((?:cursor|paginationToken)):[^,)]+/i, (_match, prefix: string, key: string) => `${prefix}${key}:${cursor}`);
+      if (replaced === variables) return undefined;
+      url.searchParams.set('variables', replaced);
+      return url.toString();
+    }
     const parsed = JSON.parse(variables) as Record<string, unknown>;
     const variableKey = Object.keys(parsed).find((key) => /^(?:cursor|paginationToken)$/i.test(key));
     if (!variableKey) return undefined;
