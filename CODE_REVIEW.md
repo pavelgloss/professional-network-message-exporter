@@ -541,3 +541,73 @@ uživatele o `npm.cmd run login` a poté spustit pouze network-only
   `.partial`, manifestu nebo browser requestu.
 - Review nepoužilo LinkedIn, credentials ani existující session; implementační kód
   nebyl změněn.
+
+---
+
+## Definitivní verifikace HEAD `e0cd6a7`
+
+### Verdikt
+
+FR-01 pro top-level URN references je opravený: kombinace známé a nepodporované
+message reference v `included` vrací jednu ze dvou zpráv, `misses=1`,
+`parserMisses=1`, `historyComplete=false` a partial-only zápis při byte-identickém
+main. Nerozřešená message reference přidá právě jeden miss, profilová reference
+žádný; opakované references se nenásobí a cyklus skončí bezpečně.
+
+**Critical nálezy: žádné. Account-side mutation Critical/High: žádné. Zůstává jeden
+High nález integrity dat FV-01. Proto ještě nelze bezpečně označit projekt za hotový
+ani doporučit reálný login/export.** Po opravě FV-01 bude podle všech dosavadních
+safety reprodukcí možné požádat uživatele o `npm.cmd run login` a následně spustit
+výhradně network-only `npm.cmd run export -- --limit 100`, bez
+`--allow-thread-open`.
+
+### FV-01 — HIGH — Top-level zprávy bez ID se tiše sloučí při nulovém miss
+
+- **Soubor/řádky:** `src/linkedin/network/response-parser.ts:166-180`,
+  `src/linkedin/network/response-parser.ts:243-256`,
+  `src/linkedin/exporter.ts:98-125`
+- **Problém:** při přidávání `nestedMessages` se duplicita testuje výrazem
+  `(m.entityUrn ?? m.id) === (message.entityUrn ?? message.id)`. U všech zpráv bez
+  LinkedIn ID/URN jsou obě strany `undefined`, takže po první zprávě parser zahodí
+  každou další zprávu stejné conversation. Pro obsahově identické bez-ID objekty je
+  ještě dříve zkolabuje `uniqueEnvelopeElements` podle content hashe; tím se ztratí
+  multiset, který raw merge a ordinal fallback ID výslovně zachovávají.
+- **Nezávislá reprodukce:** finální REST history envelope obsahovala dva top-level
+  event objekty bez `id/entityUrn`, oba s validním conversation/sender/timestamp/text
+  tvarem a `paging={start:0,count:2,total:2,hasNextPage:false}`. Jak dvě obsahově
+  identické kopie, tak silnější varianta s rozdílným textem a časem vrátily pouze
+  první message, `parsed.misses=0` a `historyComplete=true`.
+- **Dopad:** dostupná historie se může zkrátit bez `.partial`; neúplný výsledek se
+  sloučí do hlavního JSON. Jde o přímý návrat datové ztráty z CR-07 pro samostatnou
+  REST cestu a porušení požadovaných deterministických fallback/ordinal IDs.
+- **Doporučení:** stable-ID deduplikaci provádět pouze tehdy, když alespoň jeden
+  skutečný alias existuje. Bez-ID zprávy zachovat jako ordered multiset a párovat až
+  přes již implementovaný source-page/fingerprint mechanismus; dvě top-level položky
+  z jedné response musí zachovat svou multiplicitu/source order. Přidat test alespoň
+  se dvěma různými bez-ID zprávami a kolizní variantu se dvěma identickými zprávami;
+  obě musí dát dvě messages a stabilní odlišná ordinal IDs.
+
+### Stav všech Critical/High
+
+| Oblast | Stav na `e0cd6a7` |
+| --- | --- |
+| HTTP/WebSocket/service-worker read-only boundary | **Uzavřeno**, žádný Critical/High account-side mutation nález. |
+| Direction, sender reference a composite URN | **Uzavřeno** pro reprodukované obálky. |
+| Partial/main/exit ochrana | **Uzavřeno**, pokud parser správně přizná miss; FV-01 ji stále obchází. |
+| Wrapped, object a referenced parser misses | **Uzavřeno** včetně unresolved/cycle/duplicate URN references. |
+| Fallback multiset a raw alias merge | **Otevřeno — High FV-01 pouze pro top-level bez-ID eventy**; dříve opravené page/alias scénáře dál procházejí. |
+| Ostatní dříve evidované Critical/High | **Uzavřeno pro dosavadní lokální reprodukce**. |
+
+### Ověření
+
+- `npm.cmd run check`: **PASS** — 9 test files / 46 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Cílené parser/store/CLI testy: **PASS** — referenced 1/2, participant z
+  `included`, miss/incomplete, partial-only, byte-stable main a exit 5; unresolved
+  message, profile reference, duplicate references a cyklus také prošly.
+- Ephemeral storageState, service-worker, POST/WebSocket guard, mutation canary a
+  virtualizovaný DOM: **PASS** v cíleném lokálním běhu.
+- Fresh missing-state smoke: **PASS** — `AUTH_REQUIRED`, exit 3, žádný main,
+  `.partial`, manifest ani browser request.
+- `git diff --check`: **PASS**. Review nepoužilo LinkedIn, credentials ani existující
+  session a nezměnilo implementační kód.
