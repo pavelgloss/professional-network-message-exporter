@@ -39,4 +39,26 @@ describe('DOM fallback against local fixture', () => {
     expect(thread.messages.map((message) => message.id)).toEqual(['vm1', 'vm2', 'vm3', 'vm4', 'vm5', 'vm6']);
     expect(thread.complete).toBe(true);
   });
+
+  it('scrolls modern inert list rows without inventing text-based conversation IDs', async () => {
+    await page.setContent(`
+      <ul class="msg-conversations-container__conversations-list" style="display:block;height:120px;overflow:auto">
+        ${Array.from({ length: 20 }, (_, index) => `<li class="msg-conversation-listitem" style="height:20px"><button>row ${index}</button></li>`).join('')}
+      </ul>
+      <script>
+        const list = document.querySelector('ul');
+        list.addEventListener('scroll', () => {
+          if (list.dataset.loaded) return;
+          list.dataset.loaded = 'true';
+          for (let index = 20; index < 40; index += 1) list.insertAdjacentHTML('beforeend', '<li class="msg-conversation-listitem" style="height:20px"><button>row ' + index + '</button></li>');
+        });
+      </script>
+    `);
+    const list = await collectConversationList(page, 40, { delayMs: 30, timeoutMs: 5_000 });
+
+    expect(list.conversations).toEqual([]);
+    expect(list.scrollReason).toBe('limit');
+    expect(list.complete).toBe(true);
+    expect(await page.locator('.msg-conversation-listitem').count()).toBe(40);
+  });
 });

@@ -7,6 +7,7 @@ export const domSelectors = {
   conversationRows: [
     'a[href*="/messaging/thread/"]',
     '[data-entity-urn*="messagingThread"] a[href]',
+    '.msg-conversation-listitem',
   ],
   participantName: [
     '[data-anonymize="person-name"]',
@@ -35,4 +36,3 @@ export const domSelectors = {
   ],
   senderLink: ['a[href*="/in/"]', '[data-sender-profile]'],
 } as const;
-
