@@ -985,6 +985,128 @@ helperu. Běžný network-only export nesmí být nahrazen probe režimem.
 
 ---
 
+## Finální re-review HEAD `252f08f` (`f5c64e8..252f08f`)
+
+### Verdikt
+
+**Critical nálezy: žádné. Zůstávají dva High nálezy; nové Medium nálezy nejsou.**
+Požadované přesné varianty R3-01, R3-03 a většina R3-02 jsou opravené: thread URL
+pro libovolný resource/frame se zastaví před serverem, přesné REST/legacy/current
+Dash varianty mimo allowlist se zastaví a oba document preflighty používají
+samostatné zahazované request contexty. Rozšířená negativní matice ale našla dvě
+další fail-open větve v nové probe policy: nově pojmenovaný messaging API namespace
+a nerozpoznaný identity field uvnitř jinak povolených history variables.
+
+**NO-GO pro skutečný one-read-thread probe.** `npm.cmd run probe:read-thread` zatím
+uživateli nenabízet: oba níže uvedené requesty dosáhly v lokální runtime reprodukci
+serveru a gate je ani nezapočítal jako blokované. Běžný network-only export bez
+`--allow-thread-open`/bez probe zůstává od tohoto opt-in režimu oddělený.
+
+### R4-01 / R3-02 — HIGH — Neznámý messaging namespace je klasifikován jako non-messaging a projde
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:115-128`,
+  `src/linkedin/probe-navigation.ts:180-198`, `src/browser/request-guard.ts:12-28`
+- **Problém:** `messagingSurface` pozná pouze segmenty přesně
+  `messaging`, `graphql` a `voyagerMessagingGraphQL`. Segment s novou příponou nebo
+  novým explicitně messaging názvem vrátí `messaging:false`; probe pak použije
+  `route.fallback()` a obecný guard libovolný GET bez známého mutation slova pustí.
+  Komentář o blokaci každé REST/legacy/lookalike cesty tedy neplatí pro neznámý
+  namespace. Totéž platí pro redirect request na takovou cestu, protože i ten je
+  znovu klasifikován stejným fail-open způsobem.
+- **Nezávislá reprodukce:** v lokálním Chromium běhu se skutečným pořadím obou route
+  handlerů dostal server po jednom GET pro všechny čtyři target-page requesty:
+  `/voyager/api/messagingV2/conversations/UNREAD/events`,
+  `/voyager/api/graphqlV2?...`,
+  `/voyager/api/voyagerMessagingGraphQLV2/graphql?...` a
+  `/voyager/api/voyagerMessagingRest/conversations/UNREAD/events`.
+  `crossThreadRequestsBlocked` zůstal `0`. Samostatná kompoziční kontrola potvrdila
+  pro každý případ `probeMessaging=false`, `globalAllow=true`. LinkedIn ani session
+  nebyly použity.
+- **Dopad:** změna soukromého LinkedIn namespace může během selection nebo target
+  fáze kontaktovat endpoint s jiným thread ID mimo jediný ověřený read target.
+  Policy to nezastaví ani následně neoznačí běh jako unsafe; tím se vrací původní
+  riziko otevření/označení unread threadu.
+- **Doporučení:** v probe režimu klasifikovat celý same-origin `/voyager/api/**`
+  prostor default-deny a propustit pouze explicitní phase-specific GET allowlist
+  nezbytných endpointů. Pokud bootstrap vyžaduje další API, přidávat je jen jako
+  přesné pozorované read tvary. Negativní testy mají zahrnout suffix/new-namespace
+  varianty a redirect na ně a kontrolovat skutečný server count `0`.
+
+### R4-02 / R3-02 — HIGH — Povolený target reference lze doplnit nerozpoznaným jiným ID
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:50-69`,
+  `src/linkedin/probe-request-policy.ts:98-112`,
+  `src/linkedin/probe-request-policy.ts:140-143`
+- **Problém:** JSON/Rest.li walker odmítá neznámé keys jen tehdy, když jejich název
+  obsahuje `conversation`, `thread` nebo `urn`. Obecné identity keys `id`, `ids`
+  nebo jiný nově zavedený alias ignoruje. Stačí proto do variables přidat
+  allowlisted `conversationId=READ`; policy vidí právě jeden známý target a celý
+  request povolí, i když stejné variables nesou `id=UNREAD`.
+- **Nezávislá reprodukce:** obě exact-current history URL prošly probe i globálním
+  guardem a lokální server je obdržel, zatímco blocked counter zůstal `0`:
+  JSON `variables={"conversationId":"READ","id":"UNREAD"}` a Rest.li
+  `variables=(conversationId:READ,ids:(UNREAD))`. Policy v obou případech hlásila
+  `conversation-history` a jediný `referencedId=READ`; hodnotu `UNREAD` vůbec
+  nezahrnula do rozhodnutí.
+- **Dopad:** pokud současná nebo budoucí persisted query interpretuje obecný/nový
+  field jako skutečnou conversation identitu, může exact povolený operation načíst
+  jiný thread. Protože request zároveň vytvoří validní redigovanou history template,
+  běh může skončit úspěšně místo fail-closed chyby.
+- **Doporučení:** pro obě povolené history operace validovat celé `variables` proti
+  striktní strukturální allowlist gramatice. Každý identity-like `*id`, `*ids`, URN
+  nebo jiný nepovolený scalar/collection field musí request zablokovat; všechny
+  rozpoznané identity musí být target alias. Stejnou kontrolu použít nad JSON i
+  Rest.li a přidat server-count testy pro decoy target + cizí `id/ids`.
+
+### Opravené R3 a znovu ověřené R2 reprodukce
+
+- **R3-01 uzavřeno pro požadované resource varianty:** lokální testy pro `img`,
+  iframe, object/subframe, prefetch a worker-fetch na thread URL skončily s unread
+  server countem `0` a fail-closed violation. Pozdější direct `fetch()` na exact
+  cached target rovněž neposlal druhý server GET. Target dokument měl právě jeden
+  serverový preflight GET a jednu browser navigation splněnou z paměti.
+- **Přesné R3-02 tvary fungují:** selection propustí pouze exact Dash list GET;
+  exact REST, legacy GraphQL, case/trailing/current unknown-operation a missing,
+  wrong či konfliktní `conversationId`/URN/JSON/Rest.li reference mají server count
+  `0`. Correct direct/URN/JSON/Rest.li target aliases projdou. R4-01 a R4-02 jsou
+  další varianty mimo tuto původní matici.
+- **R3-03 uzavřeno:** selection a target preflight jsou dva samostatné
+  `playwrightRequest.newContext` contexty se vstupní kopií storage state a vždy se
+  disposeují. Syntetické selection i target `Set-Cookie` nezměnily browser cookie
+  jar; selection cookie se neposlala targetu. Browser cached response neobsahovala
+  `Set-Cookie`, `Location` ani opaque header. Target 302 se s `maxRedirects:0`
+  zastavila před unread serverem.
+- **R2 Unicode zůstává uzavřené:** 63/63 kombinací C1, Cf, Co, Cn, surrogate a
+  U+FFFD v raw/single/double path, query name a query value zablokoval současně
+  `requestPolicy` i `assertAllowedReadUrl`. Malformed, deeper encoding, NFKC
+  fullwidth a host/userinfo varianty také zůstaly fail-closed.
+- **R2 provenance/redaction zůstává uzavřené:** read evidence vznikne pouze z
+  direct elementu exact GET Dash `messengerConversations`; nested/included,
+  tracking/unrelated source, POST/chybějící method a konfliktní read stav kandidáta
+  nezpůsobilí. Opaque origin/path/error/header/query canary nebyl v manifestu ani
+  logger outputu; ukládají se pouze strukturální allowlist údaje.
+- Probe zůstává default-off a CLI větev nepoužívá DOM thread extraction ani export
+  store. Template map se do manifestu kopíruje až po `assertTargetSafe`; gate
+  failure tedy žádnou template neuloží. Fresh missing-state běh skončil
+  `AUTH_REQUIRED`, exit `3`, bez main, `.partial`, diagnostics i template souboru.
+  Konzervativně nerozpoznaná/composite reference může způsobit pouze fail-closed
+  nedostupnost probe, nikoli rozšíření povoleného provozu.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 15 test files / 113 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Cílené navigation/policy/Unicode/provenance/redaction testy: **PASS**; rozšířené
+  R4-01/R4-02 adversarial runtime varianty: **FAIL** podle nálezů výše.
+- `.auth/`, main/partial exporty a diagnostics jsou ignorované. V tracked obsahu
+  nebyl nalezen runtime secret/export artifact ani konkrétní credential value;
+  nalezené řetězce jsou pouze názvy secret fields v implementaci/testech/zadání.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
+  LinkedIn, credentials ani existující session; implementační kód nebyl změněn a
+  nic nebylo commitováno.
+
+---
+
 ## Finální re-review HEAD `58892af` (`3ad0ee8..58892af`)
 
 ### Verdikt
@@ -1115,3 +1237,14 @@ export zůstává oddělený a tyto nálezy nejsou důvodem zapínat probe autom
 - `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
   credentials ani existující session; implementační kód nebyl změněn a review
   nebylo commitováno.
+
+---
+
+## Závěrečný stav po review HEAD `252f08f`
+
+Aktuální stav všech otevřených závažností je **Critical 0 / High 2 / Medium 0**.
+Platí detailní nálezy R4-01 a R4-02 výše; dřívější R3-01 a R3-03 jsou uzavřené a
+původní přesné varianty R3-02 jsou blokované. Definitivní verdikt pro reálný
+one-read-thread probe je **NO-GO**, dokud obě nové fail-open větve nedostanou
+default-deny opravu a server-count regresní testy. Implementace nebyla během review
+změněna a nic nebylo commitováno.
