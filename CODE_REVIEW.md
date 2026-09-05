@@ -982,3 +982,136 @@ helperu. Běžný network-only export nesmí být nahrazen probe režimem.
 - `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
   credentials ani existující session; implementační kód nebyl změněn a review
   nebylo commitováno.
+
+---
+
+## Finální re-review HEAD `58892af` (`3ad0ee8..58892af`)
+
+### Verdikt
+
+**Critical nálezy: žádné. Zůstávají dva High a jeden Medium nález.** R2-01,
+R2-03 a R2-04 jsou v požadovaných adversarial reprodukcích uzavřené. Nový cached
+navigation postup také správně zastaví testované 302 a běžné main-frame/client-side
+navigace. Jeho request gate je ale stále fail-open pro subresource/subframe thread
+GET a pro messaging/GraphQL varianty, ze kterých extractor nedokáže získat ID.
+
+**NO-GO pro skutečný `npm.cmd run probe:read-thread`.** Před opt-in během musí být
+R3-01 a R3-02 uzavřené default-deny, phase-specific allowlistem. Jinak může již
+selection dokument kontaktovat neověřený thread a target dokument může poslat
+cross-thread nebo neznámý messaging GET, aniž by probe selhal. Běžný network-only
+export zůstává oddělený a tyto nálezy nejsou důvodem zapínat probe automaticky.
+
+### R3-01 / R2-02 — HIGH — Subresource a subframe obejdou one-thread navigation gate
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:149-170`,
+  `src/linkedin/probe-navigation.ts:173-201`, `src/linkedin/probe.ts:110-135`
+- **Problém:** gate předá každý non-navigation request přes `route.fallback()` a
+  stejně předá navigaci vedlejšího frame. Pokud URL není rozpoznaná jako GraphQL s
+  explicitním conversation ID, nevznikne violation ani blocked counter. Přímý
+  `/messaging/thread/<id>/` subresource ani iframe žádný GraphQL ID nemá.
+- **Nezávislá reprodukce:** lokální cached selection dokument obsahoval postupně
+  `<img src=/messaging/thread/UNREAD/>`, iframe a prefetch na stejný syntetický
+  unread thread. Ve všech třech případech server obdržel unread GET, zatímco
+  `assertSelectionSafe()` prošel a `navigationAttemptsBlocked=0`,
+  `crossThreadRequestsBlocked=0`. Reprodukce nepoužila LinkedIn ani session.
+- **Dopad:** ještě před výběrem `read===true` kandidáta může stránka nebo změněný
+  runtime načíst dokument neověřeného unread threadu. Pokud samotné načtení thread
+  route nebo jeho skripty ovlivní read state, poruší to hlavní bezpečnostní účel
+  probe; v každém případě je nepravdivý deklarovaný budget jednoho threadu.
+- **Doporučení:** ve selection fázi blokovat thread route pro každý resource type a
+  každý frame, ne pouze main-frame navigation. Po arm smí být browserová target
+  navigace jen cached fulfill; jakýkoli další request na thread document musí být
+  blokován. Přidat `<img>`, iframe, prefetch/preload a worker-fetch testy, které
+  kontrolují skutečný server count i gate violation.
+
+### R3-02 / R2-02 — HIGH — Neznámé REST/GraphQL messaging requesty procházejí fail-open
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:39-66`,
+  `src/linkedin/probe-navigation.ts:149-156`, `src/browser/request-guard.ts:18-28`,
+  `src/linkedin/network/read-policy.ts:1-6`
+- **Problém:** cross-thread blokace nastane pouze při `referencedIds.size > 0`.
+  Extractor podporuje case-sensitive exact GraphQL path a omezené URN/key tvary;
+  nula rozpoznaných IDs znamená povolit request. Obecný read guard navíc záměrně
+  připouští libovolný GET pod širokým `/voyager/api/messaging` nebo legacy
+  `/voyager/api/graphql/` prefixem, pokud URL neobsahuje blacklistované slovo.
+- **Nezávislá reprodukce:** všechny následující GET prošly `requestPolicy` i
+  `assertAllowedReadUrl`, ale `explicitProbeGraphqlConversationIds` vrátil prázdný
+  set: REST `/voyager/api/messaging/conversations/UNREAD/events`, GraphQL s
+  `conversationId=UNREAD`, JSON variables s `{"conversationId":"UNREAD"}`,
+  `/voyager/api/graphql/` s trailing slash a case varianta `/voyager/api/GraphQL`.
+  Stejně projde neznámý messaging GET bez známého action tokenu. Standardní
+  lowercase GraphQL `conversationUrn` canary je naopak blokovaný správně.
+- **Dopad:** target HTML může načíst jiný thread přes podporovanou REST cestu nebo
+  nepoznanou GraphQL obálku a probe přesto skončí úspěšně; request handler může jako
+  jediný „history template“ uložit právě cross-thread tvar. U úplně neznámého GET
+  endpointu nelze v absolutním no-mutation režimu bezpečně předpokládat read-only
+  význam jen podle metody a absence několika slov.
+- **Doporučení:** pro probe zavést phase-specific default deny. Selection smí
+  používat pouze přesně rozpoznaný Dash conversation-list GET; armed fáze jen
+  explicitně rozpoznaný history GET, jehož právě jedno ID patří target alias setu.
+  Každý history/messaging request bez rozpoznatelného ID musí být blokován, nikoli
+  povolen. Extractor sjednotit s canonical, case-insensitive exact path policy a
+  doplnit REST path IDs i všechny reálně pozorované GraphQL variable keys; unknown
+  path/operation testovat nulovým server countem.
+
+### R3-03 — MEDIUM — Odstraněný `Set-Cookie` header přesto změní sdílený cookie jar
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:74-89`,
+  `src/linkedin/probe-navigation.ts:173-188`, `src/linkedin/probe-navigation.ts:223-234`
+- **Problém:** cached fulfill skutečně nepředá `Set-Cookie`, Location ani opaque
+  response headers. Předcházející `route.fetch` a zejména
+  `context.request.get`, který sdílí cookie storage BrowserContextu, však
+  `Set-Cookie` z reálné response zpracovává ještě před sestavením safe headers.
+- **Nezávislá reprodukce:** před target preflight byl lokální context cookie jar
+  prázdný. Target odpověď obsahovala syntetický `Set-Cookie: targetPrivate=value`;
+  bez browser target requestu už po `armTarget` jar obsahoval `targetPrivate`.
+  Následný cached browser response správně neměl `set-cookie` ani opaque header a
+  server viděl target URL jen jednou.
+- **Dopad:** hodnoty se neukládají do manifestu ani storage-state souboru a context
+  se po probe zavře, takže nejde o trvalý credential leak. Tvrzení, že response
+  cookie není předána probe browser contextu, ale není pravdivé; nová/rotovaná
+  session cookie může ovlivnit následné history requesty v témže běhu.
+- **Doporučení:** selection i target dokument načíst izolovaným API request contextem
+  se vstupní kopií potřebných auth cookies, jehož response cookies se nepropíší do
+  browser contextu, a po načtení jej zahodit. Alternativní snapshot/restore musí
+  přesně odstranit nově přidané i přepsané cookies. Test má kontrolovat
+  `context.cookies()`, ne pouze fulfilled response headers.
+
+### Uzavřené reprodukce
+
+- **R2-01 uzavřeno:** 63/63 vlastních kombinací bylo blokováno současně v
+  `requestPolicy` i `assertAllowedReadUrl`: raw/single/double formy v path, query
+  name a query value pro C1, zero-width/soft-hyphen Cf, private-use, unassigned,
+  surrogate a explicitní U+FFFD. Původní deep/malformed/fullwidth testy také prošly.
+- **R2-03 uzavřeno pro požadovaný Dash tvar:** pouze direct element z exact GET
+  `voyagerMessagingGraphQL/graphql?queryId=messengerConversations` získal
+  `read=true/network-explicit`. Direct collection pod `data` i top-level root
+  funguje; root `elements`, nested tracking a `included` conversation nikoliv.
+  Chybějící method, POST, tracking/unrelated URL a konfliktní `read=false` nejsou
+  způsobilé.
+- **R2-04 uzavřeno:** syntetický alfabetický canary zmizel z blocked origin/path,
+  obecného navigation error logu, query names/values i JSON/header diagnostics.
+  Origin byl `<redacted-origin>`, path `/:opaque/:opaque`, thread error
+  `/messaging/thread/:opaque`; response header hodnoty se do manifestu vůbec
+  neukládají. R3-03 se týká runtime cookie efektu, ne redakce uložených dat.
+- **Očekávané R2-02 scénáře prošly:** selection i target 302 byly zastavené před
+  unread serverem; target preflight provedl jediný server GET a browser target
+  navigation použila cache. `pushState`, `replaceState`, `location` redirect,
+  popup a standardní cross-thread GraphQL `conversationUrn` skončily fail-closed.
+  Location a opaque response headers se neforwardovaly. R3-01/R3-02 popisují
+  varianty mimo pokrytí těchto pozitivních testů.
+- Probe zůstává default-off, guard/service-worker blokace se instalují před page,
+  nepoužívá export store ani DOM thread extraction. Při fresh missing-state běhu
+  vrátil exit 3 a nevznikl main, `.partial`, diagnostics ani template. U gate
+  selhání se template map nepřidává do manifestu před bezpečnostními assertions.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 14 test files / 99 tests, typecheck i build.
+- Cílený URL/probe/parser/guard/config běh: **PASS** — 6 files / 67 tests.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- `.auth/`, exporty a diagnostics jsou ignorované. V tracked souborech nebyl nalezen
+  runtime secret/export artifact ani high-entropy LinkedIn secret pattern.
+- `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
+  credentials ani existující session; implementační kód nebyl změněn a review
+  nebylo commitováno.
