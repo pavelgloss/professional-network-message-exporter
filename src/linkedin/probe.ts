@@ -1,6 +1,7 @@
 import type { Page, Request } from 'playwright';
 import type { AppConfig } from '../config.js';
-import { canonicalUrlView } from '../domain/url-safety.js';
+import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
+import { conversationIdFromUrn } from '../domain/stable-id.js';
 import { AppError } from '../errors.js';
 import { closeContext, launchContext } from '../browser/context.js';
 import { requestPolicy } from '../browser/request-guard.js';
@@ -10,17 +11,41 @@ import type { RawConversation } from '../domain/schema.js';
 import { assertAuthenticated, detectAuthState } from './auth-check.js';
 import { attachNetworkCapture } from './network/capture.js';
 import { isAllowedLinkedInReadPath } from './network/read-policy.js';
+import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
+
+function safeKnownId(value: string | undefined): string | undefined {
+  const normalized = value ? repeatedlyDecodeAndNormalize(value) : undefined;
+  return normalized && /^[\p{L}\p{N}_.-]+$/u.test(normalized) ? normalized : undefined;
+}
+
+export function knownProbeConversationIds(conversation: RawConversation): Set<string> {
+  const ids = new Set<string>();
+  const direct = safeKnownId(conversation.id);
+  const urn = safeKnownId(conversationIdFromUrn(conversation.entityUrn));
+  if (direct) ids.add(direct);
+  if (urn) ids.add(urn);
+  if (conversation.url) {
+    const canonical = canonicalUrlView(conversation.url);
+    const route = safeKnownId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+    if (route) ids.add(route);
+  }
+  return ids;
+}
 
 export function assertSafeProbeConversation(conversation: RawConversation): URL {
   if (conversation.sourceMetadata?.read !== true || conversation.sourceMetadata.readEvidence !== 'network-explicit' || !conversation.url) {
     throw new AppError('READ_POLICY_BLOCK', 'Probe requires a network conversation with explicit read=true evidence');
   }
   const canonical = canonicalUrlView(conversation.url);
+  const routeId = safeKnownId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+  const knownIds = knownProbeConversationIds(conversation);
+  const declaredIds = [safeKnownId(conversation.id), safeKnownId(conversationIdFromUrn(conversation.entityUrn))].filter((id): id is string => Boolean(id));
   if (!canonical || canonical.url.origin !== 'https://www.linkedin.com' || canonical.url.username || canonical.url.password
     || canonical.url.search || canonical.url.hash || !/^\/messaging\/thread\/[^/]+\/?$/i.test(canonical.pathname)
-    || !requestPolicy('GET', canonical.url.toString()).allow) {
+    || !requestPolicy('GET', canonical.url.toString()).allow || !routeId || !declaredIds.length
+    || [...knownIds].some((id) => id !== routeId)) {
     throw new AppError('READ_POLICY_BLOCK', 'Probe conversation URL was not an exact safe LinkedIn thread URL');
   }
   return canonical.url;
@@ -30,6 +55,11 @@ export function selectSafeProbeConversation(conversations: RawConversation[]): R
   for (const conversation of conversations) {
     try {
       assertSafeProbeConversation(conversation);
+      const ids = knownProbeConversationIds(conversation);
+      const conflictingUnread = conversations.some((other) => other !== conversation
+        && other.sourceMetadata?.readEvidence === 'network-explicit' && other.sourceMetadata.read === false
+        && [...knownProbeConversationIds(other)].some((id) => ids.has(id)));
+      if (conflictingUnread) continue;
       return conversation;
     } catch { /* fail closed per candidate */ }
   }
@@ -59,7 +89,11 @@ export async function navigateOneSafeProbeThread(page: Pick<Page, 'goto'>, conve
   const url = assertSafeProbeConversation(conversation);
   // This function contains the probe's only thread-navigation call. It deliberately
   // has no loop, retry, click, DOM extraction, or pagination behavior.
-  await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  try {
+    await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  } catch {
+    throw new AppError('READ_POLICY_BLOCK', 'Probe target navigation failed inside the enforced navigation gate', 4);
+  }
 }
 
 export async function probeReadThread(config: AppConfig, logger: Logger): Promise<void> {
@@ -70,13 +104,23 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
   const selectionCapture = attachNetworkCapture(page, selectionManifest, logger);
   const templates = new Map<string, ProbeHistoryQuery>();
   let requestHandler: ((request: Request) => void) | undefined;
+  let navigationGate: ProbeNavigationGate | undefined;
   try {
     logger.info('read-thread-probe-started', { scope: 'one-explicitly-read-network-conversation' });
-    await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+    const selectionUrl = 'https://www.linkedin.com/messaging/';
+    navigationGate = await installProbeNavigationGate(context, page, selectionUrl);
+    try {
+      await page.goto(selectionUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+    } catch {
+      throw new AppError('READ_POLICY_BLOCK', 'Probe selection navigation failed inside the enforced navigation gate', 4);
+    }
     assertAuthenticated(await detectAuthState(page));
     await page.waitForTimeout(Math.min(2_000, config.timeoutMs));
     await selectionCapture.drain();
+    await navigationGate.assertSelectionSafe();
     const candidate = selectSafeProbeConversation(selectionCapture.conversations);
+    const targetUrl = assertSafeProbeConversation(candidate);
+    await navigationGate.armTarget(targetUrl.toString(), knownProbeConversationIds(candidate));
     selectionCapture.detach();
 
     requestHandler = (request: Request) => {
@@ -86,18 +130,28 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     page.on('request', requestHandler);
     await navigateOneSafeProbeThread(page, candidate, config.timeoutMs);
     await page.waitForTimeout(Math.min(3_000, config.timeoutMs));
+    await navigationGate.assertTargetSafe();
     manifest.probeHistoryQueries = [...templates.values()];
-    manifest.counts.probeThreadNavigations = 1;
     manifest.counts.probeHistoryQueryTemplates = templates.size;
     if (!templates.size) throw new AppError('PARSER_NO_DATA', 'The one-thread probe observed no safe GET history query template', 4);
     manifest.status = 'success';
-    logger.info('read-thread-probe-complete', { threadNavigations: 1, historyQueryTemplates: templates.size });
+    logger.info('read-thread-probe-complete', { threadNavigations: navigationGate.snapshot().targetNavigationsAllowed, historyQueryTemplates: templates.size });
   } catch (error) {
-    manifest.status = error instanceof AppError ? error.code : 'FAILED';
-    throw error;
+    const safeError = error instanceof AppError ? error : new AppError('READ_POLICY_BLOCK', 'Read-thread probe failed before its safe target could be verified', 4);
+    manifest.status = safeError.code;
+    throw safeError;
   } finally {
     if (requestHandler) page.off('request', requestHandler);
     selectionCapture.detach();
+    if (navigationGate) {
+      const snapshot = navigationGate.snapshot();
+      manifest.counts.probeSelectionNavigations = snapshot.selectionNavigationsAllowed;
+      manifest.counts.probeThreadNavigations = snapshot.targetNavigationsAllowed;
+      manifest.counts.probeNavigationAttemptsBlocked = snapshot.navigationAttemptsBlocked;
+      manifest.counts.probePopupPagesBlocked = snapshot.popupPagesBlocked;
+      manifest.counts.probeCrossThreadRequestsBlocked = snapshot.crossThreadRequestsBlocked;
+      await navigationGate.dispose().catch(() => undefined);
+    }
     manifest.finishedAt = new Date().toISOString();
     await closeContext(context);
     await saveManifest(config.diagnosticsDir, manifest).catch(() => undefined);

@@ -61,6 +61,11 @@ přečtený stav nelze explicitně prokázat, skončí bez otevření vlákna. O
 přečteného vlákna je vědomý opt-in; HTTP/WebSocket/service-worker guard zůstává
 aktivní. Probe není součástí běžného exportu.
 
+Před browserovým načtením cíle probe provede jediný exact GET preflight bez
+přesměrování. Pouze odpověď `200 text/html` bez `Location` se jednou zobrazí z kopie
+držené v paměti; browser proto neposílá druhý document GET. Jakýkoli serverový nebo
+client-side redirect, popup či pokus přejít na jiný thread ukončí probe fail-closed.
+
 Limit lze změnit proměnnou `LINKEDIN_LIMIT` v lokálním `.env`.
 Při vlastním `--output` zajistěte, aby cílový JSON, jeho `.partial` kandidát i sousední
 `diagnostics/` byly ignorované vaším Gitem.
