@@ -1,7 +1,7 @@
-import type { APIResponse, BrowserContext, Page, Request, Route } from 'playwright';
+import { request as playwrightRequest, type APIResponse, type BrowserContext, type Page, type Route } from 'playwright';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
-import { conversationIdFromUrn } from '../domain/stable-id.js';
 import { AppError } from '../errors.js';
+import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
 
 export type ProbeNavigationSnapshot = {
   selectionNavigationsAllowed: number;
@@ -9,6 +9,7 @@ export type ProbeNavigationSnapshot = {
   navigationAttemptsBlocked: number;
   popupPagesBlocked: number;
   crossThreadRequestsBlocked: number;
+  selectionPreflightGets: number;
   targetPreflightGets: number;
 };
 
@@ -37,32 +38,11 @@ function normalizedId(value: string): string | undefined {
 }
 
 export function explicitProbeGraphqlConversationIds(method: string, rawUrl: string): Set<string> {
-  const ids = new Set<string>();
-  if (method.toUpperCase() !== 'GET') return ids;
   const canonical = canonicalUrlView(rawUrl);
-  if (!canonical || canonical.url.origin !== 'https://www.linkedin.com'
-    || !/^\/voyager\/api\/(?:graphql|voyagerMessagingGraphQL\/graphql)$/.test(canonical.pathname)) return ids;
-  const addUrn = (value: string) => {
-    const id = conversationIdFromUrn(value);
-    if (id) ids.add(id);
-  };
-  for (const { name, value } of canonical.query) {
-    if (/^(?:conversationUrn|urn)$/i.test(name)) {
-      addUrn(value);
-      if (!/^urn:/i.test(value)) {
-        const id = normalizedId(value);
-        if (id) ids.add(id);
-      }
-    }
-    for (const match of value.matchAll(/urn:li:(?:msg_conversation|fsd_messengerConversation|messagingThread|messagingConversation|conversation):(?:\([^)]*\)|[\p{L}\p{N}_.-]+)/giu)) {
-      if (match[0]) addUrn(match[0]);
-    }
-    for (const match of value.matchAll(/"?(?:conversationUrn|urn)"?\s*[:=]\s*"?([\p{L}\p{N}_.-]+)/giu)) {
-      const id = match[1] && !/^urn$/i.test(match[1]) ? normalizedId(match[1]) : undefined;
-      if (id) ids.add(id);
-    }
-  }
-  return ids;
+  if (method.toUpperCase() !== 'GET' || !canonical || canonical.url.origin !== 'https://www.linkedin.com'
+    || canonical.pathname !== '/voyager/api/voyagerMessagingGraphQL/graphql') return new Set();
+  const references = parseProbeConversationReferences(canonical.query);
+  return references.valid ? references.ids : new Set();
 }
 
 async function pageHistoryWasBlocked(page: Page): Promise<boolean> {
@@ -89,10 +69,30 @@ async function cacheSafeDocument(response: APIResponse, expectedLocation: string
   return { status: 200, headers: safeHeaders, body };
 }
 
+async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, expectedLocation: string): Promise<CachedDocument | undefined> {
+  // APIRequestContext receives a copy of the auth state. Response Set-Cookie
+  // processing is confined to this short-lived context and can never mutate the
+  // probe browser's cookie jar.
+  const storageState = await context.storageState();
+  const isolated = await playwrightRequest.newContext({ storageState });
+  let response: APIResponse | undefined;
+  try {
+    response = await isolated.get(rawUrl, { maxRedirects: 0, failOnStatusCode: false });
+    return await cacheSafeDocument(response, expectedLocation);
+  } catch {
+    return undefined;
+  } finally {
+    await response?.dispose().catch(() => undefined);
+    await isolated.dispose().catch(() => undefined);
+  }
+}
+
 export async function installProbeNavigationGate(context: BrowserContext, page: Page, selectionUrl: string): Promise<ProbeNavigationGate> {
   const selectionLocation = exactCanonicalLocation(selectionUrl);
   if (!selectionLocation) throw new AppError('READ_POLICY_BLOCK', 'Probe selection URL was ambiguous');
+  const expectedOrigin = new URL(selectionLocation).origin;
   let phase: Phase = 'selection';
+  let selectionDocument: CachedDocument | undefined;
   let targetLocation: string | undefined;
   let targetIds = new Set<string>();
   let targetDocument: CachedDocument | undefined;
@@ -103,8 +103,11 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
     navigationAttemptsBlocked: 0,
     popupPagesBlocked: 0,
     crossThreadRequestsBlocked: 0,
+    selectionPreflightGets: 1,
     targetPreflightGets: 0,
   };
+
+  selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation);
 
   await page.addInitScript(() => {
     const state = globalThis as typeof globalThis & { __linkedinReaderProbeHistoryBlocked?: boolean };
@@ -144,53 +147,26 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
     await route.abort('blockedbyclient').catch(() => undefined);
   };
 
+  const mainPageNavigation = (route: Route): boolean => {
+    const navigationRequest = route.request();
+    if (!navigationRequest.isNavigationRequest()) return false;
+    try { return navigationRequest.frame() === page.mainFrame() && navigationRequest.frame().page() === page; }
+    catch { return false; }
+  };
+
   const routeHandler = async (route: Route): Promise<void> => {
     const request = route.request();
-    const referencedIds = explicitProbeGraphqlConversationIds(request.method(), request.url());
-    if (referencedIds.size && (!targetIds.size || [...referencedIds].some((id) => !targetIds.has(id)))) {
-      await block(route, 'cross-thread');
-      return;
-    }
-    if (!request.isNavigationRequest()) {
-      await route.fallback();
-      return;
-    }
-    let frame;
-    try { frame = request.frame(); } catch {
-      await block(route, 'navigation');
-      return;
-    }
-    if (frame.page() !== page) {
-      counts.popupPagesBlocked += 1;
-      await block(route, 'navigation');
-      return;
-    }
-    if (frame !== page.mainFrame()) {
-      await route.fallback();
-      return;
-    }
     const location = exactCanonicalLocation(request.url());
-    if (phase === 'selection' && counts.selectionNavigationsAllowed === 0 && location === selectionLocation) {
+    if (phase === 'selection' && counts.selectionNavigationsAllowed === 0 && location === selectionLocation
+      && selectionDocument && mainPageNavigation(route)) {
       counts.selectionNavigationsAllowed += 1;
-      try {
-        const response = await route.fetch({ maxRedirects: 0 });
-        let document: CachedDocument | undefined;
-        try { document = await cacheSafeDocument(response, selectionLocation); } finally { await response.dispose(); }
-        if (!document) {
-          counts.navigationAttemptsBlocked += 1;
-          violated = true;
-          await route.abort('blockedbyclient').catch(() => undefined);
-          return;
-        }
-        await route.fulfill(document);
-      } catch {
-        counts.navigationAttemptsBlocked += 1;
-        violated = true;
-        await route.abort('blockedbyclient').catch(() => undefined);
-      }
+      const document = selectionDocument;
+      selectionDocument = undefined;
+      await route.fulfill(document);
       return;
     }
-    if (phase === 'armed' && counts.targetNavigationsAllowed === 0 && location === targetLocation && targetDocument) {
+    if (phase === 'armed' && counts.targetNavigationsAllowed === 0 && location === targetLocation
+      && targetDocument && mainPageNavigation(route)) {
       counts.targetNavigationsAllowed += 1;
       phase = 'target-used';
       const document = targetDocument;
@@ -198,7 +174,28 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
       await route.fulfill(document);
       return;
     }
-    await block(route, 'navigation');
+
+    // A thread route is never allowed onto the wire, for any resource type or
+    // frame. The sole target document exception was fulfilled from memory above.
+    if (isProbeThreadUrl(request.url(), expectedOrigin)) {
+      await block(route, 'cross-thread');
+      return;
+    }
+
+    const decision = probeMessagingRequestPolicy(phase === 'selection' ? 'selection' : 'target', request.method(), request.url(), expectedOrigin, targetIds);
+    if (decision.messaging) {
+      if (decision.allow) await route.fallback();
+      else await block(route, 'cross-thread');
+      return;
+    }
+
+    // No frame may navigate away from either cached document. Ordinary
+    // non-messaging subresources still pass through the global read-only guard.
+    if (request.isNavigationRequest()) {
+      await block(route, 'navigation');
+      return;
+    }
+    await route.fallback();
   };
   await context.route('**/*', routeHandler);
 
@@ -218,17 +215,18 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
         throw new AppError('READ_POLICY_BLOCK', 'Probe target could not be armed after an unsafe selection navigation', 4);
       }
       const location = exactCanonicalLocation(targetUrl);
-      const ids = new Set([...knownConversationIds].map(normalizedId).filter((id): id is string => Boolean(id)));
-      if (!location || !ids.size) throw new AppError('READ_POLICY_BLOCK', 'Probe target URL or identity was ambiguous', 4);
+      const providedIds = [...knownConversationIds];
+      const normalizedIds = providedIds.map(normalizedId);
+      const ids = new Set(normalizedIds.filter((id): id is string => Boolean(id)));
+      const routeId = location ? normalizedId(canonicalUrlView(location)?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/)?.[1] ?? '') : undefined;
+      if (!location || new URL(location).origin !== expectedOrigin || !routeId || !providedIds.length
+        || normalizedIds.some((id) => !id) || !ids.has(routeId) || [...ids].some((id) => id !== routeId)) {
+        throw new AppError('READ_POLICY_BLOCK', 'Probe target URL or identity was ambiguous', 4);
+      }
       targetLocation = location;
       targetIds = ids;
       counts.targetPreflightGets += 1;
-      try {
-        const response = await context.request.get(targetUrl, { maxRedirects: 0, failOnStatusCode: false });
-        try { targetDocument = await cacheSafeDocument(response, location); } finally { await response.dispose(); }
-      } catch {
-        targetDocument = undefined;
-      }
+      targetDocument = await isolatedCachedDocument(context, targetUrl, location);
       if (!targetDocument) {
         violated = true;
         counts.navigationAttemptsBlocked += 1;

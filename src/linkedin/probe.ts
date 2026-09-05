@@ -10,8 +10,8 @@ import type { Logger } from '../logger.js';
 import type { RawConversation } from '../domain/schema.js';
 import { assertAuthenticated, detectAuthState } from './auth-check.js';
 import { attachNetworkCapture } from './network/capture.js';
-import { isAllowedLinkedInReadPath } from './network/read-policy.js';
 import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
+import { probeMessagingRequestPolicy } from './probe-request-policy.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
 
@@ -66,17 +66,11 @@ export function selectSafeProbeConversation(conversations: RawConversation[]): R
   throw new AppError('READ_POLICY_BLOCK', 'No network conversation with explicit read=true evidence was available for the probe', 4);
 }
 
-export function observedHistoryQueryTemplate(method: string, rawUrl: string): ProbeHistoryQuery | undefined {
-  if (method.toUpperCase() !== 'GET') return undefined;
+export function observedHistoryQueryTemplate(method: string, rawUrl: string, knownConversationIds: Iterable<string>): ProbeHistoryQuery | undefined {
   const canonical = canonicalUrlView(rawUrl);
-  if (!canonical || canonical.url.origin !== 'https://www.linkedin.com' || canonical.url.username || canonical.url.password
-    || !isAllowedLinkedInReadPath(canonical.pathname) || !requestPolicy('GET', canonical.url.toString()).allow) return undefined;
-  const queryText = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');
-  const restHistory = /^\/voyager\/api\/messaging(?:\/|$)/i.test(canonical.pathname)
-    && /(?:history|messages?|events?|conversations?)/i.test(canonical.pathname);
-  const graphqlHistory = /^\/voyager\/api\/(?:graphql(?:\/|$)|voyagerMessagingGraphQL\/graphql$)/i.test(canonical.pathname)
-    && /(?:history|messages?|events?|conversations?)/i.test(queryText);
-  if (!restHistory && !graphqlHistory) return undefined;
+  const targetIds = new Set([...knownConversationIds].map(safeKnownId).filter((id): id is string => Boolean(id)));
+  const decision = probeMessagingRequestPolicy('target', method, rawUrl, 'https://www.linkedin.com', targetIds);
+  if (!canonical || decision.kind !== 'conversation-history') return undefined;
   return {
     method: 'GET',
     origin: 'https://www.linkedin.com',
@@ -120,11 +114,12 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     await navigationGate.assertSelectionSafe();
     const candidate = selectSafeProbeConversation(selectionCapture.conversations);
     const targetUrl = assertSafeProbeConversation(candidate);
-    await navigationGate.armTarget(targetUrl.toString(), knownProbeConversationIds(candidate));
+    const candidateIds = knownProbeConversationIds(candidate);
+    await navigationGate.armTarget(targetUrl.toString(), candidateIds);
     selectionCapture.detach();
 
     requestHandler = (request: Request) => {
-      const template = observedHistoryQueryTemplate(request.method(), request.url());
+      const template = observedHistoryQueryTemplate(request.method(), request.url(), candidateIds);
       if (template) templates.set(JSON.stringify(template), template);
     };
     page.on('request', requestHandler);
@@ -150,6 +145,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeNavigationAttemptsBlocked = snapshot.navigationAttemptsBlocked;
       manifest.counts.probePopupPagesBlocked = snapshot.popupPagesBlocked;
       manifest.counts.probeCrossThreadRequestsBlocked = snapshot.crossThreadRequestsBlocked;
+      manifest.counts.probeSelectionPreflightGets = snapshot.selectionPreflightGets;
+      manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
       await navigationGate.dispose().catch(() => undefined);
     }
     manifest.finishedAt = new Date().toISOString();

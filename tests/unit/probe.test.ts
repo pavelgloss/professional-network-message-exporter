@@ -69,27 +69,28 @@ describe('one already-read thread probe', () => {
 
   it('records only safe GET history template metadata and redacts opaque paths and query values', () => {
     const canary = 'privateAlphabeticIdentifier';
-    const template = observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/messaging/conversations/${canary}/events?queryId=messengerMessages&cursor=${canary}`);
+    const template = observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=${canary}`, [canary]);
     expect(template).toEqual({
       method: 'GET', origin: 'https://www.linkedin.com',
-      pathShape: '/voyager/api/messaging/conversations/:opaque/events',
-      queryParameterNames: ['cursor', 'queryid'],
+      pathShape: '/voyager/api/voyagermessaginggraphql/graphql',
+      queryParameterNames: ['<opaque-key>', 'queryid'],
     });
     expect(JSON.stringify(template)).not.toContain(canary);
-    expect(observedHistoryQueryTemplate('POST', 'https://www.linkedin.com/voyager/api/messaging/messages')).toBeUndefined();
-    expect(observedHistoryQueryTemplate('GET', 'https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation')).toBeUndefined();
-    expect(observedHistoryQueryTemplate('GET', 'https://evil.example/voyager/api/messaging/messages')).toBeUndefined();
+    expect(observedHistoryQueryTemplate('POST', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=${canary}`, [canary])).toBeUndefined();
+    expect(observedHistoryQueryTemplate('GET', 'https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation', [canary])).toBeUndefined();
+    expect(observedHistoryQueryTemplate('GET', `https://evil.example/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=${canary}`, [canary])).toBeUndefined();
+    expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=OTHER`, [canary])).toBeUndefined();
     for (const separator of ['%C2%85', '%E2%80%8B', '%C2%AD', '%E2%80%AE', '%25E2%2580%258B']) {
-      expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/graphql?queryId=messengerMessa${separator}ges`)).toBeUndefined();
+      expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessa${separator}ges&conversationId=${canary}`, [canary])).toBeUndefined();
     }
   });
 
-  it('extracts explicit conversation identities from both messaging GraphQL GET paths', () => {
-    for (const path of ['/voyager/api/graphql', '/voyager/api/voyagerMessagingGraphQL/graphql']) {
-      const ids = explicitProbeGraphqlConversationIds('GET', `https://www.linkedin.com${path}?queryId=messengerMessagesByConversation&variables=(conversationUrn:urn%3Ali%3AmessagingThread%3AOTHER)`);
-      expect([...ids]).toEqual(['OTHER']);
-      expect([...explicitProbeGraphqlConversationIds('GET', `https://www.linkedin.com${path}?queryId=messengerMessagesByConversation&variables=(conversationUrn:OTHER)`)]).toEqual(['OTHER']);
-    }
+  it('extracts explicit conversation identities only from the exact Dash GET path', () => {
+    const path = '/voyager/api/voyagerMessagingGraphQL/graphql';
+    const ids = explicitProbeGraphqlConversationIds('GET', `https://www.linkedin.com${path}?queryId=messengerMessagesByConversation&variables=(conversationUrn:urn%3Ali%3AmessagingThread%3AOTHER)`);
+    expect([...ids]).toEqual(['OTHER']);
+    expect([...explicitProbeGraphqlConversationIds('GET', `https://www.linkedin.com${path}?queryId=messengerMessagesByConversation&variables=(conversationUrn:OTHER)`)]).toEqual(['OTHER']);
+    expect(explicitProbeGraphqlConversationIds('GET', 'https://www.linkedin.com/voyager/api/graphql?urn=urn%3Ali%3AmessagingThread%3AOTHER').size).toBe(0);
     expect(explicitProbeGraphqlConversationIds('POST', 'https://www.linkedin.com/voyager/api/graphql?urn=urn%3Ali%3AmessagingThread%3AOTHER').size).toBe(0);
   });
 });
