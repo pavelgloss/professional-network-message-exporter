@@ -1330,3 +1330,92 @@ dotčen není.
 - `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
   LinkedIn, credentials ani existující session; implementační kód nebyl změněn a
   nic nebylo commitováno.
+
+---
+
+## Finální security re-review HEAD `585094b`
+
+### Verdikt
+
+**Critical: 0 / High: 1 / Medium: 0.** Původní R5-01 je pro všech sedm
+simple/composite/nested/array/double-encoded JSON a Rest.li reprodukcí uzavřený.
+Nový parser ale nefailuje closed pro syntaktický conversation-like URN s
+nepodporovaným budoucím namespace ani pro některé malformed URN. To je u soukromého
+a měnícího se LinkedIn API stále target-identity mezera.
+
+**NO-GO pro jeden skutečný `--probe-read-thread`.** Supported foreign conversation
+URN se již zastaví, ale exact history GET s `messagingThreadV2:UNREAD` dosáhl v
+lokální runtime reprodukci serveru a gate jej prohlásil za bezpečný. Network-only
+export bez probe/thread-open režimu tímto nálezem dotčen není.
+
+### R6-01 / R5-01 — HIGH — Unknown/malformed conversation-like URN se ignoruje místo fail-closed blokace
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:45-69`,
+  `src/linkedin/probe-request-policy.ts:128-151`,
+  `src/domain/stable-id.ts:29-46`
+- **Problém:** `collectConversationUrns()` nastaví `valid=false` pouze tehdy, když
+  `isConversationUrn()` již rozpozná entity type jako jednu ze šesti současných
+  konstant. Syntaktický `urn:li:messagingThreadV2:UNREAD`,
+  `messagingConversationV2`, `conversation-v2` nebo prázdný
+  `urn:li:messagingThread:` proto jen přeskočí. Vedle validního
+  `conversationId=READ` zůstane jediný známý reference `READ` a exact history
+  request je povolen.
+- **Nezávislá reprodukce:** policy vrátila `allow:true`,
+  `kind=conversation-history`, `referencedIds=[READ]` pro všechny čtyři výše
+  uvedené varianty. Lokální Chromium route-chain poslal reprezentativní
+  `messagingThreadV2:UNREAD` i prázdný current-type URN serveru (`hits=[1,1]`),
+  `crossThreadRequestsBlocked=0` a `assertTargetSafe=true`. Naproti tomu unbalanced
+  current composite, dvojitá dvojtečka a foreign current URN s trailing delimiterem
+  skončily fail-closed.
+- **Dopad:** jakmile LinkedIn zavede nový conversation entity type, může se foreign
+  unread identity skrýt pod unknown key vedle návnadového target aliasu. Probe ji
+  odešle jako povolený history GET, nezaznamená violation a může uložit validně
+  vypadající template pro request mimo jediný ověřený read target.
+- **Doporučení:** při každém nalezeném `urn:li:<entityType>:` nejprve oddělit a
+  validovat celý token. Rozpoznaný conversation type musí dát validní route ID;
+  malformed token nebo neznámý type obsahující `messag|conversation|thread` musí
+  nastavit `result.valid=false`. Pouze explicitně známé non-conversation typy
+  (person/profile/participant/message/mailbox) ignorovat. Přidat policy i skutečný
+  server-count `0` test pro prázdný current URN a několik future namespace variant,
+  vždy vedle `conversationId=READ`.
+
+### Ověřené opravy a regrese
+
+- **Původních sedm R5-01 případů:** simple a composite foreign conversation URN,
+  nested scalar, array s profile+foreign conversation, double-encoded JSON,
+  simple Rest.li a nested Rest.li měly v nezávislém Chromium běhu každý server hit
+  `0`; blocked counter byl přesně `7`.
+- **Target URN pozitivní kontrola:** `messagingThread`, composite
+  `msg_conversation`, `fsd_messengerConversation`, `messengerConversation`,
+  `messagingConversation` a `conversation` s ID `READ` měly každý právě jeden
+  server hit a `assertTargetSafe()` prošel.
+- **Hraniční parser matice:** mixed target+foreign, více URN v jednom scalaru,
+  comma/semicolon/quoted delimitery, triple/nested encoding, unbalanced composite
+  a dvojitá dvojtečka skončily fail-closed. Profile, participant, message/event a
+  mailbox URN pod neidentity payloadem se nepřimíchaly do conversation IDs a validní
+  target request zůstal povolen. R6-01 popisuje tři future types a empty-value tvar,
+  které tuto matici nesplnily.
+- **Namespace/redirect/cache/cookies:** předchozí R4 namespaces včetně encoded a
+  case/custom variant zůstaly na server count `0`. Allowed-list 302 má source count
+  `1`, redirect target `0` a fail-closed assertion. Exact list/history i cached
+  target mají po jednom povoleném server GET; browser navigation nevytváří druhý
+  document GET. Selection, target i isolated API `Set-Cookie` nezměnily browser jar.
+- **Starší bezpečnostní invarianty:** full suite znovu potvrdila blokaci POST,
+  WebSocket upgradu/frame a persistent service workeru, přesně jednu explicitně
+  read target navigation, DOM mutation bait, atomic main/partial chování, parser
+  provenance/redakci a absenci export-store volání v probe větvi.
+- Fresh missing-state `npm.cmd run probe:read-thread -- --state-file <missing>
+  --output <temp>` skončil `AUTH_REQUIRED`, exit `3`, bez main, `.partial`,
+  diagnostics či jiného souboru. Nebyl použit existující storage state ani session.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 15 test files / 117 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Nezávislé local-Chromium/policy matice: původní R5 cases a supported target
+  namespaces **PASS**; R6-01 future/malformed variants **FAIL** podle nálezu výše.
+- `.auth/`, main/partial exporty a diagnostics jsou ignorované; tracked obsah nemá
+  nalezenou credential value ani runtime export/session artifact.
+- `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
+  reálná data, credentials ani existující session; implementační kód nebyl změněn
+  a nic nebylo commitováno.
