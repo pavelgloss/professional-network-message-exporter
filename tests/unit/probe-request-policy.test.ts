@@ -29,16 +29,33 @@ describe('probe phase-specific messaging request policy', () => {
       `${dash}?queryId=messengerMessagesByConversation`,
       `${dash}?queryId=messengerMessagesByConversation&conversationId=OTHER`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', threadId: 'OTHER' }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', id: 'UNREAD' }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent('(conversationId:READ,ids:(UNREAD))')}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ nested: { conversationId: 'READ', ids: ['UNREAD'] } }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(encodeURIComponent(JSON.stringify({ conversationId: 'READ', ids: ['UNREAD'] })))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', id: { value: 'UNREAD' } }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', candidateId: 'PREFIX-READ-SUFFIX' }))}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ ConversationId: 'READ' }))}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'urn:li:fsd_profile:READ' }))}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationIdentity: 'READ' }))}`,
     ];
     for (const url of blocked) expect(decide('target', url), url).toMatchObject({ allow: false, kind: 'blocked' });
+
+    const scalarDecoy = decide('target', `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', id: 'UNREAD' }))}`);
+    expect([...scalarDecoy.referencedIds].sort()).toEqual(['READ', 'UNREAD']);
+    expect(decide('target', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ&id=PREFIX-READ-SUFFIX`)).toMatchObject({ allow: false });
   });
 
   it('fails closed for REST, legacy, unknown, case and trailing-path lookalikes', () => {
     const blocked = [
       `${origin}/voyager/api/messaging/conversations/READ/events`,
+      `${origin}/voyager/api/messagingV2/conversations/UNREAD/events`,
+      `${origin}/voyager/api/graphqlV2?queryId=messengerMessagesByConversation&conversationId=UNREAD`,
+      `${origin}/voyager/api/voyagerMessagingGraphQLV2/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD`,
+      `${origin}/voyager/api/voyagerMessagingRest/conversations/UNREAD/events`,
+      `${origin}/voyager/api/%6dessagingV2/conversations/UNREAD/events`,
+      `${origin}/voyager/api/MESSAGINGcustom/conversations/UNREAD/events`,
+      `${origin}/voyager/api/customGraphqlV2?operationName=mailboxMessagesV2`,
       `${origin}/voyager/api/graphql?queryId=messengerMessagesByConversation&conversationId=READ`,
       `${origin}/voyager/api/voyagerMessagingGraphQL/GraphQL?queryId=messengerMessagesByConversation&conversationId=READ`,
       `${dash}/?queryId=messengerMessagesByConversation&conversationId=READ`,
@@ -52,5 +69,7 @@ describe('probe phase-specific messaging request policy', () => {
     for (const url of blocked) expect(decide('target', url), url).toMatchObject({ messaging: true, allow: false, kind: 'blocked' });
     expect(decide('target', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`, 'POST')).toMatchObject({ allow: false });
     expect(decide('target', `${origin}/feed/`)).toMatchObject({ messaging: false, allow: false, kind: 'non-messaging' });
+    expect(decide('target', `${origin}/voyager/api/profile?queryId=profileView`)).toMatchObject({ messaging: false, allow: false, kind: 'non-messaging' });
+    expect(decide('target', `${origin}/voyager/api/profile?profileId=UNREAD`)).toMatchObject({ messaging: true, allow: false, kind: 'blocked' });
   });
 });

@@ -14,6 +14,7 @@ describe('probe navigation gate against local redirects', () => {
   let targetRequests = new Map<string, number>();
   let allRequests = new Map<string, number>();
   let requestCookies = new Map<string, string>();
+  let redirectConversationList = false;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -63,6 +64,11 @@ describe('probe navigation gate against local redirects', () => {
         response.end("fetch('/messaging/thread/UNREAD/').catch(()=>{})");
         return;
       }
+      if (redirectConversationList && request.url === '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations') {
+        response.writeHead(302, { location: '/voyager/api/messagingV2/conversations/UNREAD/events' });
+        response.end();
+        return;
+      }
       if (request.url?.startsWith('/voyager/api/')) {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end('{"ok":true}');
@@ -96,6 +102,7 @@ describe('probe navigation gate against local redirects', () => {
     targetRequests = new Map();
     allRequests = new Map();
     requestCookies = new Map();
+    redirectConversationList = false;
     context = await browser.newContext({ serviceWorkers: 'block' });
     page = await context.newPage();
     gate = undefined;
@@ -144,6 +151,17 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     await gate!.assertSelectionSafe();
     expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations')).toBe(1);
+  });
+
+  it('blocks an allowed list GET redirect before an unknown messaging namespace reaches the server', async () => {
+    redirectConversationList = true;
+    await reset('/selection-list');
+    await page.goto(`${origin}/selection-list`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(500);
+    expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations')).toBe(1);
+    expect(allRequests.get('/voyager/api/messagingV2/conversations/UNREAD/events')).toBeUndefined();
+    expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(1);
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
   });
 
   it('allows one exact target request but blocks its server redirect to unread', async () => {
@@ -235,6 +253,34 @@ describe('probe navigation gate against local redirects', () => {
       '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation',
       '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD',
       `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', threadId: 'UNREAD' }))}`,
+    ];
+    await page.evaluate(async (urls) => { await Promise.all(urls.map((url) => fetch(url).catch(() => undefined))); }, blocked);
+    await page.waitForTimeout(100);
+    for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
+    expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
+    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+  });
+
+  it('keeps R4 namespace and identity decoys at zero server requests', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+    await gate!.assertTargetSafe();
+
+    const blocked = [
+      '/voyager/api/messagingV2/conversations/UNREAD/events',
+      '/voyager/api/graphqlV2?queryId=messengerMessagesByConversation&conversationId=UNREAD',
+      '/voyager/api/voyagerMessagingGraphQLV2/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD',
+      '/voyager/api/voyagerMessagingRest/conversations/UNREAD/events',
+      `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', id: 'UNREAD' }))}`,
+      `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent('(conversationId:READ,ids:(UNREAD))')}`,
+      `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ nested: { conversationId: 'READ', ids: ['UNREAD'] } }))}`,
+      `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(encodeURIComponent(JSON.stringify({ conversationId: 'READ', ids: ['UNREAD'] })))}`,
+      '/voyager/api/%6dessagingV2/conversations/UNREAD/events',
+      '/voyager/api/MESSAGINGcustom/conversations/UNREAD/events',
+      '/voyager/api/customGraphqlV2?operationName=mailboxMessagesV2',
     ];
     await page.evaluate(async (urls) => { await Promise.all(urls.map((url) => fetch(url).catch(() => undefined))); }, blocked);
     await page.waitForTimeout(100);

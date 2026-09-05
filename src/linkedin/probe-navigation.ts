@@ -1,4 +1,4 @@
-import { request as playwrightRequest, type APIResponse, type BrowserContext, type Page, type Route } from 'playwright';
+import { request as playwrightRequest, type APIResponse, type BrowserContext, type Page, type Request, type Route } from 'playwright';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 import { AppError } from '../errors.js';
 import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
@@ -24,6 +24,7 @@ export type ProbeNavigationGate = {
 type Phase = 'selection' | 'armed' | 'target-used';
 type CachedDocument = { status: 200; headers: Record<string, string>; body: Buffer };
 const MAX_PROBE_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_PROBE_API_BYTES = 16 * 1024 * 1024;
 
 function exactCanonicalLocation(rawUrl: string): string | undefined {
   const canonical = canonicalUrlView(rawUrl);
@@ -79,6 +80,31 @@ async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, e
   try {
     response = await isolated.get(rawUrl, { maxRedirects: 0, failOnStatusCode: false });
     return await cacheSafeDocument(response, expectedLocation);
+  } catch {
+    return undefined;
+  } finally {
+    await response?.dispose().catch(() => undefined);
+    await isolated.dispose().catch(() => undefined);
+  }
+}
+
+async function isolatedApiResponse(context: BrowserContext, browserRequest: Request): Promise<CachedDocument | undefined> {
+  const storageState = await context.storageState();
+  const originalHeaders = await browserRequest.allHeaders();
+  const headers = Object.fromEntries(Object.entries(originalHeaders).filter(([name]) =>
+    /^(?:accept|accept-language|user-agent|referer|origin|csrf-token|x-li-[a-z0-9-]+|x-restli-protocol-version)$/i.test(name)));
+  const isolated = await playwrightRequest.newContext({ storageState });
+  let response: APIResponse | undefined;
+  try {
+    response = await isolated.get(browserRequest.url(), { headers, maxRedirects: 0, failOnStatusCode: false });
+    const responseHeaders = response.headers();
+    const contentType = responseHeaders['content-type'] ?? '';
+    const declaredSize = Number(responseHeaders['content-length'] ?? 0);
+    if (response.status() !== 200 || responseHeaders.location || !/(?:json|graphql)/i.test(contentType)
+      || (Number.isFinite(declaredSize) && declaredSize > MAX_PROBE_API_BYTES)) return undefined;
+    const body = await response.body();
+    if (body.byteLength > MAX_PROBE_API_BYTES) return undefined;
+    return { status: 200, headers: { 'content-type': contentType }, body };
   } catch {
     return undefined;
   } finally {
@@ -184,7 +210,12 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
 
     const decision = probeMessagingRequestPolicy(phase === 'selection' ? 'selection' : 'target', request.method(), request.url(), expectedOrigin, targetIds);
     if (decision.messaging) {
-      if (decision.allow) await route.fallback();
+      if (!decision.allow) {
+        await block(route, 'cross-thread');
+        return;
+      }
+      const response = await isolatedApiResponse(context, request);
+      if (response) await route.fulfill(response);
       else await block(route, 'cross-thread');
       return;
     }
