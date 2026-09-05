@@ -2,7 +2,7 @@ import type { APIRequestContext } from 'playwright';
 import { AppError } from '../../errors.js';
 import { requestPolicy } from '../../browser/request-guard.js';
 
-const allowedReadPath = /^\/voyager\/api\/(?:messaging(?:\/|$)|graphql(?:\/|$)|me$)/i;
+const allowedReadPath = /^\/voyager\/api\/(?:messaging(?:\/|$)|graphql(?:\/|$)|voyagerMessagingGraphQL\/graphql$|me$)/i;
 
 export function assertAllowedReadUrl(rawUrl: string): URL {
   const url = new URL(rawUrl, 'https://www.linkedin.com');

@@ -58,6 +58,7 @@ describe('network parser', () => {
     expect(() => assertAllowedReadUrl('https://evil.example/voyager/api/messaging')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/feed')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation')).toThrow();
+    expect(assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation').pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
   });
 
   it('resolves GraphQL reference arrays, composite URNs, and observed cursors', async () => {
