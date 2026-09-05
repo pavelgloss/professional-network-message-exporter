@@ -10,7 +10,7 @@ import { attachNetworkCapture } from './network/capture.js';
 import { parseNetworkPayload } from './network/response-parser.js';
 import { readJson } from './network/read-client.js';
 import { createPaginationState, followObservedPagination } from './network/pagination.js';
-import { collectConversationList } from './dom/conversation-list.js';
+import { collectConversationList, type ConversationListHint } from './dom/conversation-list.js';
 import { collectThread } from './dom/thread.js';
 import { canonicalLinkedInUrl, normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
 import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../domain/stable-id.js';
@@ -58,6 +58,11 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     const collected = [...capture.conversations, ...paginated, ...domList.conversations];
     let raw = coalesceRaw(collected);
     raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
+    const verifiedNames = enrichParticipantNamesFromDomHints(raw, domList.hints, reliableSelfId);
+    if (verifiedNames > 0) {
+      manifest.counts.domVerifiedParticipantNames = verifiedNames;
+      manifest.strategies.push('dom-list:verified-preview-name');
+    }
     raw = raw.slice(0, config.limit);
 
     let threadCoverageComplete = true;
@@ -153,6 +158,35 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
 
 export function coverageIsPartial(input: { incomplete: boolean; listCoverageComplete: boolean; historyCoverageComplete: boolean; parserMisses: number; warnings: string[] }): boolean {
   return input.incomplete || !input.listCoverageComplete || !input.historyCoverageComplete || input.parserMisses > 0 || input.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
+}
+
+function comparablePreview(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')
+    .replace(/^(?:you|me):\s*/i, '').replace(/(?:\.{3}|…)+$/u, '').trim();
+}
+
+function previewMatches(snippet: string, text: string): boolean {
+  const left = comparablePreview(snippet);
+  const right = comparablePreview(text);
+  return left.length >= 8 && right.length >= 8 && (left === right || left.startsWith(right) || right.startsWith(left));
+}
+
+export function enrichParticipantNamesFromDomHints(conversations: RawConversation[], hints: ConversationListHint[], selfId?: string): number {
+  if (!selfId) return 0;
+  const used = new Set<RawConversation>();
+  let enriched = 0;
+  for (const hint of hints) {
+    const candidates = conversations.filter((conversation) => !used.has(conversation)
+      && (conversation.messages ?? []).some((message) => typeof message.text === 'string' && previewMatches(hint.messageSnippet, message.text)));
+    if (candidates.length !== 1) continue;
+    const conversation = candidates[0]!;
+    const external = (conversation.participants ?? []).filter((participant) => participant.id && participant.id !== selfId);
+    if (external.length !== 1 || external[0]!.name) continue;
+    external[0]!.name = hint.participantName;
+    used.add(conversation);
+    enriched += 1;
+  }
+  return enriched;
 }
 
 function rawKey(conversation: RawConversation): string {

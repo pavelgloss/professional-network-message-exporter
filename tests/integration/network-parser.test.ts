@@ -7,10 +7,10 @@ import { assertAllowedReadUrl } from '../../src/linkedin/network/read-client.js'
 import { createManifest } from '../../src/io/diagnostics.js';
 import { followObservedPagination } from '../../src/linkedin/network/pagination.js';
 import type { APIRequestContext } from 'playwright';
-import { coalesceRaw, coverageIsPartial } from '../../src/linkedin/exporter.js';
+import { coalesceRaw, coverageIsPartial, enrichParticipantNamesFromDomHints } from '../../src/linkedin/exporter.js';
 import { normalizeConversation } from '../../src/domain/normalize.js';
 import { loadExport, persistExportResult, saveExport } from '../../src/io/export-store.js';
-import type { LinkedInExport } from '../../src/domain/schema.js';
+import type { LinkedInExport, RawConversation } from '../../src/domain/schema.js';
 
 async function expectPartialPersistence(parsed: ParsedNetworkData, prefix: string): Promise<void> {
   const partial = coverageIsPartial({
@@ -216,5 +216,22 @@ describe('network parser', () => {
     const next = decodeURIComponent(parsed.paginationUrls[0] ?? '');
     expect(next).toContain('variables=(cursor:cursor-next,count:20)');
     expect(next).toContain('queryId=messengerConversations');
+  });
+
+  it('enriches a single external participant only from a unique verified DOM preview', () => {
+    const conversations: RawConversation[] = [
+      { id: 'one', participants: [{ id: 'SELF' }, { id: 'EXT-ONE' }], messages: [{ senderId: 'EXT-ONE', text: 'A uniquely identifying preview message' }] },
+      { id: 'two', participants: [{ id: 'SELF' }, { id: 'EXT-TWO' }], messages: [{ senderId: 'EXT-TWO', text: 'An ambiguous repeated preview' }] },
+      { id: 'three', participants: [{ id: 'SELF' }, { id: 'EXT-THREE' }], messages: [{ senderId: 'EXT-THREE', text: 'An ambiguous repeated preview' }] },
+    ];
+    const enriched = enrichParticipantNamesFromDomHints(conversations, [
+      { participantName: 'Verified Person', messageSnippet: 'A uniquely identifying preview…' },
+      { participantName: 'Must Not Be Guessed', messageSnippet: 'An ambiguous repeated preview' },
+    ], 'SELF');
+
+    expect(enriched).toBe(1);
+    expect(conversations[0]?.participants?.[1]?.name).toBe('Verified Person');
+    expect(conversations[1]?.participants?.[1]?.name).toBeUndefined();
+    expect(conversations[2]?.participants?.[1]?.name).toBeUndefined();
   });
 });
