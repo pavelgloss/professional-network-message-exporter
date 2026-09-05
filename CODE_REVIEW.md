@@ -674,3 +674,158 @@ thread fallback, protože otevření vláken může změnit read/unread stav.
 Zbytkové provozní riziko je stejné jako v předchozích sekcích: současné neveřejné
 LinkedIn obálky lze potvrdit až prvním uživatelským network-only během. Neznámý tvar
 musí skončit partial, nikoliv oslabením guardu nebo automatickým otevřením vláken.
+
+---
+
+## Runtime review změn `cf7aa77..6a68e30`
+
+### Verdikt
+
+**Critical nálezy: žádné. Otevřené jsou dva High a tři Medium nálezy.** Nové
+adaptéry pro aktuální Dash GraphQL úspěšně parsují ověřenou anonymizovanou obálku a
+základní POST/WebSocket/service-worker/redirect ochrany nebyly v tomto rozsahu
+oslabeny. Přesto nyní nelze slíbit absolutní read-only hranici ani pravdivou
+úplnost výsledku: zakázaný GET lze schovat percent-encodingem a počet inertních DOM
+řádků může zakrýt chybějící network conversations.
+
+**NO-GO pro nabídnutí opt-in otevření jednoho již přečteného vlákna.** Nejdřív je
+nutné uzavřít RT-01. Navíc současný `--allow-thread-open` není omezen na jedno
+vlákno: `src/linkedin/exporter.ts:69-72` iteruje přes všechny vyexportované
+konverzace. Bez samostatného parametru s jedním předem ověřeným conversation URL/ID
+by nabídka „otevřít právě jedno“ neodpovídala skutečnému chování. Po opravě guardu a
+přidání one-thread scope lze takový krok nabídnout pouze jako výslovný opt-in nad
+již přečteným vláknem; běžný export musí dál zůstat network-only.
+
+### RT-01 — HIGH — Percent-encoded mutation token obchází browser i přímý GET guard
+
+- **Soubor/řádky:** `src/browser/request-guard.ts:7-17`,
+  `src/linkedin/network/read-client.ts:5-12`
+- **Problém:** oba guardy hledají zakázaná slova v raw `url.pathname` a
+  `url.search`. WHATWG `URL` percent-encoding v těchto vlastnostech zachová, zatímco
+  server/query parser ho běžně dekóduje. Exact origin i nový exact Dash path jsou
+  správně kontrolované, jejich query ale canonicalizovaná není.
+- **Nezávislá reprodukce:** `requestPolicy('GET', ...)` i
+  `assertAllowedReadUrl(...)` povolily všechny tyto vstupy:
+  `.../messaging/%73%65%6e%64Message`,
+  `.../voyagerMessagingGraphQL/graphql?queryId=%6d%75%74%61%74%69%6f%6e` a
+  `.../messaging/messages?operation=%6d%61%72%6b%52%65%61%64`. Nezakódovaná
+  mutation query je blokovaná. Cizí host, suffix `/graphql/extra` v přímém klientu
+  a redirect byly blokované; `readJson` používá `maxRedirects: 0` a 3xx nikdy
+  nenásleduje.
+- **Dopad:** metoda zůstává GET a všechny write metody jsou blokované, ale ochrana
+  proti GET endpointům/GraphQL operacím typu send/markRead není úplná. To porušuje
+  hlavní bezpečnostní invariant projektu i bez důkazu, zda konkrétní současný
+  LinkedIn endpoint takový GET akceptuje.
+- **Doporučení:** před policy kontrolou bezpečně a omezeně canonicalizovat path a
+  každé query jméno i hodnotu (`URLSearchParams`), odmítnout malformed/double-encoded
+  varianty a testovat single/double encoding všech zakázaných tokenů v obou
+  guardech. HTTP method, exact origin/path a no-redirect podmínky zachovat.
+
+### RT-02 — HIGH — Inertní DOM limit může označit kratší network export jako úplný
+
+- **Soubor/řádky:** `src/linkedin/dom/conversation-list.ts:71-96`,
+  `src/linkedin/exporter.ts:52-66`, `src/linkedin/exporter.ts:106-111`
+- **Problém:** nové inertní řádky bez ID/URL se správně nepromění na konverzace,
+  ale `observedRows >= limit` nastaví `reason='limit'` a `complete=true`. Exporter
+  pak počítá `listCoverageComplete = raw.length >= limit || domList.complete`, i když
+  počet rozpoznaných network/DOM konverzací je menší než limit.
+- **Nezávislá reprodukce:** pro `limit=100`, 100 pozorovaných inertních řádků a 80
+  raw network conversations vyjde `domList.complete=true`,
+  `listCoverageComplete=true`; při úplných jednotlivých historiích a nulovém parser
+  miss vrátí `coverageIsPartial(...) === false`. Chybějících 20 conversation shape
+  přitom nemusí vytvořit message parser miss.
+- **Dopad:** neúplný export se může zapsat jako úspěšný hlavní JSON, přestože nesplní
+  požadovaný limit. Aktuální lokální `.partial` kandidát tento latentní stav nemá
+  (`100/100` konverzací) a zůstává partial kvůli nepotvrzené historii.
+- **Doporučení:** důvod `limit` považovat za úplný jen při `raw.length >= limit`.
+  U inertních řádků evidovat zvlášť UI coverage a resolved conversation coverage;
+  každá mezera mezi pozorovaným a rozřešeným počtem musí dát warning a partial.
+  Také `end` smí potvrdit úplnost jen s explicitním total/mapping důkazem.
+
+### RT-03 — MEDIUM — „Redacted“ diagnostics propouští alfabetické opaque IDs/text
+
+- **Soubor/řádky:** `src/io/diagnostics.ts:49-72`,
+  `src/io/diagnostics.ts:93-114`, `src/browser/request-guard.ts:22-38`
+- **Problém:** libovolný lowercase/camelCase segment nebo JSON/query key odpovídající
+  `^[*$]?[a-z][A-Za-z_]{0,63}$` je považován za strukturální. Heuristika nepozná
+  čistě alfabetické dynamické ID, jméno ani text na náhodné/blocked cestě. Loggerova
+  field-name redakce takovou hodnotu následně také nezakryje.
+- **Nezávislá reprodukce:** `redactedPathShape('/random/pavelprivate')` vrací stejný
+  text; `queryParameterNames(...?pavelPrivate=value&token=value)` vrací
+  `['<redacted-key>', 'pavelPrivate']`; strukturální podpis objektu s klíčem
+  `pavelPrivateConversation` uloží tento název do key paths. Primitive hodnotu
+  `secret-value` podpis správně neuložil.
+- **Dopad:** defaultní, ignorovaný lokální manifest/log může obsahovat identifikátor
+  nebo uživatelský text vložený do path/key, včetně blocked random POST/WS path.
+- **Doporučení:** použít úzký allowlist skutečně známých strukturálních path segmentů
+  a schema/query klíčů; vše ostatní ukládat jako `:opaque`/`<opaque-key>`. Přidat
+  canary testy bez číslic a bez slov `token/secret/auth`.
+
+### RT-04 — MEDIUM — Duplicitní preview může přiřadit jméno nesprávné osobě
+
+- **Soubor/řádky:** `src/linkedin/exporter.ts:164-189`
+- **Problém:** enrichment vyžaduje právě jednu odpovídající konverzaci pro právě
+  zpracovávaný hint, ale nevyžaduje právě jeden DOM hint pro daný preview. Pokud
+  mají dva řádky stejný snippet a parser zná jen jednu odpovídající konverzaci,
+  první hint vyhraje a druhý je přeskočen přes `used`.
+- **Nezávislá reprodukce:** jedna raw conversation se zprávou „Thank you for your
+  interest in this role“ a dva hinty se stejným snippetem, ale jmény „Wrong First
+  Row“ a „Actual Second Row“, vedla k `enriched=1` a přiřazení „Wrong First Row“.
+- **Dopad:** stabilní ID a direction se nemění, ale participant/sender metadata může
+  být věcně nesprávné právě při neúplné network list coverage.
+- **Doporučení:** před enrichmentem vytvořit globální bijekci preview→hint a
+  preview→conversation; obě strany musí mít právě jeden prvek a konfliktní jména se
+  musí přeskočit s warningem. Volné `includes` párování dále zpřísnit.
+
+### RT-05 — MEDIUM — Pagination derivace nepovoluje nový Dash GraphQL endpoint
+
+- **Soubor/řádky:** `src/linkedin/network/read-client.ts:5-12`,
+  `src/linkedin/network/response-parser.ts:419-434`
+- **Problém:** přímý reader nově přesně povoluje
+  `/voyager/api/voyagerMessagingGraphQL/graphql`, ale `normalizePaginationUrl` a
+  `deriveQueryUrl` stále připouštějí jen `/voyager/api/(messaging|graphql)`.
+- **Nezávislá reprodukce:** current Dash fixture se stejným source URL a root
+  `paging.links[0].href='?queryId=messengerConversations&start=1&count=1'` vrátila
+  `paginationUrls=[]`.
+- **Dopad:** delayed GET lze zachytit pasivně, ale explicitní href/start/cursor pro
+  další moderní page se nevygeneruje ani nenačte. U historie to zpravidla skončí
+  fail-closed; u listu v kombinaci s RT-02 může chybějící stránka zůstat nepřiznaná.
+- **Doporučení:** sdílet jediný exact read-path predicate mezi klientem a pagination
+  derivací a přidat anonymizovaný multi-page fixture pro moderní endpoint včetně
+  relative href, Rest.li start/count a cursor varianty.
+
+### Co bylo ověřeno bez nálezu
+
+- Request guard v review rozsahu nezměnil method policy; POST/PUT/PATCH/DELETE dál
+  blokuje. WebSocket guard je instalován před export page a session-isolation test
+  potvrzuje nulový přenos persistentního service workeru a blokaci POST/WS.
+- Exact moderní read URL projde, cizí host a suffix path v `assertAllowedReadUrl`
+  neprojdou. `readJson` má `maxRedirects: 0` a 3xx vždy skončí
+  `READ_POLICY_BLOCK`, i kdyby target sám prošel allowlistem.
+- Current Dash fixture dává právě jednu conversation `CONV-ONE`, participant IDs
+  `SELF/EXT`, message `EVENT-ONE`, správný backend conversation, body „Modern Dash
+  message“, sender `EXT` a po normalizaci `direction=inbound`; embedded conversation
+  reference nevytvoří duplikát. Jeden unsupported event dává `misses=1`,
+  `parserMisses=1`, `historyComplete=false`.
+- Inertní DOM collector pouze čte a mění `scrollTop`; nevolá click a bez ID/URN/URL
+  nevymýšlí conversation ID. Virtualized/delayed list testy prošly a výsledný raw
+  seznam je oříznut na `limit`; RT-02 se týká pravdivosti completion příznaku.
+- Reálný `data/linkedin/messages.json.partial` prošel `ExportSchema`: schema v1,
+  `partial=true`, requested `100`, declared/actual conversations `100/100`,
+  declared/actual messages `100/100`, 200 participant records; warning kategorie
+  jsou `LIST_SCROLL_LIMIT` a `THREAD_HISTORY_NOT_CONFIRMED`. Review nevypisovalo
+  žádná jména, ID ani text zpráv.
+- Git: `.auth/`, hlavní/partial exporty a diagnostics jsou ignorované; tracked je
+  pouze `.env.example` s cestami a bezpečnými defaulty. High-entropy LinkedIn secret
+  pattern v tracked souborech nenalezen. Existující `.auth` ani její obsah nebyly
+  otevřeny.
+
+### Testy
+
+- `npm.cmd run check`: **PASS** — 11 test files / 56 tests, typecheck i build.
+- Cíleně: request guard, network diagnostics, current parser, DOM fallback,
+  session-isolation a WebSocket guard: **PASS** — 6 files / 30 tests.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
+  LinkedIn, credentials ani existující session; implementační kód nebyl změněn a
+  review nebylo commitováno.
