@@ -226,7 +226,7 @@ describe('network parser', () => {
       { id: 'three', participants: [{ id: 'SELF' }, { id: 'EXT-THREE' }], messages: [{ senderId: 'EXT-THREE', text: 'An ambiguous repeated preview' }] },
     ];
     const enriched = enrichParticipantNamesFromDomHints(conversations, [
-      { participantName: 'Verified Person', messageSnippet: 'A uniquely identifying preview…' },
+      { participantName: 'Verified Person', messageSnippet: 'External Person sent: A uniquely identifying preview message' },
       { participantName: 'Must Not Be Guessed', messageSnippet: 'An ambiguous repeated preview' },
     ], 'SELF');
 

@@ -168,7 +168,7 @@ function comparablePreview(value: string): string {
 function previewMatches(snippet: string, text: string): boolean {
   const left = comparablePreview(snippet);
   const right = comparablePreview(text);
-  return left.length >= 8 && right.length >= 8 && (left === right || left.startsWith(right) || right.startsWith(left));
+  return left.length >= 8 && right.length >= 8 && (left === right || left.includes(right) || right.includes(left));
 }
 
 export function enrichParticipantNamesFromDomHints(conversations: RawConversation[], hints: ConversationListHint[], selfId?: string): number {
