@@ -86,6 +86,12 @@ export async function collectConversationList(page: Page, limit: number, options
     await container.evaluate((element) => { element.scrollTop = Math.min(element.scrollHeight, element.scrollTop + Math.max(element.clientHeight * 0.8, 200)); });
     await page.waitForTimeout(options.delayMs ?? 600);
   }
+  // The list can reach the requested row count while its text is still hydrating.
+  // Take one final passive snapshot so verified name/preview hints are not lost.
+  await page.waitForTimeout(options.delayMs ?? 600);
+  const finalVisible = await parseVisibleRows(rowResult.locator);
+  for (const conversation of finalVisible.conversations) accumulated.set(conversation.id ?? conversation.url!, conversation);
+  for (const hint of finalVisible.hints) hints.set(`${hint.participantName}\u0000${hint.messageSnippet}`, hint);
   const conversations = [...accumulated.values()].slice(0, limit);
   return { conversations, hints: [...hints.values()], strategies: [containerResult?.strategy ?? 'body', rowResult.strategy], scrollReason: reason, complete: Boolean(containerResult) && (reason === 'limit' || reason === 'end') };
 }

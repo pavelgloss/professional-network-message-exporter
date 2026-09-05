@@ -44,20 +44,21 @@ describe('DOM fallback against local fixture', () => {
   it('scrolls modern inert list rows without inventing text-based conversation IDs', async () => {
     await page.setContent(`
       <ul class="msg-conversations-container__conversations-list" style="display:block;height:120px;overflow:auto">
-        ${Array.from({ length: 20 }, (_, index) => `<li class="msg-conversation-listitem" style="height:20px"><button>row ${index}</button></li>`).join('')}
+        ${Array.from({ length: 20 }, (_, index) => `<li class="msg-conversation-listitem" style="height:20px"><span class="msg-conversation-listitem__participant-names">Person ${index}</span><span class="msg-conversation-card__message-snippet">Preview ${index}</span></li>`).join('')}
       </ul>
       <script>
         const list = document.querySelector('ul');
         list.addEventListener('scroll', () => {
           if (list.dataset.loaded) return;
           list.dataset.loaded = 'true';
-          for (let index = 20; index < 40; index += 1) list.insertAdjacentHTML('beforeend', '<li class="msg-conversation-listitem" style="height:20px"><button>row ' + index + '</button></li>');
+          for (let index = 20; index < 40; index += 1) list.insertAdjacentHTML('beforeend', '<li class="msg-conversation-listitem" style="height:20px"><span class="msg-conversation-listitem__participant-names">Person ' + index + '</span><span class="msg-conversation-card__message-snippet">Preview ' + index + '</span></li>');
         });
       </script>
     `);
     const list = await collectConversationList(page, 40, { delayMs: 30, timeoutMs: 5_000 });
 
     expect(list.conversations).toEqual([]);
+    expect(list.hints).toHaveLength(40);
     expect(list.scrollReason).toBe('limit');
     expect(list.complete).toBe(true);
     expect(await page.locator('.msg-conversation-listitem').count()).toBe(40);
