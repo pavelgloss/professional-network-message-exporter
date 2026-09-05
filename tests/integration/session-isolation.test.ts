@@ -43,7 +43,7 @@ describe('login storage state to export isolation', () => {
       limit: 1,
       timeoutMs: 5_000,
       headless: true,
-      allowThreadOpen: false,
+      probeReadThread: false,
       diagnosticsContent: false,
     };
     const logger = createLogger({ write: () => true });

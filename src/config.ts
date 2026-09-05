@@ -14,7 +14,7 @@ export type AppConfig = {
   limit: number;
   timeoutMs: number;
   headless: boolean;
-  allowThreadOpen: boolean;
+  probeReadThread: boolean;
   diagnosticsContent: boolean;
 };
 
@@ -34,7 +34,7 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
 type ParsedArgs = { values: Map<string, string>; flags: Set<string> };
 function parseArguments(args: string[], command: Command): ParsedArgs {
   const valueOptions = new Set(command === 'login' ? ['--state-file', '--timeout-ms'] : ['--state-file', '--output', '--limit', '--timeout-ms']);
-  const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--allow-thread-open', '--diagnostics-content']);
+  const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--probe-read-thread', '--diagnostics-content']);
   const parsed: ParsedArgs = { values: new Map(), flags: new Set() };
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -74,6 +74,9 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
   const outputPath = safePath(parsed.values.get('--output') ?? env.LINKEDIN_OUTPUT ?? 'data/linkedin/messages.json', cwd, 'output path');
   const limit = int(parsed.values.get('--limit') ?? env.LINKEDIN_LIMIT, 100, 1, 500, 'limit');
   const timeoutMs = int(parsed.values.get('--timeout-ms') ?? env.LINKEDIN_TIMEOUT_MS, 30_000, 5_000, 300_000, 'timeout');
+  if (parsed.flags.has('--probe-read-thread') && parsed.flags.has('--diagnostics-content')) {
+    throw new AppError('CONFIG_INVALID', '--probe-read-thread captures redacted request metadata only and cannot be combined with --diagnostics-content', 2);
+  }
   return {
     command,
     statePath,
@@ -82,7 +85,7 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
     limit,
     timeoutMs,
     headless: parsed.flags.has('--headed') ? false : bool(env.LINKEDIN_HEADLESS, true),
-    allowThreadOpen: parsed.flags.has('--allow-thread-open'),
+    probeReadThread: parsed.flags.has('--probe-read-thread'),
     diagnosticsContent: parsed.flags.has('--diagnostics-content'),
   };
 }

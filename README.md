@@ -43,15 +43,24 @@ do `data/linkedin/messages.json.partial` a poslední úplný export nezmění. O
 běh sloučí data podle LinkedIn ID nebo deterministického fallback ID a zachová dříve
 načtenou historii.
 
-LinkedIn často načte celou historii až po otevření konkrétního vlákna. Výchozí běh
-vlákna neotevírá a může být označen `partial`. Po vědomém přijetí rizika, že samotné
-zobrazení threadu může změnit serverový stav read/unread, použijte:
+LinkedIn často načte celou historii až po otevření konkrétního vlákna. Exportní běh
+vlákna nikdy neotevírá a při nepotvrzené úplnosti skončí jako `partial`.
+
+Samostatný, výchozím stavem vypnutý probe lze použít pouze k nalezení redigované
+šablony GET dotazu na historii:
 
 ```powershell
-npm.cmd run export:threads
+npm.cmd run probe:read-thread
 ```
 
-Tento opt-in nepovoluje odesílání ani jiné mutace; request guard zůstává aktivní.
+Probe nic neexportuje do hlavního ani `.partial` JSON. Z pasivní network odpovědi
+vybere pouze konverzaci s explicitním `read === true`, otevře právě jeden její URL
+jediným navigation callem a do ignorovaného diagnostického manifestu uloží jen
+redigovaný tvar pozorovaných GET history query (bez hodnot parametrů). Když již
+přečtený stav nelze explicitně prokázat, skončí bez otevření vlákna. Otevření i již
+přečteného vlákna je vědomý opt-in; HTTP/WebSocket/service-worker guard zůstává
+aktivní. Probe není součástí běžného exportu.
+
 Limit lze změnit proměnnou `LINKEDIN_LIMIT` v lokálním `.env`.
 Při vlastním `--output` zajistěte, aby cílový JSON, jeho `.partial` kandidát i sousední
 `diagnostics/` byly ignorované vaším Gitem.
