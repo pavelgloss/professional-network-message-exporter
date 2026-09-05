@@ -1,11 +1,12 @@
 import type { BrowserContext, Route } from 'playwright';
 import { redactedPathShape, type DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
+import { canonicalUrlView } from '../domain/url-safety.js';
 
 export type PolicyDecision = { allow: boolean; reason: string; origin?: string; pathname?: string };
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
-const forbiddenPaths = /\/(logout|checkpoint\/logout|settings\/.*(?:delete|close)|voyager\/api\/.*(?:delete|archive|send|react|typing|markRead|markUnread))/i;
-const forbiddenQuery = /(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction)/i;
+const forbiddenAccountPath = /\/(?:logout|checkpoint\/logout|settings\/.*(?:delete|close))(?:\/|$)/i;
+const forbiddenAction = /(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction|typing)/i;
 
 export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   let url: URL;
@@ -13,8 +14,15 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   const details = { origin: url.origin, pathname: url.pathname };
   if (!['http:', 'https:', 'data:', 'blob:'].includes(url.protocol)) return { allow: false, reason: 'unsupported-protocol', ...details };
   if (url.protocol === 'data:' || url.protocol === 'blob:') return { allow: true, reason: 'local-resource', ...details };
+  const canonical = canonicalUrlView(url.toString());
+  if (!canonical) return { allow: false, reason: 'invalid-url-encoding', ...details };
   if (!safeMethods.has(method.toUpperCase())) return { allow: false, reason: 'non-read-http-method', ...details };
-  if (/(^|\.)linkedin\.com$/i.test(url.hostname) && (forbiddenPaths.test(url.pathname) || forbiddenQuery.test(url.search))) return { allow: false, reason: 'known-mutating-path', ...details };
+  const linkedin = /(^|\.)linkedin\.com$/i.test(url.hostname);
+  const actionScope = /^\/(?:voyager\/api|messaging)(?:\/|$)/i.test(canonical.pathname);
+  const canonicalQuery = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');
+  if (linkedin && (forbiddenAccountPath.test(canonical.pathname) || (actionScope && forbiddenAction.test(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)))) {
+    return { allow: false, reason: 'known-mutating-path', origin: url.origin, pathname: canonical.pathname };
+  }
   return { allow: true, reason: 'read-only-request', ...details };
 }
 

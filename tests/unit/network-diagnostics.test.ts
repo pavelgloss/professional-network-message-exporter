@@ -52,4 +52,11 @@ describe('safe network diagnostics', () => {
     expect(redactedPathShape(url.pathname)).toBe('/messaging/thread/:opaque');
     expect(queryParameterNames(url)).toEqual(['<redacted-key>', 'cursor']);
   });
+
+  it('redacts alphabetic opaque path segments and keys', () => {
+    const canary = 'pavelPrivateConversation';
+    expect(redactedPathShape(`/random/${canary}`)).toBe('/:opaque/:opaque');
+    expect(queryParameterNames(new URL(`https://www.linkedin.com/random?${canary}=value&queryId=safe`))).toEqual(['<opaque-key>', 'queryid']);
+    expect(JSON.stringify(jsonStructuralSignature({ data: { [canary]: { text: 'not-recorded' } } }))).not.toContain(canary);
+  });
 });

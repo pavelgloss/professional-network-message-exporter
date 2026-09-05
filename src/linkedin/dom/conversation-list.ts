@@ -6,7 +6,7 @@ import { domSelectors } from './selectors.js';
 
 type DomLoopOptions = { maxIterations?: number; stagnationLimit?: number; delayMs?: number; timeoutMs?: number };
 export type ConversationListHint = { participantName: string; messageSnippet: string };
-export type ConversationListResult = { conversations: RawConversation[]; hints: ConversationListHint[]; strategies: string[]; scrollReason: 'limit' | 'end' | 'stagnation' | 'timeout'; complete: boolean };
+export type ConversationListResult = { conversations: RawConversation[]; hints: ConversationListHint[]; strategies: string[]; scrollReason: 'limit' | 'end' | 'stagnation' | 'timeout'; complete: boolean; observedRows: number };
 
 async function firstAvailable(scope: Page | Locator, selectors: readonly string[]): Promise<{ locator: Locator; strategy: string } | undefined> {
   for (const selector of selectors) { const locator = scope.locator(selector); if (await locator.count()) return { locator, strategy: selector }; }
@@ -54,7 +54,7 @@ export async function collectConversationList(page: Page, limit: number, options
   const containerResult = await firstAvailable(page, domSelectors.conversationContainers);
   const container = containerResult?.locator.first() ?? page.locator('body');
   const rowResult = await firstAvailable(container, domSelectors.conversationRows) ?? await firstAvailable(page, domSelectors.conversationRows);
-  if (!rowResult) return { conversations: [], hints: [], strategies: [], scrollReason: 'stagnation', complete: false };
+  if (!rowResult) return { conversations: [], hints: [], strategies: [], scrollReason: 'stagnation', complete: false, observedRows: 0 };
   const accumulated = new Map<string, RawConversation>();
   const hints = new Map<string, ConversationListHint>();
   const startedAt = Date.now();
@@ -90,8 +90,12 @@ export async function collectConversationList(page: Page, limit: number, options
   // Take one final passive snapshot so verified name/preview hints are not lost.
   await page.waitForTimeout(options.delayMs ?? 600);
   const finalVisible = await parseVisibleRows(rowResult.locator);
+  maxObservedRows = Math.max(maxObservedRows, await rowResult.locator.count());
   for (const conversation of finalVisible.conversations) accumulated.set(conversation.id ?? conversation.url!, conversation);
   for (const hint of finalVisible.hints) hints.set(`${hint.participantName}\u0000${hint.messageSnippet}`, hint);
   const conversations = [...accumulated.values()].slice(0, limit);
-  return { conversations, hints: [...hints.values()], strategies: [containerResult?.strategy ?? 'body', rowResult.strategy], scrollReason: reason, complete: Boolean(containerResult) && (reason === 'limit' || reason === 'end') };
+  // DOM exhaustion is not proof that LinkedIn exposed every conversation. Only
+  // resolving the requested number of stable conversation identities closes the
+  // list-coverage requirement; inert rows remain UI hints only.
+  return { conversations, hints: [...hints.values()], strategies: [containerResult?.strategy ?? 'body', rowResult.strategy], scrollReason: reason, complete: accumulated.size >= limit, observedRows: maxObservedRows };
 }

@@ -1,6 +1,7 @@
 import { cleanText } from '../../domain/normalize.js';
 import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../../domain/stable-id.js';
 import type { RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
+import { assertAllowedReadUrl } from './read-client.js';
 
 type JsonRecord = Record<string, unknown>;
 type IncludedIndex = { records: Map<string, JsonRecord>; ambiguous: Set<string> };
@@ -164,6 +165,8 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
   const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));
   const evidence = historyComplete || parserMisses > 0 ? JSON.stringify([{ resource: `conversation:${id ?? entityUrn ?? 'unknown'}`, page: sourcePage, start: 0, count: messageValues.length, total: messageValues.length, end: historyComplete, valid: parserMisses === 0 }]) : undefined;
+  const explicitRead = typeof obj.read === 'boolean' ? obj.read : undefined;
+  const hasSourceMetadata = explicitRead !== undefined || historyComplete || parserMisses > 0;
   return {
     ...(id ? { id } : {}),
     ...(entityUrn ? { entityUrn } : {}),
@@ -171,7 +174,7 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
     ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
     participants,
     messages,
-    ...((historyComplete || parserMisses > 0) ? { sourceMetadata: { historyComplete, ...(parserMisses ? { parserMisses } : {}), ...(evidence ? { historyEvidence: evidence } : {}) } } : {}),
+    ...(hasSourceMetadata ? { sourceMetadata: { ...(explicitRead !== undefined ? { read: explicitRead, readEvidence: 'network-explicit' } : {}), ...((historyComplete || parserMisses > 0) ? { historyComplete } : {}), ...(parserMisses ? { parserMisses } : {}), ...(evidence ? { historyEvidence: evidence } : {}) } } : {}),
   };
 }
 
@@ -420,16 +423,15 @@ function normalizePaginationUrl(href: string, sourceUrl: string): string | undef
   try {
     const base = sourceUrl ? new URL(sourceUrl, 'https://www.linkedin.com') : new URL('https://www.linkedin.com');
     const url = new URL(href, base);
-    return url.origin === 'https://www.linkedin.com' && /^\/voyager\/api\/(?:messaging|graphql)/i.test(url.pathname) ? url.toString() : undefined;
+    return assertAllowedReadUrl(url.toString()).toString();
   } catch { return undefined; }
 }
 
 function deriveQueryUrl(sourceUrl: string, key: string, value: string): string | undefined {
   try {
-    const url = new URL(sourceUrl, 'https://www.linkedin.com');
-    if (url.origin !== 'https://www.linkedin.com' || !/^\/voyager\/api\/(?:messaging|graphql)/i.test(url.pathname)) return undefined;
+    const url = assertAllowedReadUrl(sourceUrl);
     url.searchParams.set(key, value);
-    return url.toString();
+    return assertAllowedReadUrl(url.toString()).toString();
   } catch { return undefined; }
 }
 

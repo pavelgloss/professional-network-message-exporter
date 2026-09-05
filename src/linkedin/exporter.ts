@@ -11,7 +11,6 @@ import { parseNetworkPayload } from './network/response-parser.js';
 import { readJson } from './network/read-client.js';
 import { createPaginationState, followObservedPagination } from './network/pagination.js';
 import { collectConversationList, type ConversationListHint } from './dom/conversation-list.js';
-import { collectThread } from './dom/thread.js';
 import { canonicalLinkedInUrl, normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
 import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../domain/stable-id.js';
 import { ExportSchema, type LinkedInExport, type RawConversation, type RawMessage, type RawParticipant } from '../domain/schema.js';
@@ -23,7 +22,7 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
   const capture = attachNetworkCapture(page, manifest, logger);
   let authenticated = false;
   try {
-    logger.info('export-started', { limit: config.limit, threadOpen: config.allowThreadOpen });
+    logger.info('export-started', { limit: config.limit, mode: 'network-only' });
     await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
     assertAuthenticated(await detectAuthState(page));
     authenticated = true;
@@ -55,47 +54,16 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     await capture.drain();
     const paginationState = createPaginationState();
     const paginated = await followObservedPagination(context.request, capture.paginationUrls, manifest, csrfToken, paginationState);
-    const collected = [...capture.conversations, ...paginated, ...domList.conversations];
+    const networkRaw = coalesceRaw([...capture.conversations, ...paginated]);
+    const collected = [...networkRaw, ...domList.conversations];
     let raw = coalesceRaw(collected);
     raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
-    const verifiedNames = enrichParticipantNamesFromDomHints(raw, domList.hints, reliableSelfId);
+    const verifiedNames = enrichParticipantNamesFromDomHints(raw, domList.hints, reliableSelfId, () => manifest.warnings.push('DOM_PREVIEW_NAME_AMBIGUOUS'));
     if (verifiedNames > 0) {
       manifest.counts.domVerifiedParticipantNames = verifiedNames;
       manifest.strategies.push('dom-list:verified-preview-name');
     }
     raw = raw.slice(0, config.limit);
-
-    let threadCoverageComplete = true;
-    if (config.allowThreadOpen) {
-      logger.warn('thread-open-opt-in-active', { warning: 'Opening a thread can change LinkedIn read/unread state.' });
-      for (const conversation of raw) {
-        if (!conversation.url) { manifest.warnings.push(`THREAD_URL_MISSING:${conversation.id ?? 'unknown'}`); threadCoverageComplete = false; continue; }
-        try {
-          const thread = await collectThread(page, conversation.id ?? rawKey(conversation), conversation.url, account.profileUrl, account.id);
-          conversation.messages = mergeRawMessages(conversation.messages ?? [], thread.messages);
-          const participantMap = new Map((conversation.participants ?? []).map((participant) => [participant.id ?? participantKey(participant), participant]));
-          for (const message of thread.messages) if (!participantMap.has(message.senderId ?? '')) {
-            participantMap.set(message.senderId!, { id: message.senderId!, ...(message.senderName ? { name: message.senderName } : {}), ...(message.senderProfileUrl ? { profileUrl: message.senderProfileUrl } : {}), isSelf: message.direction === 'outbound' });
-          }
-          conversation.participants = [...participantMap.values()];
-          collected.push(conversation);
-          if (!thread.complete) {
-            threadCoverageComplete = false;
-            manifest.warnings.push(`THREAD_SCROLL_${thread.scrollReason.toUpperCase()}:${conversation.id ?? 'unknown'}`);
-          }
-          thread.strategies.forEach((strategy) => { if (!manifest.strategies.includes(`dom-thread:${strategy}`)) manifest.strategies.push(`dom-thread:${strategy}`); });
-          manifest.warnings.push(...thread.warnings);
-          await capture.drain();
-          const threadPagination = await followObservedPagination(context.request, capture.paginationUrls, manifest, csrfToken, paginationState);
-          collected.push(...capture.conversations, ...threadPagination);
-          await page.waitForTimeout(350 + Math.floor(Math.random() * 300));
-        } catch {
-          manifest.warnings.push(`THREAD_READ_FAILED:${conversation.id ?? 'unknown'}`);
-          threadCoverageComplete = false;
-        }
-      }
-      raw = coalesceRaw(collected).sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b))).slice(0, config.limit);
-    }
 
     if (!raw.length) throw new AppError('PARSER_NO_DATA', 'LinkedIn loaded, but no conversations could be read. Selectors or response formats may have changed.', 4);
     const messages = raw.flatMap((c) => c.messages ?? []);
@@ -103,12 +71,17 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
       throw new AppError('VALIDATION_FAILED', 'A stable account identity was unavailable, so message direction cannot be determined safely.', 4);
     }
     const incomplete = raw.some((conversation) => !(conversation.messages?.length));
-    const listCoverageComplete = raw.length >= config.limit || domList.complete;
+    const unresolvedDomRows = Math.max(0, domList.observedRows - networkRaw.length);
+    if (unresolvedDomRows > 0) {
+      manifest.counts.unresolvedDomConversationRows = unresolvedDomRows;
+      manifest.warnings.push('CONVERSATION_LIST_UNRESOLVED_ROWS');
+    }
+    const listCoverageComplete = listCoverageIsComplete(networkRaw.length, config.limit, domList.observedRows);
     const passiveHistoryComplete = raw.length > 0 && raw.every((conversation) => conversation.sourceMetadata?.historyComplete === true);
-    const historyCoverageComplete = config.allowThreadOpen ? threadCoverageComplete : passiveHistoryComplete;
+    const historyCoverageComplete = passiveHistoryComplete;
     const partial = coverageIsPartial({ incomplete, listCoverageComplete, historyCoverageComplete, parserMisses: Number(manifest.counts.parserMisses ?? 0), warnings: manifest.warnings });
     if (Number(manifest.counts.parserMisses ?? 0) > 0) manifest.warnings.push('RELEVANT_NETWORK_EVENTS_SKIPPED');
-    if (!config.allowThreadOpen && !passiveHistoryComplete) manifest.warnings.push('THREAD_HISTORY_NOT_CONFIRMED');
+    if (!passiveHistoryComplete) manifest.warnings.push('THREAD_HISTORY_NOT_CONFIRMED');
     if (!listCoverageComplete) manifest.warnings.push(`CONVERSATION_LIST_${domList.scrollReason.toUpperCase()}`);
     if (incomplete) manifest.warnings.push('CONVERSATIONS_WITHOUT_MESSAGES');
     const conversations = raw.map((conversation) => normalizeConversation(markSelf(conversation, reliableSelfId, account.profileUrl), reliableSelfId));
@@ -160,30 +133,47 @@ export function coverageIsPartial(input: { incomplete: boolean; listCoverageComp
   return input.incomplete || !input.listCoverageComplete || !input.historyCoverageComplete || input.parserMisses > 0 || input.warnings.some((warning) => warning.startsWith('DIRECTION_UNKNOWN') || warning.startsWith('THREAD_READ_FAILED') || warning === 'PAGINATION_READ_FAILED' || warning === 'PAGINATION_BUDGET_EXHAUSTED');
 }
 
+export function listCoverageIsComplete(networkConversationCount: number, requestedLimit: number, observedDomRows: number): boolean {
+  return networkConversationCount >= requestedLimit && observedDomRows <= networkConversationCount;
+}
+
 function comparablePreview(value: string): string {
   return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US')
-    .replace(/^(?:you|me):\s*/i, '').replace(/(?:\.{3}|…)+$/u, '').trim();
+    .replace(/^(?:you|me):\s*/i, '')
+    .replace(/^[^:\n]{1,100}\s+(?:sent|wrote):\s*/i, '')
+    .replace(/(?:\.{3}|…)+$/u, '').trim();
 }
 
 function previewMatches(snippet: string, text: string): boolean {
   const left = comparablePreview(snippet);
   const right = comparablePreview(text);
-  return left.length >= 8 && right.length >= 8 && (left === right || left.includes(right) || right.includes(left));
+  return left.length >= 8 && right.length >= 8
+    && (left === right || (left.length >= 16 && right.startsWith(left)) || (right.length >= 16 && left.startsWith(right)));
 }
 
-export function enrichParticipantNamesFromDomHints(conversations: RawConversation[], hints: ConversationListHint[], selfId?: string): number {
+export function enrichParticipantNamesFromDomHints(conversations: RawConversation[], hints: ConversationListHint[], selfId?: string, onAmbiguous?: () => void): number {
   if (!selfId) return 0;
-  const used = new Set<RawConversation>();
+  const hintCandidates = hints.map((hint) => conversations.filter((conversation) =>
+    (conversation.messages ?? []).some((message) => typeof message.text === 'string' && previewMatches(hint.messageSnippet, message.text))));
+  const conversationCandidates = conversations.map((_conversation, conversationIndex) => hints.filter((_hint, hintIndex) =>
+    hintCandidates[hintIndex]?.includes(conversations[conversationIndex]!)));
   let enriched = 0;
-  for (const hint of hints) {
-    const candidates = conversations.filter((conversation) => !used.has(conversation)
-      && (conversation.messages ?? []).some((message) => typeof message.text === 'string' && previewMatches(hint.messageSnippet, message.text)));
-    if (candidates.length !== 1) continue;
+  for (let hintIndex = 0; hintIndex < hints.length; hintIndex += 1) {
+    const hint = hints[hintIndex]!;
+    const candidates = hintCandidates[hintIndex] ?? [];
+    if (candidates.length !== 1) {
+      if (candidates.length > 1) onAmbiguous?.();
+      continue;
+    }
     const conversation = candidates[0]!;
+    const conversationIndex = conversations.indexOf(conversation);
+    if (conversationIndex < 0 || conversationCandidates[conversationIndex]?.length !== 1) {
+      onAmbiguous?.();
+      continue;
+    }
     const external = (conversation.participants ?? []).filter((participant) => participant.id && participant.id !== selfId);
     if (external.length !== 1 || external[0]!.name) continue;
     external[0]!.name = hint.participantName;
-    used.add(conversation);
     enriched += 1;
   }
   return enriched;

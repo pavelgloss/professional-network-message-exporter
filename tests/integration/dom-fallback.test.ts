@@ -60,7 +60,8 @@ describe('DOM fallback against local fixture', () => {
     expect(list.conversations).toEqual([]);
     expect(list.hints).toHaveLength(40);
     expect(list.scrollReason).toBe('limit');
-    expect(list.complete).toBe(true);
+    expect(list.complete).toBe(false);
+    expect(list.observedRows).toBe(40);
     expect(await page.locator('.msg-conversation-listitem').count()).toBe(40);
   });
 });

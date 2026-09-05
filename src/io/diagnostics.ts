@@ -3,6 +3,7 @@ import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { redact } from '../logger.js';
 import type { Page } from 'playwright';
+import { repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 
 export type JsonStructuralSignature = {
   keyPaths: string[];
@@ -39,6 +40,7 @@ export type DiagnosticsManifest = {
   warnings: string[];
   blockedRequests: Array<{ method: string; origin: string; pathname: string; reason: string }>;
   networkResponses: NetworkResponseDiagnostic[];
+  probeHistoryQueries?: Array<{ method: 'GET'; origin: 'https://www.linkedin.com'; pathShape: string; queryParameterNames: string[] }>;
 };
 
 export function createManifest(): DiagnosticsManifest {
@@ -47,12 +49,25 @@ export function createManifest(): DiagnosticsManifest {
 }
 
 const sensitiveName = /(?:auth|cookie|csrf|password|secret|session|token)/i;
-const schemaName = /^[*$]?[a-z][A-Za-z_]{0,63}$/;
-const opaqueDigitRun = /\d{3,}/;
+const structuralNames = new Map([
+  'actor', 'array', 'attributes', 'attributedbody', 'backendconversationurn', 'backendurn', 'body', 'count', 'createdat',
+  'cursor', 'data', 'deliveredat', 'edges', 'elements', 'endcursor', 'entityurn', 'eventcontent', 'events', 'eventtype',
+  'featureflags', 'first', 'hasnextpage', 'hostidentityurn', 'id', 'included', 'isread', 'lastactivity',
+  'lastactivityat', 'links', 'members', 'messages', 'name', 'navigationurl', 'nextcursor', 'nodes', 'pageinfo',
+  'paging', 'participants', 'profileurl', 'queryid', 'rendercontent', 'sender', 'start', 'subtype', 'text', 'timestamp',
+  'total', 'type', 'unreadcount', 'updatedat', 'variables', 'conversationurl', 'conversationparticipants',
+].map((name) => [name, name]));
+
+const structuralPathSegments = new Map([
+  'api', 'checkpoint', 'conversation', 'conversations', 'event', 'events', 'graphql', 'history', 'in', 'message',
+  'messages', 'messaging', 'thread', 'threads', 'voyager', 'voyagermessaginggraphql',
+].map((name) => [name, name]));
 
 export function safeStructuralName(value: string): string {
-  if (sensitiveName.test(value) || opaqueDigitRun.test(value)) return '<redacted-key>';
-  return schemaName.test(value) ? value : '<opaque-key>';
+  if (sensitiveName.test(value)) return '<redacted-key>';
+  const prefix = value.startsWith('*') || value.startsWith('$') ? value[0]! : '';
+  const canonical = structuralNames.get(value.slice(prefix.length).toLocaleLowerCase('en-US'));
+  return canonical ? `${prefix}${canonical}` : '<opaque-key>';
 }
 
 export function queryParameterNames(url: URL): string[] {
@@ -66,16 +81,16 @@ export function redactedPathShape(pathname: string): string {
   const idParent = /^(?:in|thread|threads|profile|profiles|member|members|company|companies|conversation|conversations|message|messages)$/i;
   for (const segment of segments) {
     const decoded = safeDecode(segment);
-    const structural = schemaName.test(decoded) && !sensitiveName.test(decoded);
-    const redact = redactNext || !structural;
-    output.push(redact ? ':opaque' : decoded);
+    const structural = structuralPathSegments.get(decoded.toLocaleLowerCase('en-US'));
+    const redact = redactNext || !structural || sensitiveName.test(decoded);
+    output.push(redact ? ':opaque' : structural);
     redactNext = idParent.test(decoded);
   }
   return `/${output.join('/')}` || '/';
 }
 
 function safeDecode(value: string): string {
-  try { return decodeURIComponent(value); } catch { return ''; }
+  return repeatedlyDecodeAndNormalize(value) ?? '';
 }
 
 export function contentTypeFamily(contentType: string): string {

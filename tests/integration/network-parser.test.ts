@@ -7,7 +7,7 @@ import { assertAllowedReadUrl } from '../../src/linkedin/network/read-client.js'
 import { createManifest } from '../../src/io/diagnostics.js';
 import { followObservedPagination } from '../../src/linkedin/network/pagination.js';
 import type { APIRequestContext } from 'playwright';
-import { coalesceRaw, coverageIsPartial, enrichParticipantNamesFromDomHints } from '../../src/linkedin/exporter.js';
+import { coalesceRaw, coverageIsPartial, enrichParticipantNamesFromDomHints, listCoverageIsComplete } from '../../src/linkedin/exporter.js';
 import { normalizeConversation } from '../../src/domain/normalize.js';
 import { loadExport, persistExportResult, saveExport } from '../../src/io/export-store.js';
 import type { LinkedInExport, RawConversation } from '../../src/domain/schema.js';
@@ -59,6 +59,41 @@ describe('network parser', () => {
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/feed')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation')).toThrow();
     expect(assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation').pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
+    for (const url of [
+      'https://www.linkedin.com/voyager/api/messaging/%73%65%6e%64Message',
+      'https://www.linkedin.com/voyager/api/messaging/%2573%2565%256e%2564Message',
+      'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=%6d%75tation',
+      'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=%256d%2575%2574%2561%2574%2569%256f%256e',
+      'https://www.linkedin.com/voyager/api/messaging/messages?operation=%6d%61%72%6b%52%65%61%64',
+      'https://www.linkedin.com/voyager/api/graphql?queryId=%ZZ',
+    ]) expect(() => assertAllowedReadUrl(url)).toThrow();
+  });
+
+  it('derives pagination for the exact observed modern messaging GraphQL path', () => {
+    const source = 'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&start=0&count=1';
+    const parsed = parseNetworkPayload({ paging: { start: 0, count: 1, total: 2, links: [{ href: '?queryId=messengerConversations&start=1&count=1' }] } }, source);
+    expect(parsed.paginationUrls).toHaveLength(1);
+    expect(new URL(parsed.paginationUrls[0]!).pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
+    expect(new URL(parsed.paginationUrls[0]!).searchParams.get('start')).toBe('1');
+  });
+
+  it('follows relative pagination on the exact modern Dash path', async () => {
+    const visited: string[] = [];
+    const fakeRequest = {
+      get: async (url: string) => {
+        visited.push(url);
+        const last = new URL(url).searchParams.get('start') === '1';
+        return {
+          status: () => 200,
+          ok: () => true,
+          headers: () => ({}),
+          body: async () => Buffer.from(JSON.stringify({ paging: { start: last ? 1 : 0, count: 1, total: 2, hasNextPage: !last, links: last ? [] : [{ href: '?queryId=messengerConversations&start=1&count=1' }] } })),
+        };
+      },
+    } as unknown as APIRequestContext;
+    await followObservedPagination(fakeRequest, ['https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&start=0&count=1'], createManifest());
+    expect(visited).toHaveLength(2);
+    expect(visited.every((url) => new URL(url).pathname === '/voyager/api/voyagerMessagingGraphQL/graphql')).toBe(true);
   });
 
   it('resolves GraphQL reference arrays, composite URNs, and observed cursors', async () => {
@@ -234,5 +269,25 @@ describe('network parser', () => {
     expect(conversations[0]?.participants?.[1]?.name).toBe('Verified Person');
     expect(conversations[1]?.participants?.[1]?.name).toBeUndefined();
     expect(conversations[2]?.participants?.[1]?.name).toBeUndefined();
+  });
+
+  it('requires a global one-to-one hint mapping before name enrichment', () => {
+    const conversation: RawConversation = {
+      id: 'only', participants: [{ id: 'SELF' }, { id: 'EXT' }],
+      messages: [{ senderId: 'EXT', text: 'Thank you for your interest in this role' }],
+    };
+    let ambiguityWarnings = 0;
+    expect(enrichParticipantNamesFromDomHints([conversation], [
+      { participantName: 'Wrong First Row', messageSnippet: 'Thank you for your interest in this role' },
+      { participantName: 'Actual Second Row', messageSnippet: 'Thank you for your interest in this role' },
+    ], 'SELF', () => { ambiguityWarnings += 1; })).toBe(0);
+    expect(conversation.participants?.[1]?.name).toBeUndefined();
+    expect(ambiguityWarnings).toBe(2);
+  });
+
+  it('does not treat inert DOM rows or DOM-only IDs as network list completion', () => {
+    expect(listCoverageIsComplete(80, 100, 100)).toBe(false);
+    expect(listCoverageIsComplete(100, 100, 100)).toBe(true);
+    expect(listCoverageIsComplete(100, 100, 101)).toBe(false);
   });
 });
