@@ -13,10 +13,10 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   try { url = new URL(rawUrl); } catch { return { allow: false, reason: 'invalid-url' }; }
   const details = { origin: url.origin, pathname: url.pathname };
   if (!['http:', 'https:', 'data:', 'blob:'].includes(url.protocol)) return { allow: false, reason: 'unsupported-protocol', ...details };
-  if (url.protocol === 'data:' || url.protocol === 'blob:') return { allow: true, reason: 'local-resource', ...details };
   const canonical = canonicalUrlView(url.toString());
   if (!canonical) return { allow: false, reason: 'invalid-url-encoding', ...details };
   if (!safeMethods.has(method.toUpperCase())) return { allow: false, reason: 'non-read-http-method', ...details };
+  if (url.protocol === 'data:' || url.protocol === 'blob:') return { allow: true, reason: 'local-resource', ...details };
   const linkedin = /(^|\.)linkedin\.com$/i.test(url.hostname);
   const actionScope = /^\/(?:voyager\/api|messaging)(?:\/|$)/i.test(canonical.pathname);
   const canonicalQuery = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');

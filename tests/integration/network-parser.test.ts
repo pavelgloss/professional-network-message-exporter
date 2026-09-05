@@ -58,6 +58,7 @@ describe('network parser', () => {
     expect(() => assertAllowedReadUrl('https://evil.example/voyager/api/messaging')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/feed')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation')).toThrow();
+    expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql/extra?queryId=messengerMessagesByConversation')).toThrow();
     expect(assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation').pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
     for (const url of [
       'https://www.linkedin.com/voyager/api/messaging/%73%65%6e%64Message',
@@ -252,6 +253,15 @@ describe('network parser', () => {
     const next = decodeURIComponent(parsed.paginationUrls[0] ?? '');
     expect(next).toContain('variables=(cursor:cursor-next,count:20)');
     expect(next).toContain('queryId=messengerConversations');
+  });
+
+  it('derives a cursor on the exact modern Dash path', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/graphql-composite.json', import.meta.url), 'utf8'));
+    const source = 'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&variables=(cursor:cursor-old,count:20)';
+    const parsed = parseNetworkPayload(fixture, source);
+    const next = decodeURIComponent(parsed.paginationUrls[0] ?? '');
+    expect(new URL(parsed.paginationUrls[0]!).pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
+    expect(next).toContain('variables=(cursor:cursor-next,count:20)');
   });
 
   it('enriches a single external participant only from a unique verified DOM preview', () => {

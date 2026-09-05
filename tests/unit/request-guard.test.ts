@@ -20,10 +20,12 @@ describe('request guard policy', () => {
     'https://www.linkedin.com/voyager/api/graphql?queryId=%ZZ',
     'https://www.linkedin.com/voyager/api/graphql?safe=%2525252525252525256dutation',
     'https://www.linkedin.com/voyager/api/graphql?safe=%26operation%3DmarkRead',
+    'https://www.linkedin.com/voyager/api/messaging/%00/messages',
   ])('blocks encoded, normalized, or malformed mutation URL %s', (url) => {
     expect(requestPolicy('GET', url).allow).toBe(false);
   });
   it('does not allow unsupported schemes', () => {
     expect(requestPolicy('GET', 'file:///secret').allow).toBe(false);
+    expect(requestPolicy('POST', 'data:text/plain,local').allow).toBe(false);
   });
 });

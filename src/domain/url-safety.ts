@@ -7,15 +7,18 @@ export type CanonicalUrlView = {
 
 const encodedOctet = /%[0-9a-f]{2}/i;
 const malformedEscape = /%(?![0-9a-f]{2})/i;
+const controlCharacter = /[\u0000-\u001f\u007f]/;
 
 export function repeatedlyDecodeAndNormalize(value: string, maxPasses = 8): string | undefined {
   let current: string;
   try { current = value.normalize('NFKC'); } catch { return undefined; }
+  if (controlCharacter.test(current)) return undefined;
   for (let pass = 0; pass < maxPasses; pass += 1) {
     if (malformedEscape.test(current)) return undefined;
     if (!encodedOctet.test(current)) return current;
     try {
       const decoded = decodeURIComponent(current).normalize('NFKC');
+      if (controlCharacter.test(decoded)) return undefined;
       if (decoded === current) return current;
       current = decoded;
     } catch { return undefined; }
