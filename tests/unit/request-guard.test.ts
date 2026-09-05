@@ -21,11 +21,21 @@ describe('request guard policy', () => {
     'https://www.linkedin.com/voyager/api/graphql?safe=%2525252525252525256dutation',
     'https://www.linkedin.com/voyager/api/graphql?safe=%26operation%3DmarkRead',
     'https://www.linkedin.com/voyager/api/messaging/%00/messages',
+    'https://www.linkedin.com/voyager/api/graphql?queryId=muta%C2%85tion',
+    'https://www.linkedin.com/voyager/api/graphql?queryId=muta%25C2%2585tion',
+    'https://www.linkedin.com/voyager/api/graphql?queryId=muta%E2%80%8Btion',
+    'https://www.linkedin.com/voyager/api/graphql?queryId=muta%C2%ADtion',
+    'https://www.linkedin.com/voyager/api/graphql?queryId=muta%E2%80%AEtion',
+    'https://www.linkedin.com/voyager/api/graphql?que%E2%80%8BryId=mutation',
   ])('blocks encoded, normalized, or malformed mutation URL %s', (url) => {
     expect(requestPolicy('GET', url).allow).toBe(false);
   });
   it('does not allow unsupported schemes', () => {
     expect(requestPolicy('GET', 'file:///secret').allow).toBe(false);
     expect(requestPolicy('POST', 'data:text/plain,local').allow).toBe(false);
+  });
+  it('redacts opaque origins in blocked policy decisions', () => {
+    const canary = 'pavelprivateconversation';
+    expect(requestPolicy('POST', `https://${canary}.example/random/${canary}`)).toMatchObject({ allow: false, origin: '<redacted-origin>' });
   });
 });

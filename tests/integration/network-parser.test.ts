@@ -67,7 +67,28 @@ describe('network parser', () => {
       'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=%256d%2575%2574%2561%2574%2569%256f%256e',
       'https://www.linkedin.com/voyager/api/messaging/messages?operation=%6d%61%72%6b%52%65%61%64',
       'https://www.linkedin.com/voyager/api/graphql?queryId=%ZZ',
+      'https://www.linkedin.com/voyager/api/graphql?queryId=muta%C2%85tion',
+      'https://www.linkedin.com/voyager/api/graphql?queryId=muta%25E2%2580%258Btion',
+      'https://www.linkedin.com/voyager/api/graphql?queryId=muta%C2%ADtion',
+      'https://www.linkedin.com/voyager/api/graphql?queryId=muta%E2%80%AEtion',
     ]) expect(() => assertAllowedReadUrl(url)).toThrow();
+    const canary = 'pavelprivateconversation';
+    try { assertAllowedReadUrl(`https://${canary}.example/voyager/api/messaging`); } catch (error) {
+      expect(String(error)).not.toContain(canary);
+      expect(String(error)).toContain('<redacted-origin>');
+    }
+  });
+
+  it('does not derive or request pagination containing Unicode Other characters', async () => {
+    const source = 'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations';
+    const parsed = parseNetworkPayload({ paging: { links: [{ href: '?queryId=messengerMessa%E2%80%8Bges' }] } }, source);
+    expect(parsed.paginationUrls).toEqual([]);
+    let requests = 0;
+    const fakeRequest = { get: async () => { requests += 1; throw new Error('must not run'); } } as unknown as APIRequestContext;
+    const manifest = createManifest();
+    await followObservedPagination(fakeRequest, [`${source}&cursor=next%E2%80%AEpage`], manifest);
+    expect(requests).toBe(0);
+    expect(manifest.warnings).toContain('PAGINATION_URL_BLOCKED');
   });
 
   it('derives pagination for the exact observed modern messaging GraphQL path', () => {

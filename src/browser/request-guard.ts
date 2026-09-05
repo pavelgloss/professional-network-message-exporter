@@ -1,7 +1,8 @@
 import type { BrowserContext, Route } from 'playwright';
-import { redactedPathShape, type DiagnosticsManifest } from '../io/diagnostics.js';
+import type { DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
 import { canonicalUrlView } from '../domain/url-safety.js';
+import { redactedPathShape, safeDiagnosticOrigin } from '../domain/url-redaction.js';
 
 export type PolicyDecision = { allow: boolean; reason: string; origin?: string; pathname?: string };
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -11,7 +12,7 @@ const forbiddenAction = /(?:mutation|sendMessage|delete|archive|markRead|markUnr
 export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   let url: URL;
   try { url = new URL(rawUrl); } catch { return { allow: false, reason: 'invalid-url' }; }
-  const details = { origin: url.origin, pathname: url.pathname };
+  const details = { origin: safeDiagnosticOrigin(url), pathname: url.pathname };
   if (!['http:', 'https:', 'data:', 'blob:'].includes(url.protocol)) return { allow: false, reason: 'unsupported-protocol', ...details };
   const canonical = canonicalUrlView(url.toString());
   if (!canonical) return { allow: false, reason: 'invalid-url-encoding', ...details };
@@ -21,7 +22,7 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   const actionScope = /^\/(?:voyager\/api|messaging)(?:\/|$)/i.test(canonical.pathname);
   const canonicalQuery = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');
   if (linkedin && (forbiddenAccountPath.test(canonical.pathname) || (actionScope && forbiddenAction.test(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)))) {
-    return { allow: false, reason: 'known-mutating-path', origin: url.origin, pathname: canonical.pathname };
+    return { allow: false, reason: 'known-mutating-path', origin: safeDiagnosticOrigin(url), pathname: canonical.pathname };
   }
   return { allow: true, reason: 'read-only-request', ...details };
 }
@@ -29,9 +30,9 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
 export async function installRequestGuard(context: BrowserContext, manifest: DiagnosticsManifest, logger: Logger): Promise<void> {
   await context.routeWebSocket('**/*', async (webSocket) => {
     manifest.counts.blockedWebSockets = (manifest.counts.blockedWebSockets ?? 0) + 1;
-    let origin = 'invalid';
+    let origin = '<redacted-origin>';
     let pathname = '/';
-    try { const url = new URL(webSocket.url()); origin = url.origin; pathname = redactedPathShape(url.pathname); } catch { /* redacted defaults */ }
+    try { const url = new URL(webSocket.url()); origin = safeDiagnosticOrigin(url); pathname = redactedPathShape(url.pathname); } catch { /* redacted defaults */ }
     logger.warn('websocket-blocked', { origin, pathname });
     await webSocket.close({ code: 1008, reason: 'Read-only export blocks WebSockets' });
   });
@@ -41,7 +42,7 @@ export async function installRequestGuard(context: BrowserContext, manifest: Dia
     const key = decision.allow ? 'allowedRequests' : 'blockedRequests';
     manifest.counts[key] = (manifest.counts[key] ?? 0) + 1;
     if (!decision.allow) {
-      const entry = { method: request.method(), origin: decision.origin ?? 'invalid', pathname: redactedPathShape(decision.pathname ?? '/'), reason: decision.reason };
+      const entry = { method: request.method(), origin: decision.origin ?? '<redacted-origin>', pathname: redactedPathShape(decision.pathname ?? '/'), reason: decision.reason };
       if (manifest.blockedRequests.length < 200) manifest.blockedRequests.push(entry);
       logger.warn('request-blocked', entry);
       await route.abort('blockedbyclient');

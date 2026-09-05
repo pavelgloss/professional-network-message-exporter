@@ -3,7 +3,8 @@ import path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { redact } from '../logger.js';
 import type { Page } from 'playwright';
-import { repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
+import { safeStructuralName } from '../domain/url-redaction.js';
+export { queryParameterNames, redactedPathShape, safeStructuralName } from '../domain/url-redaction.js';
 
 export type JsonStructuralSignature = {
   keyPaths: string[];
@@ -46,51 +47,6 @@ export type DiagnosticsManifest = {
 export function createManifest(): DiagnosticsManifest {
   const startedAt = new Date().toISOString();
   return { runId: startedAt.replace(/[.:]/g, '-'), startedAt, status: 'running', counts: {}, strategies: [], warnings: [], blockedRequests: [], networkResponses: [] };
-}
-
-const sensitiveName = /(?:auth|cookie|csrf|password|secret|session|token)/i;
-const structuralNames = new Map([
-  'actor', 'array', 'attributes', 'attributedbody', 'backendconversationurn', 'backendurn', 'body', 'count', 'createdat',
-  'cursor', 'data', 'deliveredat', 'edges', 'elements', 'endcursor', 'entityurn', 'eventcontent', 'events', 'eventtype',
-  'featureflags', 'first', 'hasnextpage', 'hostidentityurn', 'id', 'included', 'isread', 'lastactivity',
-  'lastactivityat', 'links', 'members', 'messages', 'name', 'navigationurl', 'nextcursor', 'nodes', 'pageinfo',
-  'paging', 'participants', 'profileurl', 'queryid', 'rendercontent', 'sender', 'start', 'subtype', 'text', 'timestamp',
-  'total', 'type', 'unreadcount', 'updatedat', 'variables', 'conversationurl', 'conversationparticipants',
-].map((name) => [name, name]));
-
-const structuralPathSegments = new Map([
-  'api', 'checkpoint', 'conversation', 'conversations', 'event', 'events', 'graphql', 'history', 'in', 'message',
-  'messages', 'messaging', 'thread', 'threads', 'voyager', 'voyagermessaginggraphql',
-].map((name) => [name, name]));
-
-export function safeStructuralName(value: string): string {
-  if (sensitiveName.test(value)) return '<redacted-key>';
-  const prefix = value.startsWith('*') || value.startsWith('$') ? value[0]! : '';
-  const canonical = structuralNames.get(value.slice(prefix.length).toLocaleLowerCase('en-US'));
-  return canonical ? `${prefix}${canonical}` : '<opaque-key>';
-}
-
-export function queryParameterNames(url: URL): string[] {
-  return [...new Set([...url.searchParams.keys()].map(safeStructuralName))].sort();
-}
-
-export function redactedPathShape(pathname: string): string {
-  const segments = pathname.split('/').filter(Boolean);
-  const output: string[] = [];
-  let redactNext = false;
-  const idParent = /^(?:in|thread|threads|profile|profiles|member|members|company|companies|conversation|conversations|message|messages)$/i;
-  for (const segment of segments) {
-    const decoded = safeDecode(segment);
-    const structural = structuralPathSegments.get(decoded.toLocaleLowerCase('en-US'));
-    const redact = redactNext || !structural || sensitiveName.test(decoded);
-    output.push(redact ? ':opaque' : structural);
-    redactNext = idParent.test(decoded);
-  }
-  return `/${output.join('/')}` || '/';
-}
-
-function safeDecode(value: string): string {
-  return repeatedlyDecodeAndNormalize(value) ?? '';
 }
 
 export function contentTypeFamily(contentType: string): string {

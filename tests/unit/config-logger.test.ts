@@ -33,4 +33,15 @@ describe('redaction', () => {
     expect(output).not.toContain('secret');
     expect(output).not.toContain('?');
   });
+  it('redacts opaque URL origins and alphabetic path IDs in arbitrary error messages', () => {
+    const canary = 'pavelPrivateConversation';
+    const output = JSON.stringify(redact({
+      message: `page.goto failed at https://www.linkedin.com/messaging/thread/${canary}/`,
+      external: `https://${canary.toLowerCase()}.example/random/${canary}`,
+    }));
+    expect(output).not.toContain(canary);
+    expect(output.toLowerCase()).not.toContain(canary.toLowerCase());
+    expect(output).toContain('/messaging/thread/:opaque');
+    expect(output).toContain('<redacted-origin>');
+  });
 });

@@ -7,18 +7,22 @@ export type CanonicalUrlView = {
 
 const encodedOctet = /%[0-9a-f]{2}/i;
 const malformedEscape = /%(?![0-9a-f]{2})/i;
-const controlCharacter = /[\u0000-\u001f\u007f]/;
+// Every Unicode "Other" code point is ambiguous in an endpoint or operation
+// token. This includes C0/C1 controls, bidi/zero-width format characters,
+// surrogates, private-use and currently unassigned characters. U+FFFD is also
+// rejected because WHATWG URL parsing can use it to replace malformed input.
+const ambiguousUnicode = /[\p{C}\uFFFD]/u;
 
 export function repeatedlyDecodeAndNormalize(value: string, maxPasses = 8): string | undefined {
   let current: string;
   try { current = value.normalize('NFKC'); } catch { return undefined; }
-  if (controlCharacter.test(current)) return undefined;
+  if (ambiguousUnicode.test(current)) return undefined;
   for (let pass = 0; pass < maxPasses; pass += 1) {
     if (malformedEscape.test(current)) return undefined;
     if (!encodedOctet.test(current)) return current;
     try {
       const decoded = decodeURIComponent(current).normalize('NFKC');
-      if (controlCharacter.test(decoded)) return undefined;
+      if (ambiguousUnicode.test(decoded)) return undefined;
       if (decoded === current) return current;
       current = decoded;
     } catch { return undefined; }

@@ -1,11 +1,13 @@
+import { redactedUrlShape } from './domain/url-redaction.js';
+
 const secretKey = /(cookie|authorization|csrf|token|session|password|li_at|jsessionid)/i;
 const tokenLike = /\b(?:AQED[A-Za-z0-9_-]{10,}|Bearer\s+\S+|[A-Fa-f0-9]{32,})\b/g;
 
 export function redact(value: unknown, key = ''): unknown {
   if (secretKey.test(key)) return '[REDACTED]';
   if (typeof value === 'string') {
-    let cleaned = value.replace(/https?:\/\/[^\s"']+/gi, (candidate) => {
-      try { const url = new URL(candidate); return `${url.origin}${url.pathname}`; } catch { return '[REDACTED_URL]'; }
+    let cleaned = value.replace(/(?:https?|wss?):\/\/[^\s"']+/gi, (candidate) => {
+      return redactedUrlShape(candidate);
     }).replace(tokenLike, '[REDACTED]');
     try {
       const url = new URL(cleaned);
