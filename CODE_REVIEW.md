@@ -1248,3 +1248,85 @@ původní přesné varianty R3-02 jsou blokované. Definitivní verdikt pro reá
 one-read-thread probe je **NO-GO**, dokud obě nové fail-open větve nedostanou
 default-deny opravu a server-count regresní testy. Implementace nebyla během review
 změněna a nic nebylo commitováno.
+
+---
+
+## Úzký finální re-review HEAD `308577b`
+
+### Verdikt
+
+**Critical nálezy: žádné. High: jeden. Medium: žádné.** R4-01 je v požadované
+namespace/encoding matici uzavřený a běžné `id`/`ids` varianty R4-02 se nyní
+blokují. R4-02 ale není zcela uzavřený: parser ignoruje jednoznačnou foreign
+conversation URN, pokud ji payload vloží pod neznámý key bez identity suffixu.
+
+**NO-GO pro právě jeden skutečný `--probe-read-thread`.** Přestože exact GET
+redirect izolace a všechny dřívější R3 ochrany prošly, níže uvedené exact history
+requesty dosáhly lokálního serveru a `assertTargetSafe()` prošel. Probe zatím
+uživateli nenabízet. Network-only export bez probe/thread-open režimu tímto nálezem
+dotčen není.
+
+### R5-01 / R4-02 — HIGH — Cizí conversation URN pod neznámým key se do identity rozhodnutí nedostane
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:63-76`,
+  `src/linkedin/probe-request-policy.ts:80-112`,
+  `src/linkedin/probe-request-policy.ts:142-145`,
+  `src/linkedin/probe-request-policy.ts:182-185`
+- **Problém:** JSON walker primitivní string okamžitě vrátí a jeho hodnotu vůbec
+  neprohlédne. Rest.li větev obdobně zpracuje field value jen tehdy, když key končí
+  na `id/ids/urn/urns` nebo obsahuje několik semantic stems. Cizí, syntakticky
+  jednoznačná conversation URN v `payload`, `value`, `refs` či jiném neznámém
+  fieldu je proto ignorovaná. Současný target `conversationId=READ` stačí, aby
+  request vypadal jako jediný target reference a policy jej povolila.
+- **Nezávislá reprodukce:** sedm variant bylo klasifikováno
+  `allow:true`, `conversation-history`, `referencedIds=[READ]`: JSON scalar
+  `payload:urn:li:messagingThread:UNREAD`, composite JSON
+  `payload:urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,UNREAD)`, nested
+  `value`, pole `refs`, double-encoded JSON a jednoduchá i nested Rest.li hodnota.
+  Samostatný lokální Chromium probe poslal tři reprezentativní URL serveru přes
+  nový isolated API proxy (`serverHits=[1,1,1]`), měl
+  `crossThreadRequestsBlocked=0` a `assertTargetSafe=true`. LinkedIn ani session
+  nebyly použity.
+- **Dopad:** persisted query, která zavede/akceptuje nový field název, může přes
+  exact povolený history operation načíst jiný než ověřený read thread. Gate běh
+  neoznačí jako unsafe a request může zároveň vytvořit zdánlivě validní history
+  template. To přímo odporuje one-thread target invariantě.
+- **Doporučení:** rekurzivně zkontrolovat každý string scalar v JSON, polích i
+  Rest.li hodnotách pomocí typed `conversationIdFromUrn`; každý rozpoznaný
+  conversation URN přidat do reference setu bez ohledu na key. Jakákoli foreign
+  conversation identity musí request zablokovat. Profile/message URN lze podle
+  entity type ignorovat. Přidat server-count `0` testy pro simple/composite,
+  nested/array a double-encoded JSON i Rest.li cizí URN pod neznámým key.
+
+### Uzavřené požadované reprodukce
+
+- **R4-01 uzavřeno:** `messagingV2`, `graphqlV2` s messenger operation,
+  `voyagerMessagingGraphQLV2`, encoded `%6dessagingV2`, case/custom messaging
+  namespace a custom GraphQL mailbox tvar byly ve vlastním runtime probe všechny
+  zablokované (`10` kombinovaných namespace/identity requestů, server hits `0`,
+  blocked counter `10`). Malformed/deeper/Unicode canonicalizace zůstává fail-closed.
+- **R4-02 částečně uzavřeno:** direct `id`, JSON/Rest.li `id` a `ids`,
+  `compoundId`, nested identity key a double-encoded foreign raw ID se blokují;
+  targeted policy matice měla `14/14` blocked a `6/6` legitimních allow případů.
+  R5-01 popisuje zbývající value-based URN variantu.
+- **Redirect a exact reads:** allowed list GET s 302 provedl právě jeden source GET,
+  redirect target měl count `0`, gate vykázal blocked `1`, assertion selhala a
+  response `Set-Cookie` nezměnil browser jar. Exact list i exact target-history GET
+  naopak každý provedl právě jeden server request a browser dostal cached JSON;
+  API response `Set-Cookie` po obou zůstal jen v zahazovaném request contextu.
+- **R3 regrese:** `img`, iframe, object/subframe, prefetch, worker-fetch a pozdější
+  direct fetch na thread URL mají server count `0`; cached target document má jeden
+  preflight GET a jednu in-memory browser navigation. Selection/target document i
+  API response cookies zůstaly oddělené od browser jaru. POST, WebSocket a service
+  worker ochrany prošly v plném test suite.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 15 test files / 115 tests, typecheck i build.
+- Cílený probe/navigation/URL/guard běh: **PASS** — 5 files / 56 tests.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- `.auth/`, main/partial exporty a diagnostics jsou ignorované; tracked soubory
+  neobsahují nalezenou credential value ani runtime export/session artifact.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
+  LinkedIn, credentials ani existující session; implementační kód nebyl změněn a
+  nic nebylo commitováno.
