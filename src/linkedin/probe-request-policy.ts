@@ -1,4 +1,4 @@
-import { conversationIdFromUrn, isConversationUrn } from '../domain/stable-id.js';
+import { conversationIdFromUrn, isConversationEntityType } from '../domain/stable-id.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 
 export type ProbeRequestPhase = 'selection' | 'target';
@@ -52,12 +52,26 @@ function parseReferenceValue(value: unknown): string | undefined {
   return normalizedId(normalized);
 }
 
+type ProbeUrnEntityClass = 'supported-conversation' | 'suspicious-conversation-family' | 'known-nonconversation' | 'unknown-ambiguous';
+
+function classifyProbeUrnEntity(entityType: string): ProbeUrnEntityClass {
+  if (isConversationEntityType(entityType)) return 'supported-conversation';
+  // A thread/conversation marker dominates mixed or future-looking names. This
+  // keeps e.g. conversationParticipantV2 fail-closed without misclassifying the
+  // ordinary messagingParticipant/message families below.
+  if (/conversation|thread/i.test(entityType)) return 'suspicious-conversation-family';
+  if (/profile|person|participant|message|event|mailbox|inbox|member/i.test(entityType)) return 'known-nonconversation';
+  if (/messag/i.test(entityType)) return 'suspicious-conversation-family';
+  return 'unknown-ambiguous';
+}
+
 function collectConversationUrns(value: string, result: ReferenceResult): void {
   const normalized = repeatedlyDecodeAndNormalize(value);
   if (normalized === undefined) { result.valid = false; return; }
-  const starts = [...normalized.matchAll(/urn:li:[\w-]+:/giu)];
+  const starts = [...normalized.matchAll(/urn:li:([\w-]+):/giu)];
   for (const match of starts) {
-    if (match.index === undefined) continue;
+    const entityType = match[1];
+    if (match.index === undefined || !entityType) continue;
     let end = match.index + match[0].length;
     if (normalized[end] === '(') {
       let depth = 0;
@@ -72,11 +86,16 @@ function collectConversationUrns(value: string, result: ReferenceResult): void {
       while (end < normalized.length && !/[\s"'`,;)\]}]/u.test(normalized[end]!)) end += 1;
     }
     const urn = normalized.slice(match.index, end);
-    if (!isConversationUrn(urn)) continue;
-    result.sawKey = true;
-    const id = conversationIdFromUrn(urn);
-    if (id) result.ids.add(id);
-    else result.valid = false;
+    const entityClass = classifyProbeUrnEntity(entityType);
+    if (entityClass === 'supported-conversation') {
+      result.sawKey = true;
+      const id = conversationIdFromUrn(urn);
+      if (id) result.ids.add(id);
+      else result.valid = false;
+    } else if (entityClass === 'suspicious-conversation-family') {
+      result.sawKey = true;
+      result.valid = false;
+    }
   }
 }
 

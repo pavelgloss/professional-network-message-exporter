@@ -49,9 +49,10 @@ function safeRouteId(value?: string): string | undefined {
 export function personIdFromUrn(value?: string): string | undefined { return typedRouteId(value, PERSON_TYPES); }
 export function conversationIdFromUrn(value?: string): string | undefined { return typedRouteId(value, CONVERSATION_TYPES); }
 export function messageIdFromUrn(value?: string): string | undefined { return typedRouteId(value, MESSAGE_TYPES); }
+export function isConversationEntityType(value: string): boolean { return CONVERSATION_TYPES.test(value); }
 export function isConversationUrn(value?: string): boolean {
   const parsed = parseLinkedInUrn(value);
-  return Boolean(parsed && CONVERSATION_TYPES.test(parsed.entityType));
+  return Boolean(parsed && isConversationEntityType(parsed.entityType));
 }
 
 export function splitComposite(value: string): string[] {

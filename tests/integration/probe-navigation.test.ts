@@ -320,6 +320,37 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
   });
 
+  it('blocks malformed and future conversation-family URNs while the known target still reaches the server once', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+
+    const history = (variables: string) => `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
+    const json = (value: unknown) => history(JSON.stringify(value));
+    const knownTarget = json({ conversationId: 'READ', payload: 'urn:li:messagingThread:READ' });
+    await page.evaluate((url) => fetch(url), knownTarget);
+    expect(allRequests.get(knownTarget)).toBe(1);
+    await gate!.assertTargetSafe();
+
+    const blocked = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThreadV2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingConversationV2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:conversation-v2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread:' }),
+      json({ conversationId: 'READ', nested: { payload: 'urn%3Ali%3AmessagingThreadV2%3AUNREAD' } }),
+      history(encodeURIComponent(JSON.stringify({ conversationId: 'READ', payload: 'urn:li:conversation-v2:UNREAD' }))),
+      history('(conversationId:READ,payload:urn:li:messagingConversationV2:UNREAD)'),
+      history('(conversationId:READ,outer:(payload:urn:li:messagingThread:))'),
+    ];
+    await page.evaluate(async (urls) => { await Promise.all(urls.map((url) => fetch(url).catch(() => undefined))); }, blocked);
+    await page.waitForTimeout(100);
+    for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
+    expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
+    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+  });
+
   it('keeps browser cookies unchanged across disposable selection and target preflights', async () => {
     await context.addCookies([{ name: 'authCanary', value: 'original', url: origin }]);
     await reset('/selection-cookie');

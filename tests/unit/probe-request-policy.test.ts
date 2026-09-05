@@ -109,4 +109,44 @@ describe('probe phase-specific messaging request policy', () => {
     ];
     for (const url of allowed) expect(decide('target', url), url).toMatchObject({ allow: true, kind: 'conversation-history' });
   });
+
+  it('rejects malformed and future conversation-family URNs without confusing non-conversation entities', () => {
+    const history = (variables: string) => `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
+    const json = (value: unknown) => history(JSON.stringify(value));
+    const blocked = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThreadV2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingConversationV2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:conversation-v2:UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread:' }),
+      json({ conversationId: 'READ', nested: { payload: 'urn%3Ali%3AmessagingThreadV2%3AUNREAD' } }),
+      history(encodeURIComponent(JSON.stringify({ conversationId: 'READ', payload: 'urn:li:conversation-v2:UNREAD' }))),
+      history('(conversationId:READ,payload:urn:li:messagingConversationV2:UNREAD)'),
+      history('(conversationId:READ,outer:(payload:urn:li:messagingThread:))'),
+    ];
+    for (const url of blocked) expect(decide('target', url), url).toMatchObject({ allow: false, kind: 'blocked' });
+
+    const supportedTargets = [
+      'urn:li:messagingThread:READ',
+      'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ)',
+      'urn:li:fsd_messengerConversation:READ',
+      'urn:li:messengerConversation:READ',
+      'urn:li:messagingConversation:READ',
+      'urn:li:conversation:READ',
+    ];
+    for (const urn of supportedTargets) expect(decide('target', json({ conversationId: 'READ', payload: urn })), urn).toMatchObject({ allow: true, kind: 'conversation-history' });
+
+    expect(decide('target', json({
+      conversationId: 'READ',
+      payload: [
+        'urn:li:profileV2:UNREAD',
+        'urn:li:personV2:UNREAD',
+        'urn:li:messagingParticipantV2:UNREAD',
+        'urn:li:messagingMessageV2:UNREAD',
+        'urn:li:messageEventV2:UNREAD',
+        'urn:li:mailboxV2:UNREAD',
+        'urn:li:inboxV2:UNREAD',
+        'urn:li:unknownEntityV2:UNREAD',
+      ],
+    }))).toMatchObject({ allow: true, kind: 'conversation-history' });
+  });
 });
