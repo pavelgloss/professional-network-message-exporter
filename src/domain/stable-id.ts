@@ -29,9 +29,9 @@ export function extractUrnId(value?: string): string | undefined {
   return parseLinkedInUrn(value)?.value;
 }
 
-const PERSON_TYPES = /^(?:fsd_profile|fs_miniProfile|miniProfile|messagingParticipant|member|person)$/i;
-const CONVERSATION_TYPES = /^(?:msg_conversation|messagingThread|messagingConversation|conversation)$/i;
-const MESSAGE_TYPES = /^(?:msg_message|messagingMessage|messageEvent|event)$/i;
+const PERSON_TYPES = /^(?:fsd_profile|fs_miniProfile|miniProfile|fsd_messagingParticipant|messagingParticipant|member|person)$/i;
+const CONVERSATION_TYPES = /^(?:msg_conversation|fsd_messengerConversation|messagingThread|messagingConversation|conversation)$/i;
+const MESSAGE_TYPES = /^(?:msg_message|fsd_messageEvent|messagingMessage|messageEvent|event)$/i;
 
 function typedRouteId(value: string | undefined, expected: RegExp): string | undefined {
   const parsed = parseLinkedInUrn(value);

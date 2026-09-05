@@ -34,6 +34,18 @@ function urnAt(obj: JsonRecord, ...keys: string[]): string | undefined {
   return undefined;
 }
 
+function identityUrnAt(obj: JsonRecord, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.includes('urn:li:')) return normalizeUrn(value) ?? value;
+    if (record(value)) {
+      const nested = stringAt(value, 'hostIdentityUrn', 'memberUrn', 'entityUrn', 'urn', '*entityUrn');
+      if (nested) return normalizeUrn(nested) ?? nested;
+    }
+  }
+  return undefined;
+}
+
 function lookupIncluded(index: IncludedIndex, value: string): JsonRecord | undefined {
   const key = normalizeUrn(value) ?? value;
   return index.ambiguous.has(key) ? undefined : index.records.get(key);
@@ -56,7 +68,9 @@ function participantFrom(value: unknown, index: IncludedIndex): RawParticipant |
   else if (record(value)) obj = value;
   if (!obj) return undefined;
   const profile = profileFrom(obj, index);
-  const entityUrn = urnAt(profile, 'entityUrn', 'objectUrn', 'memberUrn') ?? urnAt(obj, 'entityUrn', 'participantUrn', '*profile');
+  const identityUrn = urnAt(profile, 'hostIdentityUrn', 'memberUrn') ?? urnAt(obj, 'hostIdentityUrn', 'memberUrn');
+  const participantUrn = urnAt(profile, 'entityUrn', 'objectUrn') ?? urnAt(obj, 'entityUrn', 'participantUrn', '*profile');
+  const entityUrn = identityUrn ?? participantUrn;
   const first = cleanText(stringAt(profile, 'firstName'));
   const last = cleanText(stringAt(profile, 'lastName'));
   const name = cleanText(stringAt(profile, 'name', 'fullName', 'title')) ?? cleanText([first, last].filter(Boolean).join(' '));
@@ -70,14 +84,14 @@ function participantFrom(value: unknown, index: IncludedIndex): RawParticipant |
 function textFrom(obj: JsonRecord): string | undefined {
   const direct = stringAt(obj, 'text', 'body', 'messageBody', 'subject');
   if (direct) return cleanText(direct);
-  for (const key of ['eventContent', 'attributedBody', 'commentary', 'content']) {
+  for (const key of ['body', 'eventContent', 'attributedBody', 'commentary', 'content']) {
     if (record(obj[key])) { const found = textFrom(obj[key] as JsonRecord); if (found) return found; }
   }
   return undefined;
 }
 
 function conversationIdForMessage(obj: JsonRecord, conversationUrn?: string): string | undefined {
-  const reference = urnAt(obj, 'conversationUrn', '*conversation') ?? conversationUrn;
+  const reference = urnAt(obj, 'conversationUrn', 'backendConversationUrn', 'conversation', '*conversation') ?? conversationUrn;
   return conversationIdFromUrn(reference) ?? cleanText(stringAt(obj, 'conversationId'));
 }
 
@@ -94,7 +108,7 @@ function looksLikeMessageCandidate(obj: JsonRecord): boolean {
 
 function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
-  const senderUrn = urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
+  const senderUrn = identityUrnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
   // Unknown/attachment-only content must not be counted as parsed history. Until an
@@ -128,7 +142,12 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
-  const looksConversation = /(?:messagingThread|conversation)/i.test(entityUrn ?? '') || (participantValues.length > 0 && ('events' in obj || 'messages' in obj));
+  const hasConversationShape = participantValues.length > 0 || messageValues.length > 0
+    || ['conversationParticipants', 'events', 'messages', 'lastActivityAt', 'conversationUrl', 'unreadCount'].some((key) => key in obj);
+  // Dash message events embed `{ conversation: { entityUrn } }`. The bare reference
+  // identifies the parent but is not a second conversation result.
+  const looksConversation = (/(?:messagingThread|messengerConversation|messagingConversation|msg_conversation|conversation)/i.test(entityUrn ?? '') && hasConversationShape)
+    || (participantValues.length > 0 && ('events' in obj || 'messages' in obj));
   if (!looksConversation) return undefined;
   const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
@@ -140,7 +159,7 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   });
   const parserMisses = messageValues.length - messages.length;
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
-  const url = id ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/` : undefined;
+  const url = stringAt(obj, 'conversationUrl', 'navigationUrl') ?? (id ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/` : undefined);
   const paging = record(obj.paging) ? obj.paging : record(obj.pageInfo) ? obj.pageInfo : undefined;
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
   const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));

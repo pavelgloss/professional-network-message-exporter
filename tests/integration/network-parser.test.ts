@@ -70,6 +70,28 @@ describe('network parser', () => {
     expect(decodeURIComponent(parsed.paginationUrls[0] ?? '')).toContain('cursor-next');
   });
 
+  it('parses current Dash messaging identities without duplicating embedded conversation references', async () => {
+    const fixture = JSON.parse(await readFile(new URL('../fixtures/network/dash-messaging-graphql.json', import.meta.url), 'utf8'));
+    const source = 'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations';
+    const parsed = parseNetworkPayload(fixture, source);
+
+    expect(parsed.conversations).toHaveLength(1);
+    expect(parsed.conversations[0]).toMatchObject({
+      id: 'CONV-ONE',
+      entityUrn: 'urn:li:fsd_messengerConversation:CONV-ONE',
+      url: 'https://www.linkedin.com/messaging/thread/CONV-ONE/',
+    });
+    expect(parsed.conversations[0]?.participants).toEqual([
+      expect.objectContaining({ id: 'SELF', entityUrn: 'urn:li:fsd_profile:SELF', name: 'Account Owner' }),
+      expect.objectContaining({ id: 'EXT', entityUrn: 'urn:li:fsd_profile:EXT', name: 'External Person' }),
+    ]);
+    expect(parsed.conversations[0]?.messages).toEqual([
+      expect.objectContaining({ id: 'EVENT-ONE', conversationId: 'CONV-ONE', senderId: 'EXT', senderName: 'External Person', text: 'Modern Dash message' }),
+    ]);
+    expect(parsed.conversations[0]?.sourceMetadata).toMatchObject({ historyComplete: false, parserMisses: 1 });
+    expect(parsed.misses).toBe(1);
+  });
+
   it('follows relative history links across multiple anonymous pages', async () => {
     const page1 = JSON.parse(await readFile(new URL('../fixtures/network/history-page-1.json', import.meta.url), 'utf8'));
     const page2 = JSON.parse(await readFile(new URL('../fixtures/network/history-page-2.json', import.meta.url), 'utf8'));

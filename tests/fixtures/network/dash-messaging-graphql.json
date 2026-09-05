@@ -1,0 +1,65 @@
+{
+  "data": {
+    "messengerConversations": {
+      "elements": [
+        {
+          "entityUrn": "urn:li:fsd_messengerConversation:CONV-ONE",
+          "backendUrn": "urn:li:msg_conversation:CONV-ONE",
+          "conversationUrl": "https://www.linkedin.com/messaging/thread/CONV-ONE/",
+          "lastActivityAt": 1760000000000,
+          "conversationParticipants": [
+            {
+              "entityUrn": "urn:li:fsd_messagingParticipant:PARTICIPANT-SELF",
+              "backendUrn": "urn:li:messagingParticipant:PARTICIPANT-SELF",
+              "hostIdentityUrn": "urn:li:fsd_profile:SELF",
+              "name": "Account Owner"
+            },
+            {
+              "entityUrn": "urn:li:fsd_messagingParticipant:PARTICIPANT-EXT",
+              "backendUrn": "urn:li:messagingParticipant:PARTICIPANT-EXT",
+              "hostIdentityUrn": "urn:li:fsd_profile:EXT",
+              "name": "External Person"
+            }
+          ],
+          "messages": {
+            "elements": [
+              {
+                "entityUrn": "urn:li:fsd_messageEvent:EVENT-ONE",
+                "backendUrn": "urn:li:messagingMessage:EVENT-ONE",
+                "backendConversationUrn": "urn:li:msg_conversation:CONV-ONE",
+                "conversation": {
+                  "entityUrn": "urn:li:fsd_messengerConversation:CONV-ONE"
+                },
+                "sender": {
+                  "entityUrn": "urn:li:fsd_messagingParticipant:PARTICIPANT-EXT",
+                  "backendUrn": "urn:li:messagingParticipant:PARTICIPANT-EXT",
+                  "hostIdentityUrn": "urn:li:fsd_profile:EXT",
+                  "name": "External Person"
+                },
+                "actor": {
+                  "entityUrn": "urn:li:fsd_messagingParticipant:PARTICIPANT-EXT",
+                  "hostIdentityUrn": "urn:li:fsd_profile:EXT"
+                },
+                "body": {
+                  "text": "Modern Dash message",
+                  "attributes": []
+                },
+                "deliveredAt": 1760000000000
+              },
+              {
+                "entityUrn": "urn:li:fsd_messageEvent:EVENT-UNSUPPORTED",
+                "backendConversationUrn": "urn:li:msg_conversation:CONV-ONE",
+                "sender": {
+                  "entityUrn": "urn:li:fsd_messagingParticipant:PARTICIPANT-SELF",
+                  "hostIdentityUrn": "urn:li:fsd_profile:SELF"
+                },
+                "deliveredAt": 1760000001000,
+                "renderContent": [{ "unsupportedCard": true }]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
