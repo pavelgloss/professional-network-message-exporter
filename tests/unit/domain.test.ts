@@ -17,6 +17,7 @@ describe('normalization and stable IDs', () => {
     const composite = 'urn:li:msg_conversation:(urn:li:fsd_profile:ABC,2-XYZ)';
     expect(extractUrnId(composite)).toBe('(urn:li:fsd_profile:ABC,2-XYZ)');
     expect(conversationIdFromUrn(composite)).toBe('2-XYZ');
+    expect(conversationIdFromUrn('urn:li:messengerConversation:CONV')).toBe('CONV');
     expect(personIdFromUrn('urn:li:fs_miniProfile:ABC')).toBe('ABC');
     expect(personIdFromUrn(composite)).toBeUndefined();
   });

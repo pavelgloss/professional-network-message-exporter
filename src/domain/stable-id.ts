@@ -30,7 +30,7 @@ export function extractUrnId(value?: string): string | undefined {
 }
 
 const PERSON_TYPES = /^(?:fsd_profile|fs_miniProfile|miniProfile|fsd_messagingParticipant|messagingParticipant|member|person)$/i;
-const CONVERSATION_TYPES = /^(?:msg_conversation|fsd_messengerConversation|messagingThread|messagingConversation|conversation)$/i;
+const CONVERSATION_TYPES = /^(?:msg_conversation|fsd_messengerConversation|messengerConversation|messagingThread|messagingConversation|conversation)$/i;
 const MESSAGE_TYPES = /^(?:msg_message|fsd_messageEvent|messagingMessage|messageEvent|event)$/i;
 
 function typedRouteId(value: string | undefined, expected: RegExp): string | undefined {
@@ -49,6 +49,10 @@ function safeRouteId(value?: string): string | undefined {
 export function personIdFromUrn(value?: string): string | undefined { return typedRouteId(value, PERSON_TYPES); }
 export function conversationIdFromUrn(value?: string): string | undefined { return typedRouteId(value, CONVERSATION_TYPES); }
 export function messageIdFromUrn(value?: string): string | undefined { return typedRouteId(value, MESSAGE_TYPES); }
+export function isConversationUrn(value?: string): boolean {
+  const parsed = parseLinkedInUrn(value);
+  return Boolean(parsed && CONVERSATION_TYPES.test(parsed.entityType));
+}
 
 export function splitComposite(value: string): string[] {
   const body = value.startsWith('(') && value.endsWith(')') ? value.slice(1, -1) : value;

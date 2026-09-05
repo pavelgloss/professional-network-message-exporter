@@ -1,4 +1,4 @@
-import { conversationIdFromUrn } from '../domain/stable-id.js';
+import { conversationIdFromUrn, isConversationUrn } from '../domain/stable-id.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 
 export type ProbeRequestPhase = 'selection' | 'target';
@@ -52,6 +52,34 @@ function parseReferenceValue(value: unknown): string | undefined {
   return normalizedId(normalized);
 }
 
+function collectConversationUrns(value: string, result: ReferenceResult): void {
+  const normalized = repeatedlyDecodeAndNormalize(value);
+  if (normalized === undefined) { result.valid = false; return; }
+  const starts = [...normalized.matchAll(/urn:li:[\w-]+:/giu)];
+  for (const match of starts) {
+    if (match.index === undefined) continue;
+    let end = match.index + match[0].length;
+    if (normalized[end] === '(') {
+      let depth = 0;
+      for (; end < normalized.length; end += 1) {
+        if (normalized[end] === '(') depth += 1;
+        else if (normalized[end] === ')') {
+          depth -= 1;
+          if (depth === 0) { end += 1; break; }
+        }
+      }
+    } else {
+      while (end < normalized.length && !/[\s"'`,;)\]}]/u.test(normalized[end]!)) end += 1;
+    }
+    const urn = normalized.slice(match.index, end);
+    if (!isConversationUrn(urn)) continue;
+    result.sawKey = true;
+    const id = conversationIdFromUrn(urn);
+    if (id) result.ids.add(id);
+    else result.valid = false;
+  }
+}
+
 function mergeReference(result: ReferenceResult, key: string, value: unknown): void {
   result.sawKey = true;
   if (!hasCanonicalIdentityKeySpelling(key)) result.valid = false;
@@ -63,6 +91,7 @@ function mergeReference(result: ReferenceResult, key: string, value: unknown): v
 function walkJsonReferences(value: unknown, result: ReferenceResult, depth = 0, budget = { remaining: 2_000 }): void {
   budget.remaining -= 1;
   if (depth > 12 || budget.remaining < 0) { result.valid = false; return; }
+  if (typeof value === 'string') { collectConversationUrns(value, result); return; }
   if (value === null || typeof value !== 'object') return;
   if (Array.isArray(value)) {
     value.forEach((entry) => walkJsonReferences(entry, result, depth + 1, budget));
@@ -127,6 +156,10 @@ function hasBalancedRestLiStructure(value: string): boolean {
 export function parseProbeConversationReferences(query: Array<{ name: string; value: string }>): ReferenceResult {
   const result: ReferenceResult = { sawKey: false, valid: true, ids: new Set() };
   for (const { name, value } of query) {
+    // Values are evidence-bearing regardless of their field name. Typed
+    // conversation URNs hidden in JSON, arrays or Rest.li tokens cannot bypass
+    // the exact target-alias comparison below.
+    collectConversationUrns(value, result);
     // queryId identifies the persisted operation, not a conversation. It is the
     // only explicitly allowlisted non-conversation identity-like query key.
     if (name !== 'queryId' && isIdentityLikeKey(name)) mergeReference(result, name, value);
@@ -140,6 +173,7 @@ export function parseProbeConversationReferences(query: Array<{ name: string; va
     const fields = restLiFields(value);
     if (!hasBalancedRestLiStructure(value) || !/^\s*\([\s\S]*\)\s*$/.test(value) || !fields.length) result.valid = false;
     for (const field of fields) {
+      collectConversationUrns(field.value, result);
       if (isIdentityLikeKey(field.key)) mergeReference(result, field.key, field.value);
       else if (semanticStem.test(field.key)) result.valid = false;
     }

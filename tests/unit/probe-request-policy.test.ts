@@ -72,4 +72,41 @@ describe('probe phase-specific messaging request policy', () => {
     expect(decide('target', `${origin}/voyager/api/profile?queryId=profileView`)).toMatchObject({ messaging: false, allow: false, kind: 'non-messaging' });
     expect(decide('target', `${origin}/voyager/api/profile?profileId=UNREAD`)).toMatchObject({ messaging: true, allow: false, kind: 'blocked' });
   });
+
+  it('finds typed conversation URNs under every decoded unknown value', () => {
+    const history = (variables: string) => `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
+    const json = (value: unknown) => history(JSON.stringify(value));
+    const foreignSimple = 'urn:li:messagingThread:UNREAD';
+    const foreignComposite = 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,UNREAD)';
+    const blocked = [
+      json({ conversationId: 'READ', payload: foreignSimple }),
+      json({ conversationId: 'READ', payload: foreignComposite }),
+      json({ conversationId: 'READ', nested: { value: 'urn:li:messengerConversation:UNREAD' } }),
+      json({ conversationId: 'READ', refs: ['urn:li:fsd_profile:MEMBER', 'urn:li:fsd_messengerConversation:UNREAD'] }),
+      history(encodeURIComponent(JSON.stringify({ conversationId: 'READ', payload: foreignSimple }))),
+      history(`(conversationId:READ,payload:${foreignSimple})`),
+      history(`(conversationId:READ,outer:(refs:(${foreignSimple})))`),
+    ];
+    for (const url of blocked) {
+      const decision = decide('target', url);
+      expect(decision, url).toMatchObject({ allow: false, kind: 'blocked' });
+      expect(decision.referencedIds.has('UNREAD'), url).toBe(true);
+    }
+
+    const allowed = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread:READ' }),
+      json({ conversationId: 'READ', payload: 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ)' }),
+      history('(conversationId:READ,payload:urn:li:messagingConversation:READ)'),
+      json({
+        conversationId: 'READ',
+        payload: [
+          'urn:li:fsd_profile:UNREAD',
+          'urn:li:messagingParticipant:UNREAD',
+          'urn:li:messagingMessage:UNREAD',
+          'urn:li:mailbox:UNREAD',
+        ],
+      }),
+    ];
+    for (const url of allowed) expect(decide('target', url), url).toMatchObject({ allow: true, kind: 'conversation-history' });
+  });
 });
