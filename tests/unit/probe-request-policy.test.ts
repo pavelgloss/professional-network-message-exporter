@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+import { probeMessagingRequestPolicy } from '../../src/linkedin/probe-request-policy.js';
+
+describe('probe phase-specific messaging request policy', () => {
+  const origin = 'https://www.linkedin.com';
+  const dash = `${origin}/voyager/api/voyagerMessagingGraphQL/graphql`;
+  const target = new Set(['READ']);
+  const decide = (phase: 'selection' | 'target', url: string, method = 'GET') =>
+    probeMessagingRequestPolicy(phase, method, url, origin, target);
+
+  it('allows only the exact Dash conversation-list GET during selection', () => {
+    expect(decide('selection', `${dash}?queryId=messengerConversations`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ cursor: 'next' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('selection', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
+    expect(decide('selection', `${dash}?queryId=messengerConversations&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
+  });
+
+  it('allows target history only when exactly one robustly parsed reference is the target', () => {
+    const allowed = [
+      `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=messengerMessagesByConversation&conversationUrn=${encodeURIComponent('urn:li:messagingThread:READ')}`,
+      `${dash}?queryId=messengerConversationMessages&variables=${encodeURIComponent(JSON.stringify({ input: { threadId: 'READ' } }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent('(conversationUrn:urn:li:messagingThread:READ)')}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', conversationUrn: 'urn:li:messagingThread:READ' }))}`,
+    ];
+    for (const url of allowed) expect(decide('target', url), url).toMatchObject({ allow: true, kind: 'conversation-history' });
+
+    const blocked = [
+      `${dash}?queryId=messengerMessagesByConversation`,
+      `${dash}?queryId=messengerMessagesByConversation&conversationId=OTHER`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', threadId: 'OTHER' }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ ConversationId: 'READ' }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'urn:li:fsd_profile:READ' }))}`,
+      `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationIdentity: 'READ' }))}`,
+    ];
+    for (const url of blocked) expect(decide('target', url), url).toMatchObject({ allow: false, kind: 'blocked' });
+  });
+
+  it('fails closed for REST, legacy, unknown, case and trailing-path lookalikes', () => {
+    const blocked = [
+      `${origin}/voyager/api/messaging/conversations/READ/events`,
+      `${origin}/voyager/api/graphql?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${origin}/voyager/api/voyagerMessagingGraphQL/GraphQL?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}/?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}/extra?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=MessengerMessagesByConversation&conversationId=READ`,
+      `${dash}?QueryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=unknownMessagingRead&conversationId=READ`,
+      `${dash}?queryId=messengerMessagesByConversation&conversationId=READ&cursor=opaque`,
+      `${origin}/messaging/thread/READ/`,
+    ];
+    for (const url of blocked) expect(decide('target', url), url).toMatchObject({ messaging: true, allow: false, kind: 'blocked' });
+    expect(decide('target', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`, 'POST')).toMatchObject({ allow: false });
+    expect(decide('target', `${origin}/feed/`)).toMatchObject({ messaging: false, allow: false, kind: 'non-messaging' });
+  });
+});
