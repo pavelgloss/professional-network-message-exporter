@@ -41,4 +41,22 @@ describe('WebSocket request guard', () => {
     expect(frames).toBe(0);
     expect(manifest.counts.blockedWebSockets).toBe(1);
   });
+
+  it('stores only a redacted WebSocket path shape', async () => {
+    const browser = await chromium.launch({ headless: true });
+    cleanup.push(() => browser.close());
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const manifest = createManifest();
+    const output: string[] = [];
+    const logger = createLogger({ write: (value) => { output.push(String(value)); return true; } });
+    await installRequestGuard(context, manifest, logger);
+    const page = await context.newPage();
+    await page.setContent('<!doctype html><title>ws guard redaction</title>');
+    await page.evaluate(() => new WebSocket('ws://127.0.0.1:9/thread/PRIVATE-CONVERSATION-12345?token=CANARY'));
+    await page.waitForTimeout(200);
+
+    expect(output.join('')).not.toContain('PRIVATE-CONVERSATION-12345');
+    expect(output.join('')).not.toContain('CANARY');
+    expect(output.join('')).toContain('/thread/:opaque');
+  });
 });

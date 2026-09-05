@@ -1,5 +1,5 @@
 import type { BrowserContext, Route } from 'playwright';
-import type { DiagnosticsManifest } from '../io/diagnostics.js';
+import { redactedPathShape, type DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
 
 export type PolicyDecision = { allow: boolean; reason: string; origin?: string; pathname?: string };
@@ -23,7 +23,7 @@ export async function installRequestGuard(context: BrowserContext, manifest: Dia
     manifest.counts.blockedWebSockets = (manifest.counts.blockedWebSockets ?? 0) + 1;
     let origin = 'invalid';
     let pathname = '/';
-    try { const url = new URL(webSocket.url()); origin = url.origin; pathname = url.pathname; } catch { /* redacted defaults */ }
+    try { const url = new URL(webSocket.url()); origin = url.origin; pathname = redactedPathShape(url.pathname); } catch { /* redacted defaults */ }
     logger.warn('websocket-blocked', { origin, pathname });
     await webSocket.close({ code: 1008, reason: 'Read-only export blocks WebSockets' });
   });
@@ -33,7 +33,7 @@ export async function installRequestGuard(context: BrowserContext, manifest: Dia
     const key = decision.allow ? 'allowedRequests' : 'blockedRequests';
     manifest.counts[key] = (manifest.counts[key] ?? 0) + 1;
     if (!decision.allow) {
-      const entry = { method: request.method(), origin: decision.origin ?? 'invalid', pathname: decision.pathname ?? '/', reason: decision.reason };
+      const entry = { method: request.method(), origin: decision.origin ?? 'invalid', pathname: redactedPathShape(decision.pathname ?? '/'), reason: decision.reason };
       if (manifest.blockedRequests.length < 200) manifest.blockedRequests.push(entry);
       logger.warn('request-blocked', entry);
       await route.abort('blockedbyclient');
