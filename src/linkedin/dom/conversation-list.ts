@@ -51,7 +51,10 @@ export async function collectConversationList(page: Page, limit: number, options
   let maxObservedRows = 0;
   let maxObservedHeight = 0;
   const maxIterations = options.maxIterations ?? 80;
-  const stagnationLimit = options.stagnationLimit ?? 4;
+  // Dash pagination may take several seconds after its sentinel reaches the
+  // viewport. Keep the list at the bottom long enough for the read-only GET page
+  // to arrive before declaring a real end.
+  const stagnationLimit = options.stagnationLimit ?? 8;
   let reason: ConversationListResult['scrollReason'] = 'timeout';
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
     const before = accumulated.size;
@@ -65,7 +68,7 @@ export async function collectConversationList(page: Page, limit: number, options
     if (accumulated.size >= limit || observedRows >= limit) { reason = 'limit'; break; }
     if (Date.now() - startedAt >= (options.timeoutMs ?? 90_000)) { reason = 'timeout'; break; }
     const atBottom = state.top + state.client >= state.height - 2;
-    if (atBottom && stagnant >= 2) { reason = 'end'; break; }
+    if (atBottom && stagnant >= stagnationLimit) { reason = 'end'; break; }
     if (stagnant >= stagnationLimit) { reason = 'stagnation'; break; }
     await container.evaluate((element) => { element.scrollTop = Math.min(element.scrollHeight, element.scrollTop + Math.max(element.clientHeight * 0.8, 200)); });
     await page.waitForTimeout(options.delayMs ?? 600);
