@@ -5,6 +5,7 @@ import { assertAllowedReadUrl } from './read-client.js';
 
 type JsonRecord = Record<string, unknown>;
 type IncludedIndex = { records: Map<string, JsonRecord>; ambiguous: Set<string> };
+export type NetworkParseOptions = { observedMethod?: string };
 export type ParsedNetworkData = {
   conversations: RawConversation[];
   account?: { id?: string; entityUrn?: string; name?: string; profileUrl?: string };
@@ -139,7 +140,7 @@ function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
-function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, wrappedMessageObjects?: WeakSet<object>): RawConversation | undefined {
+function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, wrappedMessageObjects?: WeakSet<object>, allowReadEvidence = false): RawConversation | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
@@ -165,7 +166,7 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
   const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));
   const evidence = historyComplete || parserMisses > 0 ? JSON.stringify([{ resource: `conversation:${id ?? entityUrn ?? 'unknown'}`, page: sourcePage, start: 0, count: messageValues.length, total: messageValues.length, end: historyComplete, valid: parserMisses === 0 }]) : undefined;
-  const explicitRead = typeof obj.read === 'boolean' ? obj.read : undefined;
+  const explicitRead = allowReadEvidence && typeof obj.read === 'boolean' ? obj.read : undefined;
   const hasSourceMetadata = explicitRead !== undefined || historyComplete || parserMisses > 0;
   return {
     ...(id ? { id } : {}),
@@ -187,13 +188,33 @@ function walk(value: unknown, visit: (obj: JsonRecord) => void, seen = new WeakS
   Object.values(obj).forEach((item) => walk(item, visit, seen));
 }
 
-export function parseNetworkPayload(payload: unknown, sourceUrl = ''): ParsedNetworkData {
+function trustedObservedConversationObjects(payload: unknown, sourceUrl: string, options: NetworkParseOptions): WeakSet<object> {
+  const trusted = new WeakSet<object>();
+  if (options.observedMethod?.toUpperCase() !== 'GET') return trusted;
+  try {
+    const url = assertAllowedReadUrl(sourceUrl);
+    if (url.pathname !== '/voyager/api/voyagerMessagingGraphQL/graphql') return trusted;
+    const operation = url.searchParams.get('queryId');
+    if (!operation || !/^messengerConversations(?:[._-][A-Za-z0-9_-]+)?$/.test(operation)) return trusted;
+    const root = record(payload) ? payload : undefined;
+    const data = root && record(root.data) ? root.data : undefined;
+    const collection = data && record(data.messengerConversations)
+      ? data.messengerConversations
+      : root && record(root.messengerConversations) ? root.messengerConversations : undefined;
+    if (!collection) return trusted;
+    for (const value of childrenFrom(collection, 'elements', 'nodes', 'edges')) if (record(value)) trusted.add(value);
+    return trusted;
+  } catch { return trusted; }
+}
+
+export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: NetworkParseOptions = {}): ParsedNetworkData {
   const sourcePage = sha256Id('network-page', [sourceUrl || 'inline']);
   const objects: JsonRecord[] = [];
   walk(payload, (obj) => objects.push(obj));
   const index = buildIncludedIndex(payload);
   const wrappedMessageObjects = new WeakSet<object>();
-  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage, wrappedMessageObjects)).filter((c): c is RawConversation => Boolean(c));
+  const readEvidenceObjects = trustedObservedConversationObjects(payload, sourceUrl, options);
+  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage, wrappedMessageObjects, readEvidenceObjects.has(obj))).filter((c): c is RawConversation => Boolean(c));
   const wrappedMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
   const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value, sourceOrder) => {
     const resolution = resolveIncludedReference(value, index);

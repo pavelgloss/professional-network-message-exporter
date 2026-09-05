@@ -96,7 +96,9 @@ export function attachNetworkCapture(page: Page, manifest: DiagnosticsManifest, 
       return;
     }
     try {
-      const parsed = parseNetworkPayload(payload, response.url());
+      let observedMethod: string | undefined;
+      try { observedMethod = response.request().method(); } catch { /* unavailable synthetic response */ }
+      const parsed = parseNetworkPayload(payload, response.url(), observedMethod ? { observedMethod } : {});
       conversations.push(...parsed.conversations);
       if (parsed.account) accountCandidates.push(parsed.account);
       parsed.paginationUrls.forEach((href) => paginationUrls.add(href));
