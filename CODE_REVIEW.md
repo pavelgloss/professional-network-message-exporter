@@ -829,3 +829,156 @@ již přečteným vláknem; běžný export musí dál zůstat network-only.
 - `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
   LinkedIn, credentials ani existující session; implementační kód nebyl změněn a
   review nebylo commitováno.
+
+---
+
+## Re-review HEAD `4a47be0` (`770df43..4a47be0`)
+
+### Verdikt
+
+**Critical nálezy: žádné. Zůstávají dva High a dva Medium nálezy.** RT-02, RT-04
+a RT-05 jsou v požadovaných reprodukcích uzavřené. RT-01 je opravený pro běžné,
+single/double/deep percent-encoding, ASCII control, malformed encoding a Unicode
+compatibility znaky, nikoliv však pro C1/Cf znaky. Allowlist RT-03 správně rediguje
+alphabetický opaque path/query/JSON key, ale diagnostická hranice stále propouští
+opaque hostname a thread ID z obecné chybové zprávy.
+
+**NO-GO pro reálný `npm.cmd run probe:read-thread`.** Před opt-in během musí být
+uzavřeny R2-01 a R2-02: guard musí fail-closed odmítat C1/Cf URL a probe musí před
+první stránkou vynutit skutečný main-frame navigation budget, ne pouze počet volání
+helperu. Běžný network-only export nesmí být nahrazen probe režimem.
+
+### R2-01 / RT-01 — HIGH — C1 a Unicode format znaky stále rozdělí zakázaný token
+
+- **Soubor/řádky:** `src/domain/url-safety.ts:8-25`,
+  `src/browser/request-guard.ts:9-24`, `src/linkedin/network/read-client.ts:9-17`
+- **Problém:** canonicalizace po každém decode odmítá pouze ASCII C0 a DEL
+  (`U+0000..001F`, `U+007F`). C1 control znaky a Unicode category `Cf` zůstávají v
+  řetězci, takže blacklist neuvidí zakázané slovo rozdělené takovým znakem.
+- **Nezávislá reprodukce:** browser `requestPolicy` i přímý
+  `assertAllowedReadUrl` povolily query tokeny `muta%C2%85tion` (C1 NEL),
+  `muta%E2%80%8Btion` (zero-width space), `muta%C2%ADtion` (soft hyphen) a
+  `muta%E2%80%AEtion` (bidi override). Naproti tomu single, double, osm i devět
+  encoding vrstev, `%00`, `%09`, `%ZZ`, encoded query separator, fullwidth `ｍ` a
+  mathematical-bold `𝐦` byly správně blokované v obou guardech.
+- **Dopad:** není prokázáno, že současný LinkedIn backend tyto znaky před dispatch
+  normalizuje nebo ignoruje. Pro absolutní no-mutation invariant je však URL s
+  control/format znakem nejednoznačný vstup a nesmí fail-open projít až k serveru;
+  stejná mezera platí pro pagination a probe request classification.
+- **Doporučení:** před allowlist/blacklist kontrolou odmítnout minimálně celé Unicode
+  kategorie `Cc` a `Cf` (včetně bidi/zero-width), případně také surrogate a
+  line/paragraph separators. Zakázané operation/path tokeny ověřovat nad striktní
+  ASCII gramatikou; nové testy musí běžet přes `requestPolicy`,
+  `assertAllowedReadUrl`, pagination i `observedHistoryQueryTemplate`.
+
+### R2-02 — HIGH — Jeden `goto` neomezuje probe na jeden skutečně otevřený thread
+
+- **Soubor/řádky:** `src/linkedin/probe.ts:58-63`,
+  `src/linkedin/probe.ts:65-91`, `src/browser/request-guard.ts:31-50`
+- **Problém:** unit helper volá `page.goto` právě jednou, ale probe nemá žádný
+  main-frame navigation/redirect gate. Už výběrové `page.goto('/messaging/')` může
+  být HTTP nebo client-side přesměrováno na libovolný thread ještě před ověřením
+  `read===true`; následný candidate `goto` může být přesměrován na jiný thread.
+  Oba cíle jsou bezpečně vypadající GET a obecný request guard je dovolí. Manifest
+  přesto bez měření nastaví `probeThreadNavigations = 1`.
+- **Nezávislá reprodukce:** lokální Chromium server dostal při jediném
+  `page.goto('/messaging/')` dva requesty, `/messaging/` a po 302
+  `/messaging/thread/UNREAD/`; finální page URL byl druhý thread. Stejný redirect
+  mechanismus Playwright používá pro LinkedIn a současná policy druhý GET thread URL
+  neblokuje. Reprodukce nepoužila LinkedIn ani session.
+- **Dopad:** změna routingu nebo redirect serveru může otevřít neověřený unread
+  thread před výběrem a poté ještě jeden explicitní thread. Tím se poruší hlavní
+  omezení probe a může se změnit read/unread stav účtu.
+- **Doporučení:** ještě před první page instalovat probe-specific main-frame state
+  machine. Ve selection fázi musí blokovat jakýkoli `/messaging/thread/...` target;
+  po výběru smí jednorázově povolit pouze přesně canonical URL/ID ověřeného
+  `read===true` kandidáta a odmítnout jiný thread v celé redirect chain i následné
+  navigaci. Počet v manifestu odvozovat z reálně povolených main-frame requests.
+  Přidat lokální test redirectu z listu i z candidate URL a client-side navigation.
+
+### R2-03 — MEDIUM — Kandidátův `network-explicit` důkaz není svázaný s read endpointem
+
+- **Soubor/řádky:** `src/linkedin/network/capture.ts:10`,
+  `src/linkedin/network/capture.ts:39-45`, `src/linkedin/network/capture.ts:99-101`,
+  `src/linkedin/network/response-parser.ts:163-177`, `src/linkedin/probe.ts:16-37`
+- **Problém:** capture považuje za relevantní velmi široký path substring na
+  libovolném `*.linkedin.com` a parser nastaví `readEvidence='network-explicit'`
+  jen podle boolean pole `obj.read`. Zdrojový origin/path/method se do kandidáta
+  nepřenese a `selectSafeProbeConversation` jej proto nemůže validovat proti exact
+  read allowlistu ani zjistit konfliktní novější `read=false` reprezentaci.
+- **Nezávislá reprodukce:** stejný syntetický conversation-shaped JSON s
+  `read:true` a messagingThread URN byl parsován a vybrán jako bezpečný kandidát ze
+  source `https://tracking.linkedin.com/random/conversation.json` i
+  `https://www.linkedin.com/unrelated/conversation.json`; oba zdroje leží mimo
+  `isAllowedLinkedInReadPath`.
+- **Dopad:** field se sice skutečně získal z network response a `unreadCount=0` se
+  správně neinferuje, ale jeho endpointová provenance a aktuálnost nejsou
+  prokázané. U změněné/kolizní response shape může probe otevřít thread na základě
+  jiného významu pole `read`.
+- **Doporučení:** pro probe sbírat kandidáty jen z GET responses, jejichž exact
+  origin/canonical path/query projde read policy a je klasifikován jako conversation
+  list query. Uchovat ověřený source kind/evidence; po coalescingu odmítnout kandidáta
+  s libovolným konfliktním `read=false` nebo bez jednoznačného nejnovějšího stavu.
+
+### R2-04 / RT-03 — MEDIUM — Opaque origin a navigation error mohou stále vypsat ID
+
+- **Soubor/řádky:** `src/browser/request-guard.ts:13-24`,
+  `src/browser/request-guard.ts:40-47`, `src/logger.ts:4-13`,
+  `src/cli.ts:29-35`, `src/linkedin/probe.ts:58-63`
+- **Problém:** nový path/query/JSON allowlist funguje, ale blocked request ukládá
+  `url.origin` beze změny. Obecná logger redakce z URL odstraní query, nikoliv path;
+  Playwright `page.goto` chyba běžně obsahuje celý candidate thread URL.
+- **Nezávislá reprodukce:** blocked POST na syntetický
+  `https://pavelprivateconversation.example/random/pavelprivateconversation` by do
+  manifestu uložil origin `https://pavelprivateconversation.example` (path byl
+  správně `/:opaque/:opaque`). `redact({message: 'page.goto: ...
+  https://www.linkedin.com/messaging/thread/pavelPrivateConversation/'})` zachoval
+  celý thread ID v log message.
+- **Dopad:** ignorovaný lokální manifest nebo konzolový/logovaný probe failure může
+  obsahovat alfabetický opaque identifikátor. Samotné `probeHistoryQueries` tímto
+  netrpí: vlastní save-manifest canary neobsahoval path ID ani query value.
+- **Doporučení:** v request diagnostics ukládat pouze allowlisted origin family
+  (`https://www.linkedin.com`, `https://*.linkedin.com`, `external`) a v loggeru
+  redigovat URL pathname stejným contextual path redaktorem. Probe navigation chybu
+  převést na generický `AppError` bez raw Playwright call logu.
+
+### Uzavřené RT reprodukce a pozitivní ověření
+
+- **RT-02 uzavřeno:** `listCoverageIsComplete(20, 100, 100) === false` a výsledné
+  `coverageIsPartial(...) === true`. Inertní collector pro 40 řádků vrací nula
+  vymyšlených conversations, `observedRows=40`, `complete=false`; pouze scrolluje.
+- **RT-04 uzavřeno pro požadovanou ambiguity reprodukci:** jedna conversation a
+  dva různé DOM names se stejným preview daly `enriched=0`, žádné přiřazené jméno a
+  ambiguity callback. Preview je kontrolováno globálně na obou stranách.
+- **RT-05 uzavřeno:** relative modern Dash href na exact
+  `/voyager/api/voyagerMessagingGraphQL/graphql` vytvoří jednu page URL; mutation
+  href nevytvoří žádnou. Předání unsafe pagination URL do followeru dalo
+  `PAGINATION_URL_BLOCKED` a nula `request.get` volání.
+- **RT-03 path/key část uzavřena:** `/random/pavelPrivateConversation` se uloží jako
+  `/:opaque/:opaque`; stejný query/JSON key jako `<opaque-key>`. Primitive values se
+  do structural signature neukládají. R2-04 popisuje zbývající origin/log mezeru.
+- `assertAllowedReadUrl` blokuje cizí host, userinfo a suffix moderního exact path.
+  `readJson` s `maxRedirects:0` nefollowoval safe ani foreign 302; fake request byl
+  zavolán právě jednou a skončil `READ_POLICY_BLOCK`.
+- Probe je default-off, nelze jej kombinovat s `--diagnostics-content`, CLI větev se
+  vrací před exporterem a `src/linkedin/probe.ts` nepoužívá DOM thread extraction
+  ani export store. Jediná DOM inspekce je auth-state detekce; response obsah se pro
+  selection parsuje pouze v paměti a neukládá se. POST/WebSocket guard a blokace
+  service workeru se instalují v export contextu před `newPage`.
+- Synthetic observed-history template i uložený manifest obsahovaly jen `GET`,
+  konstantní LinkedIn origin, redigovaný path shape a allowlisted query parameter
+  names; žádný canary path ID ani query value. Helper candidate `goto` byl bez
+  retry/loop zavolán jednou; R2-02 vysvětluje chybějící runtime redirect budget.
+- Fresh missing-state `npm.cmd run probe:read-thread -- --state-file <missing>
+  --output <temp>` skončil `AUTH_REQUIRED`, exit 3, bez main, `.partial` a
+  diagnostics. Existující `.auth` ani session nebyly čteny.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 12 test files / 77 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- `.auth/`, exporty a diagnostics jsou ignorované. V tracked souborech nebyl nalezen
+  runtime secret/export artifact ani high-entropy LinkedIn secret pattern.
+- `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
+  credentials ani existující session; implementační kód nebyl změněn a review
+  nebylo commitováno.
