@@ -11,6 +11,7 @@ export type ProbeNavigationSnapshot = {
   crossThreadRequestsBlocked: number;
   selectionSubrequestsBlocked: number;
   selectionHistoryAttemptsBlocked: number;
+  selectionPopupAttemptsBlocked: number;
   hardSafetyViolations: number;
   selectionPreflightGets: number;
   targetPreflightGets: number;
@@ -51,13 +52,23 @@ export function explicitProbeGraphqlConversationIds(method: string, rawUrl: stri
   return references.valid ? references.ids : new Set();
 }
 
-type ProbePageState = { href: string; historyBlocked: boolean; guardReady: boolean };
+type ProbePageState = {
+  href: string;
+  historyBlocked: boolean;
+  historyAttemptsBlocked: number;
+  popupAttemptsBlocked: number;
+  hardClientViolation: boolean;
+  guardReady: boolean;
+};
 
 async function probePageState(page: Page): Promise<ProbePageState | undefined> {
   try {
     return await page.evaluate(() => ({
       href: location.href,
       historyBlocked: Boolean((globalThis as typeof globalThis & { __linkedinReaderProbeHistoryBlocked?: boolean }).__linkedinReaderProbeHistoryBlocked),
+      historyAttemptsBlocked: Number((globalThis as typeof globalThis & { __linkedinReaderProbeHistoryAttemptsBlocked?: number }).__linkedinReaderProbeHistoryAttemptsBlocked ?? 0),
+      popupAttemptsBlocked: Number((globalThis as typeof globalThis & { __linkedinReaderProbePopupAttemptsBlocked?: number }).__linkedinReaderProbePopupAttemptsBlocked ?? 0),
+      hardClientViolation: Boolean((globalThis as typeof globalThis & { __linkedinReaderProbeHardClientViolation?: boolean }).__linkedinReaderProbeHardClientViolation),
       guardReady: Boolean((globalThis as typeof globalThis & { __linkedinReaderProbeGuardReady?: boolean }).__linkedinReaderProbeGuardReady),
     }));
   } catch { return undefined; }
@@ -168,6 +179,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     crossThreadRequestsBlocked: 0,
     selectionSubrequestsBlocked: 0,
     selectionHistoryAttemptsBlocked: 0,
+    selectionPopupAttemptsBlocked: 0,
     hardSafetyViolations: 0,
     selectionPreflightGets: 1,
     targetPreflightGets: 0,
@@ -198,8 +210,9 @@ export async function installProbeNavigationGate(context: BrowserContext, select
 
   await context.exposeBinding('__linkedinReaderProbeReportHistoryViolation', ({ page: sourcePage }, kind: unknown) => {
     if (sourcePage !== selectionPage && sourcePage !== targetPage) return;
-    if (kind === 'history' && sourcePage === selectionPage && phase === 'selection') {
-      counts.selectionHistoryAttemptsBlocked += 1;
+    if (sourcePage === selectionPage && (kind === 'history' || kind === 'popup')) {
+      if (kind === 'history') counts.selectionHistoryAttemptsBlocked += 1;
+      else counts.selectionPopupAttemptsBlocked += 1;
       return;
     }
     historyViolationReported = true;
@@ -209,10 +222,16 @@ export async function installProbeNavigationGate(context: BrowserContext, select
   await context.addInitScript(() => {
     const state = globalThis as typeof globalThis & {
       __linkedinReaderProbeHistoryBlocked?: boolean;
+      __linkedinReaderProbeHistoryAttemptsBlocked?: number;
+      __linkedinReaderProbePopupAttemptsBlocked?: number;
+      __linkedinReaderProbeHardClientViolation?: boolean;
       __linkedinReaderProbeGuardReady?: boolean;
       __linkedinReaderProbeReportHistoryViolation?: (kind: 'history' | 'same-document' | 'popup') => Promise<void>;
     };
     let blocked = false;
+    let historyAttemptsBlocked = 0;
+    let popupAttemptsBlocked = 0;
+    let hardClientViolation = false;
     const reportViolation = state.__linkedinReaderProbeReportHistoryViolation;
     if (reportViolation) {
       Object.defineProperty(state, '__linkedinReaderProbeReportHistoryViolation', {
@@ -223,9 +242,15 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     }
     const rememberViolation = (kind: 'history' | 'same-document' | 'popup') => {
       blocked = true;
+      if (kind === 'history') historyAttemptsBlocked += 1;
+      else if (kind === 'popup') popupAttemptsBlocked += 1;
+      else hardClientViolation = true;
       void reportViolation?.(kind).catch(() => undefined);
     };
     Object.defineProperty(state, '__linkedinReaderProbeHistoryBlocked', { configurable: false, get: () => blocked, set: () => undefined });
+    Object.defineProperty(state, '__linkedinReaderProbeHistoryAttemptsBlocked', { configurable: false, get: () => historyAttemptsBlocked, set: () => undefined });
+    Object.defineProperty(state, '__linkedinReaderProbePopupAttemptsBlocked', { configurable: false, get: () => popupAttemptsBlocked, set: () => undefined });
+    Object.defineProperty(state, '__linkedinReaderProbeHardClientViolation', { configurable: false, get: () => hardClientViolation, set: () => undefined });
     const patch = (name: 'pushState' | 'replaceState') => {
       const original = History.prototype[name];
       const guarded = (function (this: History, ...args: Parameters<History['pushState']>) {
@@ -383,10 +408,15 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     if (hardViolated) return false;
     const state = await probePageState(candidatePage);
     // This second hard-state read closes races while page.evaluate was pending.
-    const toleratedSelectionHistory = candidatePage === selectionPage && phase === 'selection'
-      && counts.selectionHistoryAttemptsBlocked > 0;
+    if (candidatePage === selectionPage && state) {
+      counts.selectionHistoryAttemptsBlocked = Math.max(counts.selectionHistoryAttemptsBlocked, state.historyAttemptsBlocked);
+      counts.selectionPopupAttemptsBlocked = Math.max(counts.selectionPopupAttemptsBlocked, state.popupAttemptsBlocked);
+    }
+    const toleratedSelectionClientAttempt = candidatePage === selectionPage && phase === 'selection'
+      && Boolean(state && !state.hardClientViolation
+        && state.historyAttemptsBlocked + state.popupAttemptsBlocked > 0);
     return !hardViolated && Boolean(state?.guardReady && exactCanonicalLocation(state.href) === expected
-      && (!state.historyBlocked || toleratedSelectionHistory));
+      && !state.hardClientViolation && (!state.historyBlocked || toleratedSelectionClientAttempt));
   };
 
   return {

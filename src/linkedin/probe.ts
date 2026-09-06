@@ -149,6 +149,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeCrossThreadRequestsBlocked = snapshot.crossThreadRequestsBlocked;
       manifest.counts.probeSelectionSubrequestsBlocked = snapshot.selectionSubrequestsBlocked;
       manifest.counts.probeSelectionHistoryAttemptsBlocked = snapshot.selectionHistoryAttemptsBlocked;
+      manifest.counts.probeSelectionPopupAttemptsBlocked = snapshot.selectionPopupAttemptsBlocked;
       manifest.counts.probeHardSafetyViolations = snapshot.hardSafetyViolations;
       manifest.counts.probeSelectionPreflightGets = snapshot.selectionPreflightGets;
       manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
