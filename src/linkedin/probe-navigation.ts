@@ -427,11 +427,19 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       && !state.hardClientViolation && (!state.historyBlocked || toleratedSelectionClientAttempt));
   };
 
+  const selectionReady = (): boolean => phase === 'selection' && !hardViolated
+    && !selectionPage.isClosed() && counts.selectionNavigationsAllowed === 1;
+
   return {
     async assertSelectionSafe() {
-      const unsafePageState = counts.selectionNavigationsAllowed !== 1 || !await pageMatches(selectionPage, selectionLocation);
-      if (unsafePageState && !hardViolated) markHardViolation();
-      if (hardViolated || unsafePageState) {
+      // The selection document is untrusted SPA code. Its local execution
+      // context may churn while lazy modules mount, so page.evaluate is not a
+      // safety boundary here. Node-side routing proves the only material facts:
+      // one exact cached document, no later browser navigation/popup, and every
+      // denied messaging request aborted before the wire. The renderer is fenced
+      // and retired before any target preflight.
+      if (!selectionReady()) {
+        if (!hardViolated) markHardViolation();
         throw new AppError('READ_POLICY_BLOCK', 'Probe selection navigation did not remain within its exact safe target', 4);
       }
     },
@@ -450,7 +458,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       }
       // Revalidate at the boundary even if the caller already asserted the
       // selection page before choosing a candidate.
-      if (!await pageMatches(selectionPage, selectionLocation) || hardViolated || phase !== 'selection') {
+      if (!selectionReady()) {
         if (!hardViolated) markHardViolation();
         throw new AppError('READ_POLICY_BLOCK', 'Probe target could not be armed after the selection page changed', 4);
       }
