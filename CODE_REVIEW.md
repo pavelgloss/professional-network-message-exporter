@@ -1501,3 +1501,85 @@ Běžný network-only export bez probe/thread-open režimu tímto nálezem dotč
 - `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
   reálná data, credentials ani existující session; implementační kód nebyl změněn
   a nic nebylo commitováno.
+
+---
+
+## Finální security re-review HEAD `2142680`
+
+### Verdikt
+
+**Critical: 0 / High: 0 / Medium: 0.** R7-01 je v požadovaném i rozšířeném
+rozsahu uzavřený. Nová klasifikace nejprve rozpozná conversation-family entity a
+teprve potom vyžaduje canonical druhou dvojtečku; malformed nebo budoucí typ proto
+již nemůže zmizet z target evidence.
+
+**GO pro právě jeden skutečný `--probe-read-thread` po výslovném opt-in uživatele.**
+Probe musí zůstat omezený na jednu network-confirmed `read===true` konverzaci a
+nesmí se kombinovat s exportem ani DOM thread fallbackem. Běžný network-only export
+bez `--allow-thread-open` zůstává samostatný bezpečný režim.
+
+### R7-01 — uzavřeno
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:45-93`,
+  `src/linkedin/probe-request-policy.ts:175-238`
+- Nezávislá policy matice zablokovala missing-second-colon varianty na konci i s
+  `/UNREAD`, `=UNREAD`, `?UNREAD` a `#UNREAD`, jejich case/future podoby,
+  single/double encoded hodnoty, nested JSON i jednoduchou/nested Rest.li
+  reprezentaci. Smíšený target+foreign a více URN v jednom scalaru zůstaly
+  fail-closed; `referencedIds` u canonical foreign variant obsahovalo `UNREAD`.
+- Samostatný syntetický Chromium/server probe ověřil všech 12 požadovaných
+  malformed/encoded variant s **server hit `0`**. Šest supported foreign typů mělo
+  také hit `0`; `crossThreadRequestsBlocked` byl přesně `18` a následná safe
+  assertion správně selhala. Stejný běh poslal všech šest supported target typů
+  (`messagingThread`, composite `msg_conversation`,
+  `fsd_messengerConversation`, `messengerConversation`,
+  `messagingConversation`, `conversation`) právě jednou a benign nonconversation
+  payload právě jednou.
+- Doplňkový fuzz měl 261 delimiter/quote/wrapper, entity case/suffix, NFKC Unicode,
+  control/format/U+FFFD, glued prefix/suffix, unbalanced/composite, mixed-URN,
+  malformed-percent a 1–10× encoded kombinací; žádná praktická foreign nebo
+  ambiguous conversation varianta nebyla povolena. Známé profile/person/
+  participant/message/event/mailbox/inbox/member entity se správně nepřidaly do
+  conversation references. Čistě confusable ne-ASCII entity, kterou LinkedIn
+  backend nerozpozná jako ASCII URN namespace, nepředstavuje praktický bypass.
+
+### Regresní bezpečnostní invarianty
+
+- Exact Dash GraphQL path a operation allowlist zůstává default-deny pro REST,
+  legacy/current lookalike, case/trailing/custom namespace i mutation názvy.
+  Allowed GET redirect má podle integračních testů pouze source request; redirect
+  target se neodešle.
+- Selection i target document jsou načtené jednorázovým disposable request
+  contextem s `maxRedirects: 0` a browser navigace dostane jen in-memory cached
+  odpověď. Response `Set-Cookie`, `Location` a opaque headers se nepřenášejí do
+  browser jaru. Target lze armovat pouze ze shodných stabilních ID/URN/route aliasů
+  a s explicitním network `read===true` evidence; browser target navigation je
+  povolena přesně jednou.
+- Thread URL jako image/iframe/subframe/prefetch/worker/direct fetch, cross-thread
+  GraphQL, popup a history/location redirect zůstávají blokované před sítí.
+  Persistent service worker se do ephemeral export/probe contextu nepřenáší;
+  globální guard blokuje POST i WebSocket před serverem.
+- Probe větev nevolá export store, nečte thread DOM a nevytváří main ani `.partial`.
+  Fresh `npm.cmd run probe:read-thread -- --state-file <missing> --output <unique>`
+  skončil `AUTH_REQUIRED`, exit `3`, bez vytvoření state, output, partial,
+  diagnostics nebo parent adresáře. Nebyl použit žádný existující storage state.
+
+### Testy, závislosti a Git
+
+- `npm.cmd run check`: **PASS** — typecheck, **15 test files / 121 tests**, build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- `.auth/`, main/partial exporty a diagnostics jsou podle `git check-ignore`
+  ignorované. Tracked secret scan nenašel credential value, private key ani runtime
+  session/export artifact; výskyty názvů `JSESSIONID`/`li_at` jsou pouze ochranný
+  aplikační kód a zadání/plán.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review nepoužilo
+  LinkedIn, reálná data, credentials ani session; implementace nebyla změněna a
+  nic nebylo commitováno.
+
+### Residual risk (Low)
+
+LinkedIn používá soukromé a proměnlivé endpointy. Pokud se skutečný read-only
+history request od známého exact namespace/operation/identity tvaru odchýlí, gate
+jej má zablokovat a probe skončí bez template. To může vyžadovat další synteticky
+ověřenou allowlist úpravu, ale není to důvod rozšiřovat nynější oprávnění ani
+opakovat thread navigation.
