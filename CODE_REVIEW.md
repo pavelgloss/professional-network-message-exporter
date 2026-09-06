@@ -1583,3 +1583,24 @@ history request od známého exact namespace/operation/identity tvaru odchýlí,
 jej má zablokovat a probe skončí bez template. To může vyžadovat další synteticky
 ověřenou allowlist úpravu, ale není to důvod rozšiřovat nynější oprávnění ani
 opakovat thread navigation.
+
+---
+
+## Redigované runtime zjištění po schváleném opt-in probe (2026-09-06)
+
+První uživatelem výslovně schválený authenticated probe skončil bezpečně s
+`READ_POLICY_BLOCK` ještě před targetem. Redigovaný manifest zaznamenal jednu
+selection navigation a jeden selection preflight, nula target navigation/preflight,
+pět před sítí zablokovaných messaging subrequestů, nula navigation/popup pokusů a
+24 globálním read-only guardem zablokovaných POSTů. Existující partial export se
+nezměnil; žádné vlákno nebylo otevřeno.
+
+Příčinou byla příliš přísná agregace: každý bezpečně abortovaný selection
+subrequest nastavoval stejný fatální příznak jako navigační únik. Navazující oprava
+odděluje počítané `selectionSubrequestsBlocked` od `hardSafetyViolations`. Pouze
+ne-navigační denied messaging/thread subrequest v selection fázi je tolerovaný po
+prokazatelném abortu; iframe/subframe/main navigation, popup, History API,
+preflight/redirect selhání a každá odchylka po armování targetu zůstávají fatální.
+Kandidát se nadále smí vytvořit jen z browseru předané exact conversation-list GET
+odpovědi s explicitním network `read === true`; odmítnutá nebo redirect odpověď se
+do page/network capture vůbec nepředá.

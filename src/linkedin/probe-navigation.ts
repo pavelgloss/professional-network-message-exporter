@@ -9,6 +9,8 @@ export type ProbeNavigationSnapshot = {
   navigationAttemptsBlocked: number;
   popupPagesBlocked: number;
   crossThreadRequestsBlocked: number;
+  selectionSubrequestsBlocked: number;
+  hardSafetyViolations: number;
   selectionPreflightGets: number;
   targetPreflightGets: number;
 };
@@ -122,15 +124,22 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
   let targetLocation: string | undefined;
   let targetIds = new Set<string>();
   let targetDocument: CachedDocument | undefined;
-  let violated = false;
+  let hardViolated = false;
   const counts: ProbeNavigationSnapshot = {
     selectionNavigationsAllowed: 0,
     targetNavigationsAllowed: 0,
     navigationAttemptsBlocked: 0,
     popupPagesBlocked: 0,
     crossThreadRequestsBlocked: 0,
+    selectionSubrequestsBlocked: 0,
+    hardSafetyViolations: 0,
     selectionPreflightGets: 1,
     targetPreflightGets: 0,
+  };
+
+  const markHardViolation = (): void => {
+    hardViolated = true;
+    counts.hardSafetyViolations += 1;
   };
 
   selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation);
@@ -160,18 +169,22 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
 
   const popupHandler = (opened: Page) => {
     if (opened === page) return;
-    violated = true;
+    markHardViolation();
     counts.popupPagesBlocked += 1;
     void opened.close().catch(() => undefined);
   };
   context.on('page', popupHandler);
 
-  const block = async (route: Route, kind: 'navigation' | 'cross-thread'): Promise<void> => {
-    violated = true;
+  const block = async (route: Route, kind: 'navigation' | 'cross-thread', fatal = true): Promise<void> => {
+    if (fatal) markHardViolation();
+    else counts.selectionSubrequestsBlocked += 1;
     if (kind === 'navigation') counts.navigationAttemptsBlocked += 1;
     else counts.crossThreadRequestsBlocked += 1;
     await route.abort('blockedbyclient').catch(() => undefined);
   };
+
+  const blockedMessagingAttemptIsFatal = (request: Request): boolean =>
+    phase !== 'selection' || request.isNavigationRequest();
 
   const mainPageNavigation = (route: Route): boolean => {
     const navigationRequest = route.request();
@@ -204,18 +217,20 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
     // A thread route is never allowed onto the wire, for any resource type or
     // frame. The sole target document exception was fulfilled from memory above.
     if (isProbeThreadUrl(request.url(), expectedOrigin)) {
-      await block(route, 'cross-thread');
+      await block(route, 'cross-thread', blockedMessagingAttemptIsFatal(request));
       return;
     }
 
     const decision = probeMessagingRequestPolicy(phase === 'selection' ? 'selection' : 'target', request.method(), request.url(), expectedOrigin, targetIds);
     if (decision.messaging) {
       if (!decision.allow) {
-        await block(route, 'cross-thread');
+        await block(route, 'cross-thread', blockedMessagingAttemptIsFatal(request));
         return;
       }
       const response = await isolatedApiResponse(context, request);
       if (response) await route.fulfill(response);
+      // An allowlisted request whose isolated response is not an exact safe
+      // response (including a redirect) is a hard failure in every phase.
       else await block(route, 'cross-thread');
       return;
     }
@@ -232,7 +247,9 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
 
   const assertLocation = async (expected: string, expectedAllowed: number, phaseName: string): Promise<void> => {
     const actual = exactCanonicalLocation(page.url());
-    if (violated || actual !== expected || expectedAllowed !== 1 || await pageHistoryWasBlocked(page)) {
+    const unsafePageState = actual !== expected || expectedAllowed !== 1 || await pageHistoryWasBlocked(page);
+    if (unsafePageState && !hardViolated) markHardViolation();
+    if (hardViolated || unsafePageState) {
       throw new AppError('READ_POLICY_BLOCK', `Probe ${phaseName} navigation did not remain within its exact safe target`, 4);
     }
   };
@@ -242,7 +259,7 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
       await assertLocation(selectionLocation, counts.selectionNavigationsAllowed, 'selection');
     },
     async armTarget(targetUrl, knownConversationIds) {
-      if (phase !== 'selection' || counts.selectionNavigationsAllowed !== 1 || violated) {
+      if (phase !== 'selection' || counts.selectionNavigationsAllowed !== 1 || hardViolated) {
         throw new AppError('READ_POLICY_BLOCK', 'Probe target could not be armed after an unsafe selection navigation', 4);
       }
       const location = exactCanonicalLocation(targetUrl);
@@ -256,14 +273,16 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
       }
       targetLocation = location;
       targetIds = ids;
+      // From this point on, even blocked background selection-page messaging
+      // attempts are fatal: the one-target phase has begun.
+      phase = 'armed';
       counts.targetPreflightGets += 1;
       targetDocument = await isolatedCachedDocument(context, targetUrl, location);
       if (!targetDocument) {
-        violated = true;
+        markHardViolation();
         counts.navigationAttemptsBlocked += 1;
         throw new AppError('READ_POLICY_BLOCK', 'Probe target preflight did not return one exact safe document', 4);
       }
-      phase = 'armed';
     },
     async assertTargetSafe() {
       if (!targetLocation) throw new AppError('READ_POLICY_BLOCK', 'Probe target was not armed', 4);

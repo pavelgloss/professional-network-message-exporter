@@ -82,6 +82,10 @@ describe('probe navigation gate against local redirects', () => {
         '/selection-subframe': '<object data="/messaging/thread/UNREAD/"></object>',
         '/selection-worker': '<script>new Worker("/worker.js")</script>',
         '/selection-list': '<script>fetch("/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations").catch(()=>{})</script>',
+        '/selection-eager-messaging': '<script>Promise.all([fetch("/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD"),fetch("/voyager/api/messagingV2/conversations/UNREAD/events")]).catch(()=>{})</script>',
+        '/selection-history': '<script>try { history.pushState({}, "", "/messaging/thread/UNREAD/") } catch {}</script>',
+        '/selection-location': '<script>location.href="/messaging/thread/UNREAD/"</script>',
+        '/selection-popup': '<body><script>const link=document.createElement("a");link.href="/messaging/thread/UNREAD/";link.target="_blank";document.body.append(link);link.click()</script></body>',
       };
       response.writeHead(200, {
         'content-type': 'text/html',
@@ -135,14 +139,35 @@ describe('probe navigation gate against local redirects', () => {
     expect(gate!.snapshot()).toMatchObject({ selectionPreflightGets: 1, selectionNavigationsAllowed: 0, targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
   });
 
-  it.each(['img', 'iframe', 'prefetch', 'subframe', 'worker'])('blocks a thread URL used by a %s before it reaches the server', async (resource) => {
+  it.each(['img', 'prefetch', 'worker'])('safely tolerates a blocked selection thread URL used by a %s', async (resource) => {
+    await reset(`/selection-${resource}`);
+    await page.goto(`${origin}/selection-${resource}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(250);
+    await gate!.assertSelectionSafe();
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
+    expect(gate!.snapshot().crossThreadRequestsBlocked).toBeGreaterThan(0);
+    expect(gate!.snapshot()).toMatchObject({ selectionSubrequestsBlocked: 1, hardSafetyViolations: 0 });
+  });
+
+  it.each(['iframe', 'subframe'])('keeps a blocked selection %s navigation fatal', async (resource) => {
     await reset(`/selection-${resource}`);
     await page.goto(`${origin}/selection-${resource}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(250);
     await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
-    expect(gate!.snapshot().crossThreadRequestsBlocked).toBeGreaterThan(0);
+    expect(gate!.snapshot()).toMatchObject({ crossThreadRequestsBlocked: 1, selectionSubrequestsBlocked: 0 });
+    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+  });
+
+  it.each(['history', 'location', 'popup'])('keeps selection %s escape attempts fatal', async (resource) => {
+    await reset(`/selection-${resource}`);
+    await page.goto(`${origin}/selection-${resource}`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    await page.waitForTimeout(100);
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    expect(unreadRequests).toBe(0);
+    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
   });
 
   it('allows only the exact Dash conversation-list GET while selecting', async () => {
@@ -153,14 +178,44 @@ describe('probe navigation gate against local redirects', () => {
     expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations')).toBe(1);
   });
 
+  it('tolerates eager denied selection messaging subrequests and can still arm one target', async () => {
+    await reset('/selection-eager-messaging');
+    await page.goto(`${origin}/selection-eager-messaging`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(100);
+    const foreignHistory = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD';
+    const unknownMessaging = '/voyager/api/messagingV2/conversations/UNREAD/events';
+    expect(allRequests.get(foreignHistory)).toBeUndefined();
+    expect(allRequests.get(unknownMessaging)).toBeUndefined();
+    expect(gate!.snapshot()).toMatchObject({
+      crossThreadRequestsBlocked: 2,
+      selectionSubrequestsBlocked: 2,
+      hardSafetyViolations: 0,
+    });
+    await gate!.assertSelectionSafe();
+
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+    await gate!.assertTargetSafe();
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+  });
+
   it('blocks an allowed list GET redirect before an unknown messaging namespace reaches the server', async () => {
     redirectConversationList = true;
+    const browserListResponses: string[] = [];
+    page.on('response', (response) => {
+      if (response.url().includes('queryId=messengerConversations')) browserListResponses.push(response.url());
+    });
     await reset('/selection-list');
     await page.goto(`${origin}/selection-list`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(500);
     expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations')).toBe(1);
     expect(allRequests.get('/voyager/api/messagingV2/conversations/UNREAD/events')).toBeUndefined();
+    // The unsafe isolated response is never fulfilled into the page, so the
+    // selection capture cannot derive a candidate from it.
+    expect(browserListResponses).toEqual([]);
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({ selectionSubrequestsBlocked: 0, hardSafetyViolations: 1 });
     await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
   });
 
@@ -209,7 +264,29 @@ describe('probe navigation gate against local redirects', () => {
     await page.evaluate(() => fetch('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationUrn=urn%3Ali%3AmessagingThread%3AUNREAD').catch(() => undefined));
     await page.waitForTimeout(50);
     expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationUrn=urn%3Ali%3AmessagingThread%3AUNREAD')).toBeUndefined();
-    expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({
+      crossThreadRequestsBlocked: 1,
+      selectionSubrequestsBlocked: 0,
+      hardSafetyViolations: 1,
+    });
+    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+  });
+
+  it('keeps a foreign messaging subrequest fatal as soon as the target is armed', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    const foreignHistory = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD';
+    await page.evaluate((url) => fetch(url).catch(() => undefined), foreignHistory);
+    await page.waitForTimeout(50);
+    expect(allRequests.get(foreignHistory)).toBeUndefined();
+    expect(gate!.snapshot()).toMatchObject({
+      crossThreadRequestsBlocked: 1,
+      selectionSubrequestsBlocked: 0,
+      hardSafetyViolations: 1,
+      targetNavigationsAllowed: 0,
+    });
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
   });
 

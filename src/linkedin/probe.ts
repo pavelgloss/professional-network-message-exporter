@@ -145,6 +145,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeNavigationAttemptsBlocked = snapshot.navigationAttemptsBlocked;
       manifest.counts.probePopupPagesBlocked = snapshot.popupPagesBlocked;
       manifest.counts.probeCrossThreadRequestsBlocked = snapshot.crossThreadRequestsBlocked;
+      manifest.counts.probeSelectionSubrequestsBlocked = snapshot.selectionSubrequestsBlocked;
+      manifest.counts.probeHardSafetyViolations = snapshot.hardSafetyViolations;
       manifest.counts.probeSelectionPreflightGets = snapshot.selectionPreflightGets;
       manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
       await navigationGate.dispose().catch(() => undefined);
