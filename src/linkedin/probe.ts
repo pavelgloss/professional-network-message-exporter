@@ -112,6 +112,13 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     assertAuthenticated(await detectAuthState(selectionPage));
     await selectionPage.waitForTimeout(Math.min(2_000, config.timeoutMs));
     await selectionCapture.drain();
+    // Keep only redacted structural diagnostics from selection. They contain
+    // key paths and counts, never message values, identifiers, cookies or bodies.
+    manifest.networkResponses = selectionManifest.networkResponses;
+    manifest.counts.probeSelectionConversations = selectionCapture.conversations.length;
+    manifest.counts.probeExplicitReadConversations = selectionCapture.conversations
+      .filter((conversation) => conversation.sourceMetadata?.read === true
+        && conversation.sourceMetadata.readEvidence === 'network-explicit').length;
     await navigationGate.assertSelectionSafe();
     const candidate = selectSafeProbeConversation(selectionCapture.conversations);
     const targetUrl = assertSafeProbeConversation(candidate);
