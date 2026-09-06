@@ -29,12 +29,20 @@ function safeObservedHeaders(headers: Record<string, string>): Record<string, st
 
 function safeVariableShape(rawUrl: string): string | undefined {
   try {
-    const raw = new URL(rawUrl).searchParams.get('variables');
+    const url = new URL(rawUrl);
+    const raw = url.searchParams.get('variables');
     const variables = raw ? repeatedlyDecodeAndNormalize(raw) : undefined;
     if (!variables) return undefined;
     const fields = [...variables.matchAll(/(?:^|[({,])\s*([A-Za-z][A-Za-z0-9]{0,60})\s*:\s*(-?\d+)?/g)]
       .map((match) => match[2] === undefined ? match[1]! : `${match[1]}=${match[2]}`);
-    return [...new Set(fields)].sort().slice(0, 40).join(',') || undefined;
+    const rawVariables = url.search.match(/(?:^|[?&])variables=([^&]*)/)?.[1] ?? '';
+    const encoding = rawVariables.startsWith('(') ? 'restli-raw'
+      : /^%28/i.test(rawVariables) ? 'restli-encoded'
+        : rawVariables.startsWith('{') ? 'json-raw'
+          : /^%7b/i.test(rawVariables) ? 'json-encoded' : 'other';
+    const entityTypes = [...variables.matchAll(/urn:li:([A-Za-z][A-Za-z0-9_-]{0,80}):/g)]
+      .map((match) => match[1]!).filter((value, index, all) => all.indexOf(value) === index).sort();
+    return `format=${encoding};fields=${[...new Set(fields)].sort().slice(0, 40).join(',')};urnTypes=${entityTypes.join(',') || 'none'}`;
   } catch { return undefined; }
 }
 

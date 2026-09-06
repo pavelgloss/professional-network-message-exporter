@@ -1,6 +1,7 @@
 import type { APIRequestContext } from 'playwright';
 import type { RawConversation } from '../domain/schema.js';
 import { conversationIdFromUrn } from '../domain/stable-id.js';
+import { repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 import { AppError } from '../errors.js';
 import type { DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
@@ -112,6 +113,74 @@ function exactHistoryPage(rawUrl: string, targetId: string): string {
   return url;
 }
 
+type CurrentHistoryCollection = {
+  elements: unknown[];
+  newSyncToken?: string;
+  shouldClearCache?: boolean;
+};
+
+function currentHistoryCollection(payload: unknown): CurrentHistoryCollection | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const root = payload as Record<string, unknown>;
+  if (!root.data || typeof root.data !== 'object' || Array.isArray(root.data)) return undefined;
+  const collections = Object.values(root.data as Record<string, unknown>).filter((candidate): candidate is Record<string, unknown> =>
+    Boolean(candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+      && Array.isArray((candidate as Record<string, unknown>).elements)));
+  if (collections.length !== 1) return undefined;
+  const collection = collections[0]!;
+  const metadata = collection.metadata && typeof collection.metadata === 'object' && !Array.isArray(collection.metadata)
+    ? collection.metadata as Record<string, unknown> : undefined;
+  const rawToken = metadata?.newSyncToken;
+  const newSyncToken = typeof rawToken === 'string' && rawToken.length <= 64 * 1024
+    ? repeatedlyDecodeAndNormalize(rawToken) : undefined;
+  return {
+    elements: collection.elements as unknown[],
+    ...(newSyncToken ? { newSyncToken } : {}),
+    ...(typeof metadata?.shouldClearCache === 'boolean' ? { shouldClearCache: metadata.shouldClearCache } : {}),
+  };
+}
+
+/** Adds the observed response token without rebuilding any existing query bytes. */
+export function instantiateObservedSyncUrl(sourceUrl: string, targetId: string, syncToken: string): string {
+  const initial = exactHistoryPage(sourceUrl, targetId);
+  const normalizedToken = repeatedlyDecodeAndNormalize(syncToken);
+  if (!normalizedToken || normalizedToken.length > 64 * 1024) {
+    throw new AppError('READ_POLICY_BLOCK', 'History sync token was malformed', 4);
+  }
+  const queryStart = initial.indexOf('?');
+  if (queryStart < 0) throw new AppError('READ_POLICY_BLOCK', 'History GET had no variables query', 4);
+  const hashStart = initial.indexOf('#', queryStart);
+  const queryEnd = hashStart < 0 ? initial.length : hashStart;
+  const query = initial.slice(queryStart + 1, queryEnd);
+  const segments = query.split('&');
+  let changed = false;
+  const nextSegments = segments.map((segment) => {
+    const equals = segment.indexOf('=');
+    if (equals < 0) return segment;
+    let name: string;
+    try { name = decodeURIComponent(segment.slice(0, equals)); } catch { return segment; }
+    if (name !== 'variables') return segment;
+    if (changed) throw new AppError('READ_POLICY_BLOCK', 'History GET had duplicate variables', 4);
+    const rawVariables = segment.slice(equals + 1);
+    if (!rawVariables.startsWith('(') || !rawVariables.endsWith(')') || /(?:^|[,(])syncToken:/i.test(rawVariables)) {
+      throw new AppError('READ_POLICY_BLOCK', 'History GET did not use the observed Rest.li variable shape', 4);
+    }
+    changed = true;
+    return `${segment.slice(0, equals + 1)}${rawVariables.slice(0, -1)},syncToken:${encodeURIComponent(normalizedToken)})`;
+  });
+  if (!changed) throw new AppError('READ_POLICY_BLOCK', 'History GET had no variables query', 4);
+  return exactHistoryPage(`${initial.slice(0, queryStart + 1)}${nextSegments.join('&')}${initial.slice(queryEnd)}`, targetId);
+}
+
+function messageAliases(conversations: RawConversation[]): Set<string> {
+  const aliases = new Set<string>();
+  for (const message of conversations.flatMap((conversation) => conversation.messages ?? [])) {
+    if (message.entityUrn) aliases.add(`urn:${message.entityUrn}`);
+    if (message.id) aliases.add(`id:${message.id}`);
+  }
+  return aliases;
+}
+
 function safeSchemaKey(value: string): string | undefined {
   return /^[A-Za-z_$*][A-Za-z0-9_$*-]{0,80}$/.test(value) ? value : undefined;
 }
@@ -161,6 +230,7 @@ export async function readObservedConversationHistories(
   let completed = 0;
   let failed = 0;
   let pages = 0;
+  let syncContractProbed = false;
 
   for (const conversation of conversations) {
     const targetId = exactConversationId(conversation);
@@ -207,6 +277,30 @@ export async function readObservedConversationHistories(
         if (foreignMessages || !matching.length) throw new Error('history response identity mismatch');
         sawConversation = true;
         output.push(...matching);
+        const collection = currentHistoryCollection(payload);
+        if (!syncContractProbed && collection?.elements.length === 20 && collection.newSyncToken) {
+          syncContractProbed = true;
+          manifest.counts.historySyncContractProbes = 1;
+          try {
+            const syncUrl = instantiateObservedSyncUrl(url, targetId, collection.newSyncToken);
+            const syncPayload = await readJson(request, syncUrl);
+            const syncCollection = currentHistoryCollection(syncPayload);
+            const syncParsed = parseNetworkPayload(syncPayload, syncUrl, { observedMethod: 'GET' });
+            const syncMatching = syncParsed.conversations.filter((value) => exactConversationId(value) === targetId);
+            const foreignSyncMessages = syncParsed.conversations.some((value) => exactConversationId(value) !== targetId
+              && (value.messages?.length ?? 0) > 0);
+            if (foreignSyncMessages) throw new Error('sync response identity mismatch');
+            const initialAliases = messageAliases(matching);
+            const distinctAliases = [...messageAliases(syncMatching)].filter((alias) => !initialAliases.has(alias));
+            manifest.counts.historySyncContractElements = syncCollection?.elements.length ?? 0;
+            manifest.counts.historySyncContractParsedMessages = syncMatching.reduce((sum, value) => sum + (value.messages?.length ?? 0), 0);
+            manifest.counts.historySyncContractDistinctAliases = distinctAliases.length;
+            manifest.counts.historySyncContractShouldClearCache = syncCollection?.shouldClearCache === true ? 1 : 0;
+            manifest.counts.historySyncContractTokenChanged = syncCollection?.newSyncToken && syncCollection.newSyncToken !== collection.newSyncToken ? 1 : 0;
+          } catch {
+            manifest.warnings.push('HISTORY_SYNC_CONTRACT_PROBE_FAILED');
+          }
+        }
         for (const next of parsed.paginationUrls) {
           const safeNext = exactHistoryPage(next, targetId);
           if (!visited.has(safeNext)) queue.push(safeNext);

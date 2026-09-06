@@ -4,7 +4,7 @@ import type { RawConversation } from '../../src/domain/schema.js';
 import { assertSafeProbeConversation, navigateOneSafeProbeThread, observedHistoryQueryTemplate, selectSafeProbeConversation } from '../../src/linkedin/probe.js';
 import { parseNetworkPayload } from '../../src/linkedin/network/response-parser.js';
 import { explicitProbeGraphqlConversationIds } from '../../src/linkedin/probe-navigation.js';
-import { instantiateObservedHistoryUrl } from '../../src/linkedin/history-reader.js';
+import { instantiateObservedHistoryUrl, instantiateObservedSyncUrl } from '../../src/linkedin/history-reader.js';
 
 describe('one already-read thread probe', () => {
   const readConversation: RawConversation = {
@@ -141,5 +141,20 @@ describe('one already-read thread probe', () => {
     const decodedVariables = JSON.parse(new URL(rebound).searchParams.get('variables')!) as Record<string, string>;
     expect(decodedVariables).toEqual({ conversationUrn: `urn:li:messagingThread:${newId}`, tracking: oldId });
     expect(new URL(rebound).searchParams.get('queryId')).toBe(queryId);
+  });
+
+  it('adds a sync token only inside the raw Rest.li variables parameter', () => {
+    const id = 'READ==';
+    const variables = `(conversationUrn:${encodeURIComponent(`urn:li:msg_conversation:(urn:li:fsd_profile:SELF,${id})`)},urn:${encodeURIComponent('urn:li:fsd_profile:SELF')})`;
+    const queryId = `messengerMessages.${'a'.repeat(32)}`;
+    const source = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?variables=${variables}&queryId=${queryId}&includeWebMetadata=true`;
+    const next = instantiateObservedSyncUrl(source, id, 'opaque+/==');
+    const variableSuffix = '&queryId=';
+    const boundary = source.indexOf(variableSuffix);
+    const expected = `${source.slice(0, boundary - 1)},syncToken:<redacted>)${source.slice(boundary)}`;
+    expect(next.replace(/syncToken:[^)]*/, 'syncToken:<redacted>')).toBe(expected);
+    expect(decodeURIComponent(new URL(next).searchParams.get('variables')!)).toContain('syncToken:opaque+/==');
+    expect(new URL(next).searchParams.get('queryId')).toBe(queryId);
+    expect(() => instantiateObservedSyncUrl(next, id, 'another')).toThrow(/Rest.li variable shape/);
   });
 });
