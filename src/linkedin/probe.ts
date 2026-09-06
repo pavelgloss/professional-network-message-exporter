@@ -166,6 +166,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
       manifest.counts.probeSelectionPreflightFailures = snapshot.selectionPreflightFailures;
       manifest.counts.probeTargetPreflightFailures = snapshot.targetPreflightFailures;
+      manifest.strategies.push(...snapshot.selectionBlockedRequestShapes
+        .map((shape) => `probe-selection-blocked:${shape}`));
       await navigationGate.dispose().catch(() => undefined);
     }
     manifest.finishedAt = new Date().toISOString();

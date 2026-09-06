@@ -1,5 +1,6 @@
 import { request as playwrightRequest, type APIResponse, type BrowserContext, type CDPSession, type Page, type Request, type Route } from 'playwright';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
+import { redactedPathShape } from '../domain/url-redaction.js';
 import { AppError } from '../errors.js';
 import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
 
@@ -18,6 +19,7 @@ export type ProbeNavigationSnapshot = {
   targetPreflightGets: number;
   selectionPreflightFailures: number;
   targetPreflightFailures: number;
+  selectionBlockedRequestShapes: string[];
 };
 
 export type ProbeNavigationGate = {
@@ -187,6 +189,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     targetPreflightGets: 0,
     selectionPreflightFailures: 0,
     targetPreflightFailures: 0,
+    selectionBlockedRequestShapes: [],
   };
 
   const markHardViolation = (): void => {
@@ -372,6 +375,14 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     const decision = probeMessagingRequestPolicy(phase === 'selection' ? 'selection' : 'target', request.method(), request.url(), expectedOrigin, targetIds);
     if (decision.messaging) {
       if (!decision.allow) {
+        if (phase === 'selection' && counts.selectionBlockedRequestShapes.length < 20) {
+          const canonical = canonicalUrlView(request.url());
+          const operation = canonical?.query.find(({ name }) => name === 'queryId')?.value;
+          const safeOperation = operation && /^[A-Za-z][A-Za-z0-9_.-]{0,160}$/.test(operation)
+            ? operation : 'opaque';
+          const shape = `${redactedPathShape(canonical?.pathname ?? '')}?queryId=${safeOperation}`;
+          if (!counts.selectionBlockedRequestShapes.includes(shape)) counts.selectionBlockedRequestShapes.push(shape);
+        }
         await block(route, 'cross-thread', blockedMessagingAttemptIsFatal(request));
         return;
       }
