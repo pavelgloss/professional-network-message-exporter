@@ -26,13 +26,15 @@ describe('one already-read thread probe', () => {
     expect(() => assertSafeProbeConversation({ url: 'https://www.linkedin.com/messaging/thread/READ/', sourceMetadata: { read: true, readEvidence: 'network-explicit' } })).toThrow();
   });
 
-  it('preserves explicit read booleans from network conversations without inferring from unreadCount', () => {
+  it('preserves explicit read booleans and trusted unreadCount evidence from network conversations', () => {
     const source = 'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations';
     const payload = (state: Record<string, unknown>) => ({ data: { messengerConversations: { elements: [{ entityUrn: 'urn:li:messagingThread:ONE', participants: [{ id: 'P' }], events: [], ...state }] } } });
     const make = (state: Record<string, unknown>) => parseNetworkPayload(payload(state), source, { observedMethod: 'GET' }).conversations[0];
     expect(make({ read: true })?.sourceMetadata?.read).toBe(true);
     expect(make({ read: false })?.sourceMetadata?.read).toBe(false);
-    expect(make({ unreadCount: 0 })?.sourceMetadata?.read).toBeUndefined();
+    expect(make({ unreadCount: 0 })?.sourceMetadata?.read).toBe(true);
+    expect(make({ unreadCount: 2 })?.sourceMetadata?.read).toBe(false);
+    expect(make({ unreadCount: -1 })?.sourceMetadata?.read).toBeUndefined();
     expect(parseNetworkPayload(payload({ read: true }), source).conversations[0]?.sourceMetadata?.read).toBeUndefined();
     expect(parseNetworkPayload(payload({ read: true }), source, { observedMethod: 'POST' }).conversations[0]?.sourceMetadata?.read).toBeUndefined();
     expect(parseNetworkPayload(payload({ read: true }), 'https://tracking.linkedin.com/random/conversation.json', { observedMethod: 'GET' }).conversations[0]?.sourceMetadata?.read).toBeUndefined();
@@ -80,6 +82,7 @@ describe('one already-read thread probe', () => {
     expect(observedHistoryQueryTemplate('GET', 'https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation', [canary])).toBeUndefined();
     expect(observedHistoryQueryTemplate('GET', `https://evil.example/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=${canary}`, [canary])).toBeUndefined();
     expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=OTHER`, [canary])).toBeUndefined();
+    expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessages.${'b'.repeat(32)}&conversationId=${canary}`, [canary])).toBeDefined();
     for (const separator of ['%C2%85', '%E2%80%8B', '%C2%AD', '%E2%80%AE', '%25E2%2580%258B']) {
       expect(observedHistoryQueryTemplate('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessa${separator}ges&conversationId=${canary}`, [canary])).toBeUndefined();
     }

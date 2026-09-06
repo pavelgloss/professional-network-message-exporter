@@ -166,7 +166,15 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
   const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));
   const evidence = historyComplete || parserMisses > 0 ? JSON.stringify([{ resource: `conversation:${id ?? entityUrn ?? 'unknown'}`, page: sourcePage, start: 0, count: messageValues.length, total: messageValues.length, end: historyComplete, valid: parserMisses === 0 }]) : undefined;
-  const explicitRead = allowReadEvidence && typeof obj.read === 'boolean' ? obj.read : undefined;
+  // Current Dash list responses expose unreadCount rather than a separate read
+  // boolean. Zero is direct server evidence that opening this conversation
+  // cannot newly transition it from unread to read.
+  const explicitRead = allowReadEvidence
+    ? typeof obj.read === 'boolean' ? obj.read
+      : typeof obj.unreadCount === 'number' && Number.isInteger(obj.unreadCount) && obj.unreadCount >= 0
+        ? obj.unreadCount === 0
+        : undefined
+    : undefined;
   const hasSourceMetadata = explicitRead !== undefined || historyComplete || parserMisses > 0;
   return {
     ...(id ? { id } : {}),

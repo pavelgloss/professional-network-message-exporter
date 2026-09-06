@@ -401,7 +401,13 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     // No frame may navigate away from either cached document. Ordinary
     // non-messaging subresources still pass through the global read-only guard.
     if (request.isNavigationRequest()) {
-      await block(route, 'navigation');
+      // A denied ordinary child-frame navigation cannot escape the route or
+      // reach the wire. Only a main-page navigation changes the trusted probe
+      // document and is therefore terminal. Messaging/thread frames were
+      // already handled by the stricter branch above and remain terminal.
+      const mainPage = mainPageNavigation(route, selectionPage)
+        || Boolean(targetPage && mainPageNavigation(route, targetPage));
+      await block(route, 'navigation', mainPage);
       return;
     }
     await route.fallback();

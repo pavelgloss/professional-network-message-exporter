@@ -29,6 +29,7 @@ describe('probe phase-specific messaging request policy', () => {
     const hash = 'b'.repeat(32);
     const allowed = [
       `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=messengerMessages.${hash}&conversationId=READ`,
       `${dash}?queryId=messengerMessagesByConversation.${hash}&conversationId=READ`,
       `${dash}?queryId=messengerMessagesByConversation&conversationUrn=${encodeURIComponent('urn:li:messagingThread:READ')}`,
       `${dash}?queryId=messengerConversationMessages&variables=${encodeURIComponent(JSON.stringify({ input: { threadId: 'READ' } }))}`,
