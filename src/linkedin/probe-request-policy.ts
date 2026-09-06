@@ -1,4 +1,4 @@
-import { conversationIdFromUrn, isConversationEntityType } from '../domain/stable-id.js';
+import { conversationIdFromUrn, isConversationEntityType, parseLinkedInUrn } from '../domain/stable-id.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 
 export type ProbeRequestPhase = 'selection' | 'target';
@@ -51,6 +51,15 @@ function parseReferenceValue(value: unknown): string | undefined {
   if (urnId) return urnId;
   if (/^urn:/i.test(normalized)) return undefined;
   return normalizedId(normalized);
+}
+
+function isSafeMailboxReference(key: string, value: unknown): boolean {
+  if (!/^(?:mailbox|inbox)Urn$/.test(key) || typeof value !== 'string') return false;
+  const normalized = repeatedlyDecodeAndNormalize(value.trim().replace(/^['"]|['"]$/g, ''));
+  const parsed = parseLinkedInUrn(normalized);
+  if (!parsed) return false;
+  const entityClass = classifyProbeUrnEntity(parsed.entityType);
+  return entityClass === 'known-nonconversation';
 }
 
 type ProbeUrnEntityClass = 'supported-conversation' | 'suspicious-conversation-family' | 'known-nonconversation' | 'unknown-ambiguous';
@@ -133,7 +142,8 @@ function walkJsonReferences(value: unknown, result: ReferenceResult, depth = 0, 
     return;
   }
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (isIdentityLikeKey(key)) mergeReference(result, key, child);
+    if (isSafeMailboxReference(key, child)) collectConversationUrns(child as string, result);
+    else if (isIdentityLikeKey(key)) mergeReference(result, key, child);
     else {
       if (semanticStem.test(key)) result.valid = false;
       walkJsonReferences(child, result, depth + 1, budget);
@@ -197,7 +207,8 @@ export function parseProbeConversationReferences(query: Array<{ name: string; va
     collectConversationUrns(value, result);
     // queryId identifies the persisted operation, not a conversation. It is the
     // only explicitly allowlisted non-conversation identity-like query key.
-    if (name !== 'queryId' && isIdentityLikeKey(name)) mergeReference(result, name, value);
+    if (name !== 'queryId' && isSafeMailboxReference(name, value)) collectConversationUrns(value, result);
+    else if (name !== 'queryId' && isIdentityLikeKey(name)) mergeReference(result, name, value);
     else if (name !== 'queryId' && semanticStem.test(name)) result.valid = false;
     if (name !== 'variables') continue;
     if (value.length > 64 * 1024) { result.valid = false; continue; }
@@ -209,6 +220,7 @@ export function parseProbeConversationReferences(query: Array<{ name: string; va
     if (!hasBalancedRestLiStructure(value) || !/^\s*\([\s\S]*\)\s*$/.test(value) || !fields.length) result.valid = false;
     for (const field of fields) {
       collectConversationUrns(field.value, result);
+      if (isSafeMailboxReference(field.key, field.value)) continue;
       if (isIdentityLikeKey(field.key)) mergeReference(result, field.key, field.value);
       else if (semanticStem.test(field.key)) result.valid = false;
     }
