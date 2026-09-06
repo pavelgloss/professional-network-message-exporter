@@ -1747,3 +1747,130 @@ AR-01 až AR-03; běžný network-only export bez thread-open režimu nálezy ne
 chybu abortu potlačí. Playwright běžně request drží před sítí a testy potvrzují
 server `0`; pro striktně dokazatelnou toleranci by se ale nonfatal stav měl potvrdit
 až po úspěšném abortu a abort exception změnit na hard failure.
+
+---
+
+## Re-review preflight race oprav HEAD `04fc2c0`
+
+### Verdikt
+
+**Critical: 0 / High: 0 / Medium: 2.** AR-03 je uzavřený a běžné delayed AR-01/02
+scénáře nyní skončí před targetem. History ochranu však lze obejít přes nezměněné
+metody na `History.prototype` a jediné event-loop yield v target route nevytváří
+atomickou hranici vůči browser timer/request událostem. V obou případech se cached
+read target může otevřít s `targetNavigationsAllowed=1`.
+
+**NO-GO pro opakování jediného skutečného `--probe-read-thread`.** První reálný
+probe měl nula thread navigací; před opakováním je potřeba odstranit PR-01 a PR-02.
+Network-only export bez thread-open režimu těmito nálezy dotčen není.
+
+### PR-01 / AR-01 — MEDIUM — Page může obejít History wrapper přes `History.prototype`
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:158-195`,
+  `src/linkedin/probe-navigation.ts:311-376`
+- **Problém:** init script vytváří non-writable vlastní `history.pushState` a
+  `history.replaceState`, ale původní metody na `History.prototype` zůstávají
+  dostupné. Skript může zavolat
+  `History.prototype.pushState.call(history, ...)` a následně stejně obnovit původní
+  URL. Nevznikne `popstate` ani `hashchange`, binding se nezavolá a end-of-preflight
+  kontrola vidí znovu přesný selection URL a `historyBlocked=false`.
+- **Nezávislá reprodukce:** selection fixture během 350ms target preflightu provedla
+  přes prototype `pushState` z `/sel-proto` na `/messaging/thread/UNREAD/` a přes
+  prototype `replaceState` zpět na `/sel-proto`. `armTarget()` resolve,
+  `hardSafetyViolations=0`; cached target byla fulfillnuta,
+  `targetNavigationsAllowed=1` a `assertTargetSafe()` prošel. Unread server hit byl
+  `0`, protože History API samo síťový request neposílá.
+- **Dopad:** zakázaná cross-thread client-side navigace může být z auditní evidence
+  zcela odstraněna a probe může uložit success/template. Nedochází k foreign server
+  read ani LinkedIn mutaci, proto Medium, nikoli High.
+- **Doporučení:** uzamknout guarded metody přímo na `History.prototype` v každém
+  execution world/frame (případně bezpečně zablokovat veškeré History mutace mimo
+  no-op exact URL). Přidat delayed i post-arm testy, které volají prototype
+  `pushState`/`replaceState` a zkoušejí round-trip zpět na selection URL; musí dát
+  `arm rejects`, `targetNav=0` a terminal cache.
+
+### PR-02 / AR-02 — MEDIUM — Jedno target-route yield nezavírá browser/Node race
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:257-286`,
+  `src/linkedin/probe-navigation.ts:361-376`
+- **Problém:** target route po první safe kontrole jednou yieldne přes
+  `setTimeout(0)`, podruhé synchronně zkontroluje stav, nastaví `phase='target-used'`
+  a zavolá `route.fulfill()`. Timer nebo request ze starého selection documentu může
+  být doručen těsně po druhé kontrole, ale před commitnutím cached dokumentu.
+  Foreign request se správně abortuje a nastaví hard state, target fulfill už však
+  běží a dokončí se.
+- **Nezávislá reprodukce:** po úspěšném `armTarget()` selection stránka naplánovala
+  ordinary guarded History pokus nebo foreign `messagingV2` fetch za 0–5 ms a
+  reviewer ihned zavolal target `goto`. Ve 40 History bězích prošla target navigace
+  s následným `hard=1` v 1/10 běhů pro 1 ms a 8/10 pro 5 ms. Ve 32 foreign-fetch
+  bězích nastal `targetNav=1, hard=1, crossBlocked=1` v 4/8 běhů pro 1 ms, 7/8 pro
+  2 ms a 8/8 pro 5 ms. Foreign server hit byl ve všech bězích `0`; závěrečný
+  assertion selhal, ale read target již byl otevřen.
+- **Dopad:** hard violation po armování není vždy terminal před target documentem.
+  Cíl je stále ověřený explicitně read thread a cizí request síť nezasáhne, takže
+  nejde o neoprávněný unread read; porušuje to však výslovný `targetNav=0` invariant
+  a bezpečnou opakovatelnost probe.
+- **Doporučení:** nepoužívat časový yield jako synchronizační bariéru. Před target
+  navigací ukončit execution lifecycle selection dokumentu (nejrobustněji zavřít
+  selection page a předem guardovaně vytvořit inertní target page), teprve potom
+  jednou fulfillnout cached target. Alternativa musí mít deterministický handshake,
+  po kterém starý document již nemůže spustit timer/fetch/binding; testovat desítkami
+  0–5ms race iterací a vyžadovat vždy `targetNav=0` po pre-target violation.
+
+### Uzavřené části AR-01/02/03
+
+- Běžný delayed `pushState`, `replaceState`, hash/popstate s URL změnou, foreign
+  fetch, `location`, popup a iframe/object/subframe během pomalého preflightu nyní
+  nastaví hard stav, `armTarget()` odmítne, target cache se nezveřejní a pozdější
+  target pokus má `targetNav=0`; unread/foreign endpoint má server `0`.
+- Binding na stránce má `writable=false`, `configurable=false`; assignment ani
+  `defineProperty`/`delete` jej nenahradí. Přímé zavolání bindingu způsobí pouze
+  terminal DoS. PR-01 obchází volání guarded metody, nikoli binding property.
+- Po hard eventu se fáze mění na `failed` a oba cached dokumenty se mažou. Více
+  událostí zvyšuje hard counter; následné blokování target navigation je započtené
+  jako skutečná browser navigation a cache nelze později použít. PR-02 je úzké okno,
+  kdy fulfill již začal před doručením hard události.
+- **AR-03 uzavřeno:** main/subframe/thread navigation zvyšuje
+  `navigationAttemptsBlocked` až po úspěšném `route.abort`; messaging thread může
+  současně zvýšit cross-thread counter. Selection/target preflight selhání mají
+  vlastní counters a target preflight 302/invalid response ponechá browser
+  navigation counter na nule.
+- Selection denied non-navigation image/prefetch/worker/fetch mají server `0`, po
+  potvrzeném abortu jsou nonfatal a zachovávají přesné
+  `crossThreadRequestsBlocked === selectionSubrequestsBlocked`. Pět souběžných
+  requestů dalo `5/5`, hard `0` a bezpečný flow mohl pokračovat.
+- Safe flow má jeden selection preflight, jeden target preflight, právě jednu cached
+  target navigation a jeden exact target history GET. Redirect/bad status/content
+  type se nefulfillne; `Set-Cookie`, `Location` a opaque headers se nepřenášejí do
+  browser jaru.
+- Conversation candidate nadále pochází pouze z browseru předané exact Dash list
+  GET odpovědi a vyžaduje explicitní network `read=true`, shodné ID/URN/route aliasy
+  a nulový conflicting unread evidence. Redirect list response se do capture
+  nedostane.
+- POST, WebSocket, persistent-SW, one-target/no-export, namespace/default-deny a
+  všechny starší R4–R7 URN/encoding invarianty prošly plným suite. Okamžitý
+  production teardown `gate.dispose()` → `context.close()` byl v 60 timer-race
+  iteracích bez unread server hitu; binding po dobu živého contextu může vyvolat jen
+  fail-closed stav.
+
+### Testy, data a Git
+
+- `npm.cmd run check`: **PASS** — typecheck, **15 test files / 133 tests**, build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Fresh missing-state `npm.cmd run probe:read-thread -- --state-file <missing>
+  --output <unique>`: `AUTH_REQUIRED`, exit `3`, bez parent adresáře, state, main,
+  `.partial` nebo diagnostics.
+- `.auth/`, exporty a diagnostics jsou ignorované; tracked secret scan nenašel
+  credential value, private key ani runtime session/export artifact.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review používalo jen
+  syntetické lokální HTTP/Chromium fixtures; LinkedIn, storageState, session ani
+  reálná data nebyly použity. Implementace nebyla změněna a nic nebylo commitováno.
+
+### Residual risk (Low)
+
+Same-URL History state entry a následný same-URL `popstate` současný listener
+neoznačí, protože `href` zůstává původní. Bez URL změny nebo foreign network requestu
+to nemá praktický read/state-change dopad; konzervativní varianta může přesto hlásit
+každý `popstate`. Po `dispose()` binding/init script v živém contextu zůstává, ale
+produkční cesta context ihned zavírá; opětovné použití stejného contextu není
+podporované.
