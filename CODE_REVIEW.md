@@ -1923,3 +1923,70 @@ race, ale selection teardown stále nedává deterministickou síťovou bariéru
   `git diff --check` byl čistý před tímto review dodatkem.
 - Review nepoužilo LinkedIn, storageState/session ani reálná data; pouze syntetické
   lokální HTTP/Chromium. Implementace nebyla změněna a nic nebylo commitováno.
+
+---
+
+## Review commitů `4d1fb85..ae0ae78` (2026-09-06)
+
+### CRH-01 — High — běžný export obchází opt-in a může otevřít až tři thready
+
+- **Odkazy:** `src/linkedin/exporter.ts:21-34`, `src/cli.ts:17-22`,
+  `README.md:46-62`.
+- `exportMessages()` bez kontroly `probeReadThread` vždy nejprve volá
+  `discoverHistoryGet()`. Ten při libovolném selhání opakuje celý probe třikrát.
+  Selhání může nastat až po úspěšné thread navigation (např. chybějící template nebo
+  následný safety/parser error), takže jediný obyčejný `npm.cmd run export` může
+  provést až tři thread navigations. CLI varování se přitom vypisuje jen pro
+  explicitní `--probe-read-thread` a README stále výslovně slibuje, že běžný export
+  vlákna nikdy neotevírá a probe není jeho součástí.
+- **Dopad:** operace vyžadující vědomý one-thread opt-in se stala implicitní a retry
+  ruší globální důkaz „právě jeden thread“. Ephemeral Playwright context sice
+  nepoužívá ani nemění běžný Chrome profil, ale rozsah autorizované interakce s
+  LinkedInem je překročen.
+- **Doporučení:** běžný export nesmí probe spouštět bez samostatného explicitního
+  opt-in flagu. Po první target navigation již nikdy neopakovat celý probe; retry
+  povolit pouze pro fáze prokazatelně před thread navigation nebo zachovat observed
+  template bezpečným explicitním workflow.
+
+### CRH-02 — High — GraphQL historie je označena za úplnou bez serverového end/total důkazu
+
+- **Odkazy:** `src/linkedin/history-reader.ts:82-110,162-164`,
+  `src/linkedin/exporter.ts:108-125`.
+- `isUnpaginatedFullCollection()` kontroluje pouze název persisted operation a
+  nepřítomnost několika pagination klíčů v request URL. Když parser nenajde explicitní
+  next URL, `markCompleteUnpaginatedCollection()` si sám vytvoří `total=count`,
+  `end=true` a `historyComplete=true`, ačkoli odpověď serveru žádné `total/end`
+  tvrzení neposkytla. Syntetická odpověď s jedinou zprávou, bez paging metadata a URL
+  `messengerMessages.<hash>?variables=(conversationId:CONV)` skončila s
+  `historyComplete=true`, evidence `start=0,count=1,total=1,end=true`, bez warningu a
+  bez parser miss. Za splněného list coverage pak exporter může zapsat
+  `partial=false`, i kdyby server vrátil pouze implicitní/defaultní okno historie.
+- **Dopad:** neúplný výpis lze publikovat jako úplný hlavní JSON a přepsat tak poslední
+  důvěryhodný complete export; chybějící starší zprávy nejsou signalizovány.
+- **Doporučení:** úplnost uznat pouze z explicitního response evidence (server
+  `total/end/hasNextPage=false` plus souvislé pokrytí od začátku), případně z
+  ověřeného kontraktu konkrétního response adaptéru. Samotná absence pagination
+  parametru/next linku musí zůstat `historyComplete=false`.
+
+### CRH-03 — Medium — substituce mění všechny textové výskyty ID, nejen identity field
+
+- **Odkaz:** `src/linkedin/history-reader.ts:24-69`.
+- `instantiateObservedHistoryUrl()` provádí `split(oldForm).join(newForm)` nad celou
+  URL pro raw i opakovaně encoded formy. Následná policy ověří jen to, že výsledná URL
+  obsahuje právě jednu target conversation reference; nekontroluje zachování ostatních
+  polí. Reprodukce s variables
+  `{conversationId:"ABCDEF123==",tracking:"ABCDEF123=="}` při rebindu na
+  `ZYX987654==` změnila **conversationId i tracking**, přesto prošla policy. Krátké
+  povolené ID může stejným způsobem změnit persisted `queryId`, číselné parametry nebo
+  znaky percent-encodingu.
+- **Dopad:** observed request se nereprodukuje strukturálně; může být odmítnut,
+  stránkovat jinak nebo vrátit jiný datový výsek. Běžné selhání zůstane partial, ale
+  korektnost/idempotence výsledků závisí na náhodné nekolidující podobě ID.
+- **Doporučení:** parsovat přesnou identity pozici v canonical query/JSON/Rest.li AST
+  a nahradit pouze její hodnotu při zachování encoding depth; poté porovnat všechny
+  ostatní query komponenty byte/strukturálně s observed template.
+
+**Souhrn:** Critical `0`, High `2`, Medium `1`. Nové requesty jsou v implementaci
+prováděny přes fresh Playwright Chromium/API context, metodou GET, s
+`maxRedirects: 0`; změny samy o sobě nesahají na běžný Chrome profil. Review
+nepoužilo LinkedIn, session ani reálná data a nezměnilo implementaci.

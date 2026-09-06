@@ -1,16 +1,53 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 21:30 Europe/Prague
+Last updated: 2026-09-06 21:42 Europe/Prague
 
-## Latest checkpoint (21:30)
+## Latest checkpoint (21:42) — do not treat the current export as complete
 
-The first complete real run succeeded. `npm run export -- --limit 100` performed
+Independent review of commit `ae0ae78` found two High and one Medium issue; the
+full report is appended to `CODE_REVIEW.md` as CRH-01..03. The existing ignored
+`data/linkedin/messages.json` is schema-valid (100 conversations / 158 messages),
+but it is **not a trustworthy complete result**: the largest thread has exactly
+20 messages and the code invented `total=count`, `end=true`, and
+`historyComplete=true` merely because the initial request/response exposed no
+recognized next link. Do not publish, delete, or overwrite this file as a
+complete export until the server provides explicit completion evidence.
+
+Immediate blockers and next actions:
+
+1. Remove the fabricated unpaginated-completion inference in
+   `src/linkedin/history-reader.ts`; absence of paging evidence must remain
+   incomplete.
+2. Rebind only the validated conversation-identity location inside the raw
+   `variables` query parameter. The current global textual replacement can also
+   alter tracking/query fields. Preserve all unrelated URL bytes.
+3. Prevent export retry from ever opening multiple threads. A retry may occur
+   only when list capture failed before target selection/navigation; any error
+   after arming/opening the target is terminal for that invocation.
+4. Safely inspect only response structure/key names from one already-read
+   thread, determine the current `messengerMessages.<hash>` cursor contract, and
+   implement pagination until the response explicitly proves the beginning/end
+   and complete contiguous coverage.
+5. Then run a real 100-conversation export twice, compare stable-ID/count
+   digests, run `npm.cmd run check` and audit, and only then mark the result done.
+
+Uncommitted safety work adds a Chromium-level denylist plus
+freeze/fence/drain/close ordering for the disposable selection renderer. The
+30-iteration teardown race now passes. Three integration assertions still need
+updating because lower-level CDP blocking correctly prevents requests before
+Playwright counters see them; all relevant local test servers saw zero forbidden
+requests. No normal Chrome process or profile was used.
+
+## Previous checkpoint (21:30; superseded by 21:42 review)
+
+The first complete-looking real run succeeded. `npm run export -- --limit 100` performed
 100 validated history GETs (one per conversation), with 0 read failures and no
 pagination pages required by the observed unpaginated persisted operation. It
 wrote `data/linkedin/messages.json` with 100 conversations, 158 messages,
 `partial: false`, no empty conversations, 200/200 participant recruiter fields,
 and no missing message directions. Message counts range from 1 to 20; 20
-conversations have more than one message.
+conversations have more than one message. The later review proved that this is
+only an incomplete default response window, not completion evidence.
 
 The final file validates against `ExportSchema`. The normalized output initially
 omitted the internal per-conversation `historyComplete` evidence even though the
