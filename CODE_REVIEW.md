@@ -1874,3 +1874,52 @@ to nemá praktický read/state-change dopad; konzervativní varianta může pře
 každý `popstate`. Po `dispose()` binding/init script v živém contextu zůstává, ale
 produkční cesta context ihned zavírá; opětovné použití stejného contextu není
 podporované.
+
+---
+
+## Závěrečný úzký re-review HEAD `a241ed3` (2026-09-06)
+
+### Verdikt
+
+**Critical: 0 · High: 1 · Medium: 0 · NO-GO** pro druhý skutečný
+`--probe-read-thread`. Fresh target Page odstranila dřívější post-arm lifecycle
+race, ale selection teardown stále nedává deterministickou síťovou bariéru.
+
+### ZR-01 — High — request selection dokumentu může během CDP teardownu zasáhnout síť
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:126-140,402-406`
+  (`sealAndCloseSelectionPage`: CDP session → `Network.enable` →
+  `Network.setBlockedURLs('*')` → `Runtime.terminateExecution` → close).
+- **Reprodukce:** plný `npm.cmd run check` selhal v implementačním testu
+  `keeps 30 zero-to-ten-millisecond selection races disjoint from the fresh target
+  page`, iterace `10`, delay `10 ms`, foreign fetch na
+  `/voyager/api/messagingV2/conversations/UNREAD/events`. Lokální server obdržel
+  **1 GET**, ačkoli test vyžaduje `0`. Snapshot po úniku byl
+  `selectionPreflightGets=1`, `targetPreflightGets=1`, `targetNavigationsAllowed=0`,
+  `crossThreadRequestsBlocked=0`, `navigationAttemptsBlocked=0`,
+  `hardSafetyViolations=0`: request tedy unikl i mimo audit/countery guardu.
+  Dvě bezprostřední samostatné reprodukce stejného 30× testu následně prošly, což
+  potvrzuje nedeterministický race, nikoli jeho uzavření.
+- **Dopad:** pod reálným timingem může již naplánovaný request staré selection Page
+  dojít na cizí (potenciálně unread) conversation-history endpoint ještě před
+  účinným CDP blokem/ukončením JavaScriptu. To porušuje základní server-hit-0
+  bezpečnostní invariant, aniž by probe přešel do hard-failure stavu.
+- **Doporučení:** vytvořit blokovací/termination fence ještě před okamžikem, kdy se
+  selection JavaScript může rozběhnout mezi asynchronními CDP kroky (např. CDP
+  session připravit předem a teardown zahájit synchronně účinnou bariérou), a
+  zároveň deterministicky uzavřít či vypustit všechny již povolené requesty před
+  vytvořením target Page. Opravu přijmout až po opakovaném 30× 0–10ms testu, kde
+  každý foreign endpoint zůstane server `0` a každý pokus je blokovaný nebo hard.
+
+### Ostatní ověřené invarianty
+
+- Zbytek plného suite prošel: fresh target Page, `History.prototype` call/apply,
+  interní page identity versus popup, route/listener lifecycle, safe flow s právě
+  jednou cached target navigation a jedním exact history GET, cookie isolation,
+  POST/WebSocket/SW a no-export.
+- Fresh missing-state probe: `AUTH_REQUIRED`, exit `3`, nevznikl parent adresář ani
+  main/`.partial`/diagnostics. Audit: **0 vulnerabilities**. Tracked secret scan
+  našel pouze názvy klíčů/testovací canary a dokumentaci, ne credential hodnotu;
+  `git diff --check` byl čistý před tímto review dodatkem.
+- Review nepoužilo LinkedIn, storageState/session ani reálná data; pouze syntetické
+  lokální HTTP/Chromium. Implementace nebyla změněna a nic nebylo commitováno.
