@@ -12,6 +12,7 @@ import { assertAuthenticated, detectAuthState } from './auth-check.js';
 import { attachNetworkCapture } from './network/capture.js';
 import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
+import { collectConversationList } from './dom/conversation-list.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
 
@@ -111,6 +112,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     }
     assertAuthenticated(await detectAuthState(selectionPage));
     await selectionPage.waitForTimeout(Math.min(2_000, config.timeoutMs));
+    const observedList = await collectConversationList(selectionPage, config.limit);
+    manifest.counts.probeObservedListRows = observedList.observedRows;
     await selectionCapture.drain();
     // Keep only redacted structural diagnostics from selection. They contain
     // key paths and counts, never message values, identifiers, cookies or bodies.
