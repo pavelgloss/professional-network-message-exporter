@@ -179,6 +179,20 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     requestHandler = (request: Request) => {
       const template = observedHistoryQueryTemplate(request.method(), request.url(), candidateIds);
       if (template) templates.set(JSON.stringify(template), template);
+      else {
+        const canonical = canonicalUrlView(request.url());
+        const decision = probeMessagingRequestPolicy('target', request.method(), request.url(), 'https://www.linkedin.com', candidateIds);
+        if (canonical && decision.messaging) {
+          const operation = canonical.query.find(({ name }) => name === 'queryId')?.value;
+          const safeOperation = operation && /^[A-Za-z][A-Za-z0-9_.-]{0,160}$/.test(operation) ? operation : 'opaque';
+          const safeMethod = request.method().toUpperCase() === 'GET' ? 'GET' : 'NON_GET';
+          const matchingReferences = [...decision.referencedIds].filter((id) => candidateIds.has(id)).length;
+          const shape = `probe-target-blocked:method ${safeMethod} path ${redactedPathShape(canonical.pathname)} operation ${safeOperation} references ${decision.referencedIds.size} matching ${matchingReferences}`;
+          if (!manifest.strategies.includes(shape) && manifest.strategies.filter((value) => value.startsWith('probe-target-blocked:')).length < 20) {
+            manifest.strategies.push(shape);
+          }
+        }
+      }
     };
     targetPage.on('request', requestHandler);
     await navigateOneSafeProbeThread(targetPage, candidate, config.timeoutMs);
@@ -194,6 +208,10 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     manifest.status = safeError.code;
     throw safeError;
   } finally {
+    if (templates.size) {
+      manifest.probeHistoryQueries = [...templates.values()];
+      manifest.counts.probeHistoryQueryTemplates = templates.size;
+    }
     if (requestHandler && targetPage) targetPage.off('request', requestHandler);
     selectionCapture.detach();
     if (navigationGate) {
@@ -214,6 +232,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeTargetPreflightFailures = snapshot.targetPreflightFailures;
       manifest.strategies.push(...snapshot.selectionBlockedRequestShapes
         .map((shape) => `probe-selection-blocked:${shape}`));
+      manifest.strategies.push(...snapshot.hardViolationReasons.map((reason) => `probe-hard-reason:${reason}`));
+      manifest.strategies.push(...snapshot.apiProxyFailures.map((reason) => `probe-api-proxy-failure:${reason}`));
       await navigationGate.dispose().catch(() => undefined);
     }
     manifest.finishedAt = new Date().toISOString();

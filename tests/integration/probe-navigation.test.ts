@@ -320,11 +320,10 @@ describe('probe navigation gate against local redirects', () => {
     const selectionPage = page;
     const target = `${origin}/messaging/thread/READ-DELAY/`;
     page = await gate!.armTarget(target, ['READ-DELAY']);
-    expect(selectionPage.isClosed()).toBe(false);
-    expect(selectionPage.url()).toBe('about:blank');
+    expect(selectionPage.isClosed()).toBe(true);
     expect(page).not.toBe(selectionPage);
     expect(page.url()).toBe('about:blank');
-    expect(new Set(context.pages())).toEqual(new Set([selectionPage, page]));
+    expect(context.pages()).toEqual([page]);
     expect(gate!.snapshot()).toMatchObject({
       targetPreflightGets: 1,
       targetPreflightFailures: 0,
@@ -388,10 +387,9 @@ describe('probe navigation gate against local redirects', () => {
         if (beforeNavigation.hardSafetyViolations > 0) {
           expect(freshTarget).toBeUndefined();
         } else {
-          expect(selectionPage.isClosed()).toBe(false);
-          expect(selectionPage.url()).toBe('about:blank');
+          expect(selectionPage.isClosed()).toBe(true);
           expect(freshTarget).toBeDefined();
-          expect(new Set(raceContext.pages())).toEqual(new Set([selectionPage, freshTarget!]));
+          expect(raceContext.pages()).toEqual([freshTarget!]);
           const preflightHits = targetRequests.get(targetPath) ?? 0;
           await freshTarget!.goto(`${origin}${targetPath}`, { waitUntil: 'domcontentloaded' });
           expect(targetRequests.get(targetPath)).toBe(preflightHits);

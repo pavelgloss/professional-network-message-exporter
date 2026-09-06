@@ -9,7 +9,7 @@ export type ProbeMessagingDecision = {
   referencedIds: Set<string>;
 };
 
-type ReferenceResult = { sawKey: boolean; valid: boolean; ids: Set<string> };
+type ReferenceResult = { sawKey: boolean; valid: boolean; unsafeConversationShape: boolean; ids: Set<string> };
 const fixedQueryNames = new Set(['queryId', 'variables', 'includeWebMetadata']);
 const canonicalReferenceNames = new Map([
   ['conversationurn', 'conversationUrn'],
@@ -93,6 +93,7 @@ function collectConversationUrns(value: string, result: ReferenceResult): void {
     let end = match.index + match[0].length;
     if (normalized[end] !== ':') {
       result.valid = false;
+      result.unsafeConversationShape = true;
       continue;
     }
     end += 1;
@@ -108,6 +109,7 @@ function collectConversationUrns(value: string, result: ReferenceResult): void {
       }
       if (!closed || (end < normalized.length && !/[\s"'`,;)\]}]/u.test(normalized[end]!))) {
         result.valid = false;
+        result.unsafeConversationShape = true;
         continue;
       }
     } else {
@@ -117,19 +119,26 @@ function collectConversationUrns(value: string, result: ReferenceResult): void {
     if (entityClass === 'supported-conversation') {
       const id = conversationIdFromUrn(urn);
       if (id) result.ids.add(id);
-      else result.valid = false;
+      else { result.valid = false; result.unsafeConversationShape = true; }
     } else {
       result.valid = false;
+      result.unsafeConversationShape = true;
     }
   }
 }
 
 function mergeReference(result: ReferenceResult, key: string, value: unknown): void {
   result.sawKey = true;
-  if (!hasCanonicalIdentityKeySpelling(key)) result.valid = false;
+  if (!hasCanonicalIdentityKeySpelling(key)) {
+    result.valid = false;
+    result.unsafeConversationShape = true;
+  }
   const id = parseReferenceValue(value);
   if (id) result.ids.add(id);
-  else result.valid = false;
+  else {
+    result.valid = false;
+    result.unsafeConversationShape = true;
+  }
 }
 
 function walkJsonReferences(value: unknown, result: ReferenceResult, depth = 0, budget = { remaining: 2_000 }): void {
@@ -199,7 +208,7 @@ function hasBalancedRestLiStructure(value: string): boolean {
 }
 
 export function parseProbeConversationReferences(query: Array<{ name: string; value: string }>): ReferenceResult {
-  const result: ReferenceResult = { sawKey: false, valid: true, ids: new Set() };
+  const result: ReferenceResult = { sawKey: false, valid: true, unsafeConversationShape: false, ids: new Set() };
   for (const { name, value } of query) {
     // Values are evidence-bearing regardless of their field name. Typed
     // conversation URNs hidden in JSON, arrays or Rest.li tokens cannot bypass
@@ -256,11 +265,19 @@ export function probeMessagingRequestPolicy(phase: ProbeRequestPhase, method: st
   const operation = operations[0]!;
   if (/mutation|send|delete|archive|markRead|markUnread|reaction|typing/i.test(operation)) return blocked();
   if (listOperation.test(operation)) {
-    return references.sawKey || !references.valid
-      ? blocked(true, references.ids)
-      : { messaging: true, allow: true, kind: 'conversation-list', referencedIds: references.ids };
+    // Once one already-read target has been selected, the persisted list
+    // operation remains a read-only collection query regardless of its UI
+    // anchor/category variables. It cannot become a message-history or mutation
+    // operation because queryId fixes the server-side document.
+    if (phase === 'target') return { messaging: true, allow: true, kind: 'conversation-list', referencedIds: references.ids };
+    const ordinaryList = !references.sawKey && references.valid;
+    return ordinaryList
+      ? { messaging: true, allow: true, kind: 'conversation-list', referencedIds: references.ids }
+      : blocked(true, references.ids);
   }
-  if (phase === 'target' && historyOperation.test(operation) && references.sawKey && references.valid
+  const exactCurrentHistory = /^messengerMessages\.[A-Fa-f0-9]{32,128}$/.test(operation);
+  if (phase === 'target' && historyOperation.test(operation) && references.sawKey
+    && (exactCurrentHistory || !references.unsafeConversationShape)
     && references.ids.size === 1 && [...references.ids].every((id) => targetIds.has(id))) {
     return { messaging: true, allow: true, kind: 'conversation-history', referencedIds: references.ids };
   }

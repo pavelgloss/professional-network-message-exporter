@@ -18,6 +18,8 @@ describe('probe phase-specific messaging request policy', () => {
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&mailboxUrn=${encodeURIComponent(mailboxUrn)}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.not-a-hash`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ cursor: 'next' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'UNREAD' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(`(mailboxUrn:urn:li:messagingThread:UNREAD,count:20)`)}`)).toMatchObject({ allow: false, kind: 'blocked' });
@@ -36,6 +38,7 @@ describe('probe phase-specific messaging request policy', () => {
       `${dash}?queryId=messengerConversationMessages&variables=${encodeURIComponent(JSON.stringify({ input: { threadId: 'READ' } }))}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent('(conversationUrn:urn:li:messagingThread:READ)')}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', conversationUrn: 'urn:li:messagingThread:READ' }))}`,
+      `${dash}?queryId=messengerMessages.${hash}&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ', messagingType: 'INBOX' }))}`,
     ];
     for (const url of allowed) expect(decide('target', url), url).toMatchObject({ allow: true, kind: 'conversation-history' });
 

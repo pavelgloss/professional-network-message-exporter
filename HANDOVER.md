@@ -1,6 +1,27 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 15:36 Europe/Prague
+Last updated: 2026-09-06 20:12 Europe/Prague
+
+## Latest checkpoint (20:12)
+
+The real one-thread probe now succeeds. Aggregate result: 20 list conversations,
+12 explicitly read candidates, exactly 1 target navigation, exactly 1 validated
+`messengerMessages.<hash>` history template, and 0 hard safety violations. The
+probe never touched the user's normal Chrome and every observed POST was blocked.
+
+The final issue was not a request reaching LinkedIn: after the cached target
+loaded, LinkedIn attempted another document navigation. Playwright aborted it,
+Chromium retained the exact target URL in an inert renderer, but the old check
+mistook the missing in-page guard marker for a safety escape. Target safety now
+accepts that inert exact-URL state while the authoritative Node route guard stays
+active. Safe redacted reason counters remain available for future regressions.
+
+Next active work: return the validated raw history GET only in process memory,
+instantiate it for each of the 100 list conversation IDs, retrieve all pages with
+isolated authenticated GET-only request contexts, and prove complete coverage.
+The focused integration suite still has old expectations that treat successfully
+aborted target requests as fatal; update those expectations to the implemented
+invariant (zero server hits + exact target state), then run the full suite.
 
 ## Objective and non-negotiable safety boundary
 
@@ -32,11 +53,13 @@ The user explicitly approved the one-thread probe. Selection is restricted to a 
 - Latest real probe aggregate: selection conversations 20, explicitly read 12, target preflight 1/1, thread navigations 1, POST requests blocked, one remaining hard safety condition after target load.
 - The current target emits a GET persisted operation `messengerMessages.<hex hash>`. The parser finds exactly one conversation reference and it matches the selected target. The policy still blocks it because another conservative reference-validity check fails.
 
-## Current blocker
+## Previous blocker (resolved at 20:12)
 
-The one-thread target page is opened safely, but `messengerMessages.<hash>` is still rejected despite `references=1` and `matching=1`. As a result no history response/template is captured and the probe ends with `READ_POLICY_BLOCK` after target load.
+The one-thread target page used to end in `READ_POLICY_BLOCK`. The current exact
+hashed request is accepted and the real probe now captures one history template.
 
-There is also one target-page hard flag after load. All observed navigations and denied subrequests were aborted before the wire; likely causes are a blocked client same-document attempt or an abort race. Before weakening anything further, record a safe reason counter in `ProbeNavigationSnapshot`, or make `assertTargetSafe` distinguish URL/guard/hard causes without logging the target URL.
+The post-load hard flag was traced with safe reason counters and resolved as
+described in the latest checkpoint above.
 
 The immediate functional route is:
 
