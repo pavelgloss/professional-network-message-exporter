@@ -3,10 +3,12 @@ import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-sa
 import { redactedPathShape } from '../domain/url-redaction.js';
 import { AppError } from '../errors.js';
 import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
+import { conversationIdFromUrn } from '../domain/stable-id.js';
 
 export type ProbeNavigationSnapshot = {
   selectionNavigationsAllowed: number;
   targetNavigationsAllowed: number;
+  targetEquivalentNavigationsAllowed: number;
   navigationAttemptsBlocked: number;
   popupPagesBlocked: number;
   crossThreadRequestsBlocked: number;
@@ -47,6 +49,15 @@ function exactCanonicalLocation(rawUrl: string): string | undefined {
 function normalizedId(value: string): string | undefined {
   const normalized = repeatedlyDecodeAndNormalize(value);
   return normalized && (/^[\p{L}\p{N}_.-]+$/u.test(normalized) || /^[A-Za-z0-9._~=-]+$/.test(normalized)) ? normalized : undefined;
+}
+
+function exactThreadRouteId(rawUrl: string, expectedOrigin: string): string | undefined {
+  const canonical = canonicalUrlView(rawUrl);
+  if (!canonical || canonical.url.origin !== expectedOrigin || canonical.url.username || canonical.url.password
+    || canonical.url.search || canonical.url.hash) return undefined;
+  const segment = canonical.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1];
+  const normalized = segment ? repeatedlyDecodeAndNormalize(segment) : undefined;
+  return normalized ? normalizedId(conversationIdFromUrn(normalized) ?? normalized) : undefined;
 }
 
 export function explicitProbeGraphqlConversationIds(method: string, rawUrl: string): Set<string> {
@@ -181,6 +192,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
   const counts: ProbeNavigationSnapshot = {
     selectionNavigationsAllowed: 0,
     targetNavigationsAllowed: 0,
+    targetEquivalentNavigationsAllowed: 0,
     navigationAttemptsBlocked: 0,
     popupPagesBlocked: 0,
     crossThreadRequestsBlocked: 0,
@@ -396,8 +408,19 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     // A thread route is never allowed onto the wire, for any resource type or
     // frame. The sole target document exception was fulfilled from memory above.
     if (isProbeThreadUrl(request.url(), expectedOrigin)) {
-      const redundantExactTarget = phase === 'target-used' && request.isNavigationRequest();
-      await block(route, 'cross-thread', redundantExactTarget ? false : blockedMessagingAttemptIsFatal(request), false, 'thread-route');
+      const routeId = exactThreadRouteId(request.url(), expectedOrigin);
+      const equivalentTarget = phase === 'target-used' && request.isNavigationRequest() && Boolean(routeId && targetIds.has(routeId));
+      if (equivalentTarget && counts.targetEquivalentNavigationsAllowed < 2) {
+        const equivalentLocation = exactCanonicalLocation(request.url());
+        const document = equivalentLocation ? await isolatedCachedDocument(context, request.url(), equivalentLocation) : undefined;
+        if (document && !hardViolated) {
+          counts.targetEquivalentNavigationsAllowed += 1;
+          await route.fulfill(document);
+          return;
+        }
+      }
+      await block(route, 'cross-thread', equivalentTarget ? false : blockedMessagingAttemptIsFatal(request), false,
+        equivalentTarget ? 'equivalent-thread-budget' : 'thread-route');
       return;
     }
 
@@ -483,7 +506,10 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     // Node-side route gate remains authoritative and the inert target is safe;
     // selection still requires the client marker above.
     const clientBoundaryReady = Boolean(state?.guardReady || (candidatePage === targetPage && state));
-    return !hardViolated && Boolean(clientBoundaryReady && exactCanonicalLocation(state?.href ?? '') === expected
+    const exactOrEquivalentLocation = exactCanonicalLocation(state?.href ?? '') === expected
+      || Boolean(candidatePage === targetPage && exactThreadRouteId(state?.href ?? '', expectedOrigin)
+        && targetIds.has(exactThreadRouteId(state?.href ?? '', expectedOrigin)!));
+    return !hardViolated && Boolean(clientBoundaryReady && exactOrEquivalentLocation
       && !state?.hardClientViolation && (!state?.historyBlocked || toleratedClientAttempt));
   };
 
@@ -593,7 +619,8 @@ export async function installProbeNavigationGate(context: BrowserContext, select
           && state.historyAttemptsBlocked + state.popupAttemptsBlocked > 0);
         const reasons = [
           counts.targetNavigationsAllowed !== 1 && 'navigation-count', !state && 'state-unavailable',
-          state && !state.guardReady && 'guard', state && exactCanonicalLocation(state.href) !== targetLocation && 'location',
+          state && !state.guardReady && 'guard', state && exactCanonicalLocation(state.href) !== targetLocation
+            && !targetIds.has(exactThreadRouteId(state.href, expectedOrigin) ?? '') && 'location',
           state?.hardClientViolation && 'hard-client', state?.historyBlocked && !toleratedClientAttempt && 'client-attempt',
         ].filter(Boolean).join(',') || 'race';
         markHardViolation(`target-state-${reasons}`);

@@ -39,6 +39,7 @@ describe('one already-read thread probe', () => {
       ...paddedReadConversation,
       entityUrn: 'urn:li:msg_conversation:(urn:li:fsd_profile:SELF,READ==)',
     }).pathname).toBe('/messaging/thread/READ%3D%3D/');
+    expect(selectSafeProbeConversation([readConversation, paddedReadConversation], new Set(['READ==']))).toBe(paddedReadConversation);
   });
 
   it('preserves explicit read booleans and trusted unreadCount evidence from network conversations', () => {

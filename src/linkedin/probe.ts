@@ -1,4 +1,5 @@
 import type { Page, Request } from 'playwright';
+import { readFile } from 'node:fs/promises';
 import type { AppConfig } from '../config.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 import { conversationIdFromUrn, parseLinkedInUrn } from '../domain/stable-id.js';
@@ -12,6 +13,7 @@ import { assertAuthenticated, detectAuthState } from './auth-check.js';
 import { attachNetworkCapture } from './network/capture.js';
 import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
+import { domSelectors } from './dom/selectors.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
 export type ObservedHistoryGet = {
@@ -20,7 +22,92 @@ export type ObservedHistoryGet = {
   targetIds: string[];
   seedConversations: RawConversation[];
   paginationUrls: string[];
+  continuationUrls: string[];
 };
+
+async function preferredProbeIds(outputPath: string): Promise<Set<string>> {
+  const output = new Set<string>();
+  for (const candidatePath of [`${outputPath}.partial`, outputPath]) {
+    try {
+      const parsed = JSON.parse(await readFile(candidatePath, 'utf8')) as unknown;
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { conversations?: unknown }).conversations)) continue;
+      const conversations = (parsed as { conversations: unknown[] }).conversations
+        .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
+        .sort((left, right) => (Array.isArray(right.messages) ? right.messages.length : 0) - (Array.isArray(left.messages) ? left.messages.length : 0));
+      for (const conversation of conversations) {
+        if (!Array.isArray(conversation.messages) || conversation.messages.length < 20 || typeof conversation.url !== 'string') continue;
+        const canonical = canonicalUrlView(conversation.url);
+        const id = safeRouteConversationId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+        if (id) output.add(id);
+      }
+    } catch { /* A missing/stale local candidate is only a selection hint. */ }
+  }
+  return output;
+}
+
+async function freshPreferredProbeConversation(outputPath: string): Promise<RawConversation | undefined> {
+  for (const candidatePath of [`${outputPath}.partial`, outputPath]) {
+    try {
+      const parsed = JSON.parse(await readFile(candidatePath, 'utf8')) as Record<string, unknown>;
+      const exportedAt = typeof parsed.exportedAt === 'string' ? Date.parse(parsed.exportedAt) : Number.NaN;
+      if (!Number.isFinite(exportedAt) || Date.now() - exportedAt < 0 || Date.now() - exportedAt > 30 * 60_000
+        || !Array.isArray(parsed.conversations)) continue;
+      const candidates = parsed.conversations
+        .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
+        .filter((conversation) => Array.isArray(conversation.messages) && conversation.messages.length >= 20
+          && typeof conversation.url === 'string'
+          && conversation.sourceMetadata && typeof conversation.sourceMetadata === 'object'
+          && (conversation.sourceMetadata as Record<string, unknown>).read === true
+          && (conversation.sourceMetadata as Record<string, unknown>).readEvidence === 'network-explicit')
+        .sort((left, right) => (right.messages as unknown[]).length - (left.messages as unknown[]).length);
+      for (const conversation of candidates) {
+        const url = conversation.url as string;
+        const canonical = canonicalUrlView(url);
+        const id = safeRouteConversationId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+        const entityUrn = typeof conversation.entityUrn === 'string'
+          && conversationIdFromUrn(conversation.entityUrn) === id ? conversation.entityUrn : undefined;
+        if (!id) continue;
+        const candidate: RawConversation = {
+          id,
+          ...(entityUrn ? { entityUrn } : {}),
+          url,
+          sourceMetadata: { read: true, readEvidence: 'network-explicit' },
+        };
+        assertSafeProbeConversation(candidate);
+        return candidate;
+      }
+    } catch { /* Missing, stale or malformed local evidence is never trusted. */ }
+  }
+  return undefined;
+}
+
+async function scrollTargetHistoryWithoutReading(page: Page, observedUrlCount: () => number): Promise<number> {
+  await page.locator(domSelectors.messageContainers.join(',')).first().waitFor({ state: 'attached', timeout: 5_000 }).catch(() => undefined);
+  const baseline = observedUrlCount();
+  let scrollableCandidates = 0;
+  let stableAfterNewRequest = 0;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    scrollableCandidates = Math.max(scrollableCandidates, await page.evaluate(() => {
+      const visible = (element: Element): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && element.scrollHeight > element.clientHeight + 2;
+      };
+      const candidates = [...document.querySelectorAll('*')].filter(visible);
+      for (const element of candidates) {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
+      return candidates.length;
+    }).catch(() => 0));
+    await page.waitForTimeout(700);
+    if (observedUrlCount() > baseline) {
+      stableAfterNewRequest += 1;
+      if (stableAfterNewRequest >= 3) break;
+    }
+  }
+  return scrollableCandidates;
+}
 
 function safeObservedHeaders(headers: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(headers).filter(([name]) =>
@@ -107,8 +194,13 @@ function safeProbeConversationRejection(conversation: RawConversation): string |
   return undefined;
 }
 
-export function selectSafeProbeConversation(conversations: RawConversation[]): RawConversation {
-  for (const conversation of conversations) {
+export function selectSafeProbeConversation(conversations: RawConversation[], preferredIds: ReadonlySet<string> = new Set()): RawConversation {
+  const ordered = [...conversations].sort((left, right) => {
+    const leftPreferred = [...knownProbeConversationIds(left)].some((id) => preferredIds.has(id));
+    const rightPreferred = [...knownProbeConversationIds(right)].some((id) => preferredIds.has(id));
+    return Number(rightPreferred) - Number(leftPreferred);
+  });
+  for (const conversation of ordered) {
     try {
       assertSafeProbeConversation(conversation);
       const ids = knownProbeConversationIds(conversation);
@@ -157,6 +249,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
   let targetCapture: ReturnType<typeof attachNetworkCapture> | undefined;
   let requestHandler: ((request: Request) => void) | undefined;
   let observedRequest: Request | undefined;
+  const observedRequests = new Map<string, Request>();
   let result: ObservedHistoryGet | undefined;
   let navigationGate: ProbeNavigationGate | undefined;
   try {
@@ -177,6 +270,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       await selectionPage.waitForTimeout(200);
       await selectionCapture.drain();
     } while (!selectionCapture.conversations.length && Date.now() < selectionDeadline);
+    const preferredIds = await preferredProbeIds(config.outputPath);
+    const freshPreferred = await freshPreferredProbeConversation(config.outputPath);
     manifest.counts.probeObservedListRows = 0;
     // Keep only redacted structural diagnostics from selection. They contain
     // key paths and counts, never message values, identifiers, cookies or bodies.
@@ -203,7 +298,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       }
     }
     await navigationGate.assertSelectionSafe();
-    const candidate = selectSafeProbeConversation(selectionCapture.conversations);
+    const candidate = freshPreferred ?? selectSafeProbeConversation(selectionCapture.conversations, preferredIds);
+    if (freshPreferred) manifest.strategies.push('probe-candidate:fresh-local-network-read-evidence');
     const targetUrl = assertSafeProbeConversation(candidate);
     const candidateIds = knownProbeConversationIds(candidate);
     // No selection response/listener survives into the target lifecycle.
@@ -216,6 +312,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       if (template) {
         templates.set(JSON.stringify(template), template);
         observedRequest ??= request;
+        observedRequests.set(request.url(), request);
       }
       else {
         const canonical = canonicalUrlView(request.url());
@@ -236,11 +333,14 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     await navigateOneSafeProbeThread(targetPage, candidate, config.timeoutMs);
     await targetPage.waitForTimeout(Math.min(3_000, config.timeoutMs));
     await targetCapture.drain();
+    manifest.counts.probeTargetScrollableContainers = await scrollTargetHistoryWithoutReading(targetPage, () => observedRequests.size);
+    await targetCapture.drain();
     await navigationGate.assertTargetSafe();
     manifest.probeHistoryQueries = [...templates.values()];
     manifest.counts.probeHistoryQueryTemplates = templates.size;
     if (!templates.size) throw new AppError('PARSER_NO_DATA', 'The one-thread probe observed no safe GET history query template', 4);
     if (!observedRequest) throw new AppError('PARSER_NO_DATA', 'The one-thread probe did not retain its validated history GET', 4);
+    manifest.counts.probeHistoryRequestUrls = observedRequests.size;
     result = {
       url: observedRequest.url(),
       headers: safeObservedHeaders(await observedRequest.allHeaders()),
@@ -248,9 +348,15 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       seedConversations: targetCapture.conversations.filter((conversation) =>
         Boolean(conversation.id && candidateIds.has(conversation.id))),
       paginationUrls: [...targetCapture.paginationUrls],
+      continuationUrls: [...observedRequests.keys()].filter((url) => url !== observedRequest!.url()),
     };
-    const variableShape = safeVariableShape(result.url);
-    if (variableShape) manifest.strategies.push(`probe-history-variable-shape:${variableShape}`);
+    for (const url of observedRequests.keys()) {
+      const variableShape = safeVariableShape(url);
+      if (variableShape) {
+        const strategy = `probe-history-variable-shape:${variableShape}`;
+        if (!manifest.strategies.includes(strategy)) manifest.strategies.push(strategy);
+      }
+    }
     manifest.counts.probeHistoryParsedConversations = result.seedConversations.length;
     manifest.counts.probeHistoryParsedMessages = result.seedConversations
       .reduce((sum, conversation) => sum + (conversation.messages?.length ?? 0), 0);
@@ -272,6 +378,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       const snapshot = navigationGate.snapshot();
       manifest.counts.probeSelectionNavigations = snapshot.selectionNavigationsAllowed;
       manifest.counts.probeThreadNavigations = snapshot.targetNavigationsAllowed;
+      manifest.counts.probeEquivalentThreadNavigations = snapshot.targetEquivalentNavigationsAllowed;
       manifest.counts.probeNavigationAttemptsBlocked = snapshot.navigationAttemptsBlocked;
       manifest.counts.probePopupPagesBlocked = snapshot.popupPagesBlocked;
       manifest.counts.probeCrossThreadRequestsBlocked = snapshot.crossThreadRequestsBlocked;

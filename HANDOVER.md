@@ -1,8 +1,35 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 21:56 Europe/Prague
+Last updated: 2026-09-06 22:09 Europe/Prague
 
-## Latest checkpoint (21:56) — sync-token dead end proven
+## Latest checkpoint (22:09) — target DOM scrolling is a dead end
+
+The ignored partial candidate contains one 20-message conversation with fresh
+(`<=30min`) `read=true/readEvidence=network-explicit`. Probe can use that only as
+a local selection hint while still applying exact URL/identity validation, an
+isolated GET preflight, fresh ephemeral Chromium, and one target maximum. The
+navigation gate was also fixed so only a canonicalized route resolving to the
+same conversation identity can be treated as equivalent; a foreign thread
+navigation is now fatal. The 38 navigation integration tests and typecheck pass.
+
+Two successful real probes of that long thread each had: one target navigation,
+zero hard safety violations, one distinct history URL, the expected 20-message
+response (observed twice by the page), but **zero DOM elements with any vertical
+scroll range**, even after testing all visible elements rather than only
+`overflow:auto|scroll`. The strict target page does not render a message list,
+likely because auxiliary messaging endpoints are deliberately denied. Therefore
+UI scrolling cannot reveal the older-history request under the current safe gate;
+do not repeat this approach.
+
+One failed selection-list-scroll experiment opened zero threads and failed closed
+after a proxied UI response changed; also do not repeat it. Next: inspect only
+identifier/schema hints around `messengerMessages`, `newSyncToken`, paging/anchor
+terms in already downloaded static LinkedIn JavaScript bundles. No message/identity
+content may be recorded. Use those hints to construct one bounded same-operation
+GET experiment, or conclude that complete history cannot be proven under the
+non-mutating GET-only boundary.
+
+## Previous checkpoint (21:56) — sync-token dead end proven
 
 Commit `f57a589` added a one-GET, in-memory-only experiment for the one plausible
 `newSyncToken` binding. A fresh 100-conversation partial run reached a 20-element
