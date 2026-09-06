@@ -1,4 +1,4 @@
-import type { Page, Request } from 'playwright';
+import type { Page, Request, Response } from 'playwright';
 import { readFile } from 'node:fs/promises';
 import type { AppConfig } from '../config.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
@@ -14,6 +14,57 @@ import { attachNetworkCapture } from './network/capture.js';
 import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
 import { domSelectors } from './dom/selectors.js';
+
+type BundleHintCapture = { drain(): Promise<void>; detach(): void };
+
+function attachBundleContractHints(page: Page, manifest: DiagnosticsManifest): BundleHintCapture {
+  const pending = new Set<Promise<void>>();
+  let inspected = 0;
+  const terms = ['messengerMessagesBySyncToken', 'prevCursor', 'ADD_OLDER_MESSAGES', 'messengerMessages', 'newSyncToken', 'shouldClearCache'];
+  const relevantIdentifier = /message|sync|cursor|anchor|page|before|after|older|previous|next|load|cache|history|event|conversation|query|variables|metadata|element|fully/i;
+  const codeAllowlist = /^(?:messengerMessagesBySyncToken|messengerMessages|newSyncToken|syncToken|prevCursor|conversationUrn|urn|older|fullyLoaded|shouldClearCache|ADD_OLDER_MESSAGES|hasMore|cursor|messages|metadata|elements|queryId|variables)$/;
+  const handle = (response: Response) => {
+    if (inspected >= 80 || response.request().resourceType() !== 'script') return;
+    const declared = Number(response.headers()['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > 12 * 1024 * 1024) return;
+    inspected += 1;
+    const job = (async () => {
+      const source = await response.text();
+      if (source.length > 12 * 1024 * 1024) return;
+      for (const term of terms) {
+        let offset = 0;
+        for (let occurrence = 0; occurrence < 6; occurrence += 1) {
+          const index = source.indexOf(term, offset);
+          if (index < 0) break;
+          offset = index + term.length;
+          const window = source.slice(Math.max(0, index - 900), Math.min(source.length, index + term.length + 900));
+          const identifiers = [...new Set(window.match(/[A-Za-z_$][A-Za-z0-9_$]{2,80}/g) ?? [])]
+            .filter((value) => relevantIdentifier.test(value)).sort().slice(0, 40);
+          if (!identifiers.length) continue;
+          const strategy = `bundle-contract:${term}:${identifiers.join(',')}`;
+          if (!manifest.strategies.includes(strategy)
+            && manifest.strategies.filter((value) => value.startsWith('bundle-contract:')).length < 18) {
+            manifest.strategies.push(strategy);
+          }
+          const tokens = window.match(/[A-Za-z_$][A-Za-z0-9_$]{1,80}|[{}()[\],.:?=]/g) ?? [];
+          const anonymized = tokens.map((token) => /^[A-Za-z_$]/.test(token) ? (codeAllowlist.test(token) ? token : 'x') : token)
+            .join(' ').replace(/(?:x\s+){2,}/g, 'x ').slice(0, 1_800);
+          const codeStrategy = `bundle-code:${term}:${anonymized}`;
+          if (!manifest.strategies.includes(codeStrategy)
+            && manifest.strategies.filter((value) => value.startsWith('bundle-code:')).length < 12) {
+            manifest.strategies.push(codeStrategy);
+          }
+        }
+      }
+    })().catch(() => undefined).finally(() => pending.delete(job));
+    pending.add(job);
+  };
+  page.on('response', handle);
+  return {
+    async drain() { await Promise.allSettled([...pending]); },
+    detach() { page.off('response', handle); },
+  };
+}
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
 export type ObservedHistoryGet = {
@@ -245,8 +296,10 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
   let targetPage: Page | undefined;
   const selectionManifest = createManifest();
   const selectionCapture = attachNetworkCapture(selectionPage, selectionManifest, logger);
+  const selectionBundleHints = attachBundleContractHints(selectionPage, manifest);
   const templates = new Map<string, ProbeHistoryQuery>();
   let targetCapture: ReturnType<typeof attachNetworkCapture> | undefined;
+  let targetBundleHints: BundleHintCapture | undefined;
   let requestHandler: ((request: Request) => void) | undefined;
   let observedRequest: Request | undefined;
   const observedRequests = new Map<string, Request>();
@@ -304,8 +357,11 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     const candidateIds = knownProbeConversationIds(candidate);
     // No selection response/listener survives into the target lifecycle.
     selectionCapture.detach();
+    await selectionBundleHints.drain();
+    selectionBundleHints.detach();
     targetPage = await navigationGate.armTarget(targetUrl.toString(), candidateIds);
     targetCapture = attachNetworkCapture(targetPage, manifest, logger);
+    targetBundleHints = attachBundleContractHints(targetPage, manifest);
 
     requestHandler = (request: Request) => {
       const template = observedHistoryQueryTemplate(request.method(), request.url(), candidateIds);
@@ -333,6 +389,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     await navigateOneSafeProbeThread(targetPage, candidate, config.timeoutMs);
     await targetPage.waitForTimeout(Math.min(3_000, config.timeoutMs));
     await targetCapture.drain();
+    await targetBundleHints.drain();
     manifest.counts.probeTargetScrollableContainers = await scrollTargetHistoryWithoutReading(targetPage, () => observedRequests.size);
     await targetCapture.drain();
     await navigationGate.assertTargetSafe();
@@ -373,6 +430,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     }
     if (requestHandler && targetPage) targetPage.off('request', requestHandler);
     targetCapture?.detach();
+    targetBundleHints?.detach();
+    selectionBundleHints.detach();
     selectionCapture.detach();
     if (navigationGate) {
       const snapshot = navigationGate.snapshot();

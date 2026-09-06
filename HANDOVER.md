@@ -1,8 +1,28 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 22:09 Europe/Prague
+Last updated: 2026-09-06 22:13 Europe/Prague
 
-## Latest checkpoint (22:09) — target DOM scrolling is a dead end
+## Latest checkpoint (22:13) — separate older-history operation found
+
+Schema-name inspection of JavaScript bundles already downloaded by the guarded
+page found the missing client contract. Relevant identifiers cluster together:
+
+```text
+messengerMessagesBySyncToken, syncToken, newSyncToken, prevCursor, older,
+fullyLoaded, shouldClearCache, ADD_OLDER_MESSAGES, syncMessagesToMessageStates
+```
+
+Thus the original `messengerMessages.<hash>` operation is only initial load, and
+the previously tested `newSyncToken` is for incremental sync. Older pages use a
+separate persisted `messengerMessagesBySyncToken` operation with client
+`prevCursor`; completion is represented by `fullyLoaded`. Next action is one
+tokenized bundle-context pass (only allowlisted identifier names plus punctuation;
+all other identifiers/literals become `x`) to determine the exact variable
+binding. Then add the new operation to the exact GET policy and parser, with no
+acceptance unless it is cryptographically/structurally chained from the initial
+target response token/cursor.
+
+## Previous checkpoint (22:09) — target DOM scrolling is a dead end
 
 The ignored partial candidate contains one 20-message conversation with fresh
 (`<=30min`) `read=true/readEvidence=network-explicit`. Probe can use that only as
