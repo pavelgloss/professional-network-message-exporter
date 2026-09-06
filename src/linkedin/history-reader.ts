@@ -1,7 +1,6 @@
 import type { APIRequestContext } from 'playwright';
 import type { RawConversation } from '../domain/schema.js';
-import { conversationIdFromUrn, sha256Id } from '../domain/stable-id.js';
-import { repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
+import { conversationIdFromUrn } from '../domain/stable-id.js';
 import { AppError } from '../errors.js';
 import type { DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
@@ -27,6 +26,53 @@ function encodedForms(value: string): string[] {
   return [...new Set(forms)];
 }
 
+type RawReplacement = { start: number; length: number; value: string };
+
+function replaceAt(value: string, start: number, length: number, replacement: string): string {
+  return `${value.slice(0, start)}${replacement}${value.slice(start + length)}`;
+}
+
+function identityReplacements(templateUrl: string, oldIds: string[], newTargetId: string): RawReplacement[] {
+  const queryStart = templateUrl.indexOf('?');
+  if (queryStart < 0) return [];
+  const rawQuery = templateUrl.slice(queryStart + 1);
+  // The padding keeps a distinct representation at every encoding depth, so a
+  // candidate occurrence can be tested without changing its surrounding bytes.
+  const sentinel = 'LINKEDIN_READER_REBIND_SENTINEL_7f4ca8d2==';
+  if (oldIds.includes(sentinel) || newTargetId === sentinel) {
+    throw new AppError('READ_POLICY_BLOCK', 'Observed history GET used a reserved identity', 4);
+  }
+  const replacements: RawReplacement[] = [];
+  const occupied: Array<{ start: number; end: number }> = [];
+  for (const oldId of oldIds) {
+    const oldForms = encodedForms(oldId);
+    const newForms = encodedForms(newTargetId);
+    const sentinelForms = encodedForms(sentinel);
+    const forms = oldForms.map((oldForm, depth) => ({ oldForm, newForm: newForms[depth]!, sentinelForm: sentinelForms[depth]! }))
+      .sort((left, right) => right.oldForm.length - left.oldForm.length);
+    for (const { oldForm, newForm, sentinelForm } of forms) {
+      let offset = 0;
+      while (offset <= rawQuery.length - oldForm.length) {
+        const relative = rawQuery.indexOf(oldForm, offset);
+        if (relative < 0) break;
+        const absolute = queryStart + 1 + relative;
+        offset = relative + Math.max(1, oldForm.length);
+        if (occupied.some((range) => absolute < range.end && absolute + oldForm.length > range.start)) continue;
+        // Replace just this occurrence with a recognizable safe sentinel. The
+        // policy parser tells us whether that byte range is an actual semantic
+        // conversation reference. Tracking values and persisted query hashes
+        // never surface as referencedIds and therefore remain byte-identical.
+        const candidate = replaceAt(templateUrl, absolute, oldForm.length, sentinelForm);
+        const decision = probeMessagingRequestPolicy('target', 'GET', candidate, 'https://www.linkedin.com', new Set([...oldIds, sentinel]));
+        if (!decision.referencedIds.has(sentinel)) continue;
+        replacements.push({ start: absolute, length: oldForm.length, value: newForm });
+        occupied.push({ start: absolute, end: absolute + oldForm.length });
+      }
+    }
+  }
+  return replacements;
+}
+
 /**
  * Rebinds only the conversation identity in an observed, already validated GET.
  * The resulting request must independently pass the same exact target policy.
@@ -41,26 +87,13 @@ export function instantiateObservedHistoryUrl(templateUrl: string, oldTargetIds:
   }
 
   assertAllowedReadUrl(templateUrl);
-  let output = templateUrl;
-  let replacements = 0;
-  // Preserve LinkedIn's exact nested Rest.li/percent encoding. Rebuilding the
-  // query with URLSearchParams changes that encoding even when its decoded
-  // meaning is the same, and the persisted endpoint rejects the rewritten URL.
-  for (const oldId of oldIds) {
-    const oldForms = encodedForms(oldId);
-    const newForms = encodedForms(newTargetId);
-    const replacementsByDepth = oldForms.map((oldForm, index) => ({ oldForm, newForm: newForms[index]! }))
-      .sort((left, right) => right.oldForm.length - left.oldForm.length);
-    for (const { oldForm, newForm } of replacementsByDepth) {
-      const before = output;
-      output = output.split(oldForm).join(newForm);
-      if (output !== before) replacements += 1;
-    }
-  }
-  if (!replacements && !oldIds.includes(newTargetId)) {
+  const replacements = identityReplacements(templateUrl, oldIds, newTargetId);
+  if (!replacements.length && !oldIds.includes(newTargetId)) {
     throw new AppError('READ_POLICY_BLOCK', 'Observed history GET identity could not be rebound', 4);
   }
-  const result = output;
+  const result = [...replacements]
+    .sort((left, right) => right.start - left.start)
+    .reduce((value, replacement) => replaceAt(value, replacement.start, replacement.length, replacement.value), templateUrl);
   const decision = probeMessagingRequestPolicy('target', 'GET', result, 'https://www.linkedin.com', new Set([newTargetId]));
   if (!decision.allow || decision.kind !== 'conversation-history' || decision.referencedIds.size !== 1
     || !decision.referencedIds.has(newTargetId)) {
@@ -79,35 +112,42 @@ function exactHistoryPage(rawUrl: string, targetId: string): string {
   return url;
 }
 
-function isUnpaginatedFullCollection(rawUrl: string): boolean {
-  try {
-    const url = new URL(rawUrl);
-    if (!/^messengerMessages\.[A-Fa-f0-9]{32,128}$/.test(url.searchParams.get('queryId') ?? '')) return false;
-    const variables = repeatedlyDecodeAndNormalize(url.searchParams.get('variables') ?? '') ?? '';
-    return !/(?:^|[({,])\s*(?:cursor|start|count|anchor|before|after|first|last|paginationToken)\s*:/i.test(variables);
-  } catch { return false; }
+function safeSchemaKey(value: string): string | undefined {
+  return /^[A-Za-z_$*][A-Za-z0-9_$*-]{0,80}$/.test(value) ? value : undefined;
 }
 
-function markCompleteUnpaginatedCollection(conversation: RawConversation, sourceUrl: string): RawConversation {
-  const count = conversation.messages?.length ?? 0;
-  const page = sha256Id('network-page', [sourceUrl]);
-  const evidence = [{
-    resource: sha256Id('history-resource', [sourceUrl]),
-    page,
-    start: 0,
-    count,
-    total: count,
-    end: true,
-    valid: true,
-  }];
-  return {
-    ...conversation,
-    sourceMetadata: {
-      ...conversation.sourceMetadata,
-      historyEvidence: JSON.stringify(evidence),
-      historyComplete: true,
-    },
-  };
+/** Structural diagnostics only: schema field names, primitive types and array lengths. */
+export function historyCollectionContractShapes(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const root = payload as Record<string, unknown>;
+  const data = root.data && typeof root.data === 'object' && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown> : undefined;
+  if (!data) return [];
+  const shapes = new Set<string>();
+  for (const candidate of Object.values(data)) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const collection = candidate as Record<string, unknown>;
+    if (!Array.isArray(collection.elements)) continue;
+    const describe = (key: string, value: unknown): string | undefined => {
+      const safeKey = safeSchemaKey(key);
+      if (!safeKey) return undefined;
+      if (Array.isArray(value)) return `${safeKey}:array(${value.length})`;
+      if (value === null) return `${safeKey}:null`;
+      if (typeof value === 'boolean' || typeof value === 'number') return `${safeKey}:${typeof value}(${String(value)})`;
+      if (typeof value === 'string') return `${safeKey}:string`;
+      return value && typeof value === 'object' ? `${safeKey}:object` : `${safeKey}:${typeof value}`;
+    };
+    const top = Object.entries(collection).map(([key, value]) => describe(key, value)).filter((value): value is string => Boolean(value)).sort();
+    shapes.add(`collection[${top.join(',')}]`);
+    for (const [parentKey, child] of Object.entries(collection)) {
+      const safeParent = safeSchemaKey(parentKey);
+      if (!safeParent || !child || typeof child !== 'object' || Array.isArray(child)) continue;
+      const nested = Object.entries(child as Record<string, unknown>)
+        .map(([key, value]) => describe(key, value)).filter((value): value is string => Boolean(value)).sort();
+      shapes.add(`${safeParent}[${nested.join(',')}]`);
+    }
+  }
+  return [...shapes].sort();
 }
 
 export async function readObservedConversationHistories(
@@ -153,15 +193,18 @@ export async function readObservedConversationHistories(
       visited.add(url);
       try {
         const payload = await readJson(request, url);
+        for (const shape of historyCollectionContractShapes(payload)) {
+          const strategy = `history-contract:${shape}`;
+          if (!manifest.strategies.includes(strategy) && manifest.strategies.filter((value) => value.startsWith('history-contract:')).length < 12) {
+            manifest.strategies.push(strategy);
+          }
+        }
         const parsed = parseNetworkPayload(payload, url, { observedMethod: 'GET' });
         manifest.counts.parserMisses = (manifest.counts.parserMisses ?? 0) + parsed.misses;
-        let matching = parsed.conversations.filter((value) => exactConversationId(value) === targetId);
+        const matching = parsed.conversations.filter((value) => exactConversationId(value) === targetId);
         const foreignMessages = parsed.conversations.some((value) => exactConversationId(value) !== targetId
           && (value.messages?.length ?? 0) > 0);
         if (foreignMessages || !matching.length) throw new Error('history response identity mismatch');
-        if (parsed.misses === 0 && parsed.paginationUrls.length === 0 && isUnpaginatedFullCollection(url)) {
-          matching = matching.map((value) => markCompleteUnpaginatedCollection(value, url));
-        }
         sawConversation = true;
         output.push(...matching);
         for (const next of parsed.paginationUrls) {

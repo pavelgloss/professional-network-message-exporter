@@ -19,19 +19,13 @@ import { probeReadThread, type ObservedHistoryGet } from './probe.js';
 import { readObservedConversationHistories } from './history-reader.js';
 
 async function discoverHistoryGet(config: AppConfig, logger: Logger): Promise<ObservedHistoryGet> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try { return await probeReadThread(config, logger); }
-    catch (error) {
-      lastError = error;
-      logger.warn('history-template-discovery-retry', { attempt });
-    }
-  }
-  throw lastError;
+  // This explicit opt-in performs at most one target navigation. Failures after
+  // selection are terminal for this invocation and are never retried.
+  return probeReadThread(config, logger);
 }
 
 export async function exportMessages(config: AppConfig, logger: Logger): Promise<LinkedInExport> {
-  const observedHistory = await discoverHistoryGet(config, logger);
+  const observedHistory = config.withHistoryProbe ? await discoverHistoryGet(config, logger) : undefined;
   const manifest = createManifest();
   const context = await launchContext(config, 'export', manifest, logger);
   let page = context.pages()[0] ?? await context.newPage();
@@ -82,17 +76,21 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     raw = raw.slice(0, config.limit);
 
     if (!raw.length) throw new AppError('PARSER_NO_DATA', 'LinkedIn loaded, but no conversations could be read. Selectors or response formats may have changed.', 4);
-    const historyRequest = await playwrightRequest.newContext({
-      storageState: await context.storageState(),
-      extraHTTPHeaders: observedHistory.headers,
-    });
-    try {
-      const historyRaw = await readObservedConversationHistories(historyRequest, observedHistory, raw, manifest, logger);
-      raw = coalesceRaw([...raw, ...historyRaw]);
-      raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
-      raw = raw.slice(0, config.limit);
-    } finally {
-      await historyRequest.dispose().catch(() => undefined);
+    if (observedHistory) {
+      const historyRequest = await playwrightRequest.newContext({
+        storageState: await context.storageState(),
+        extraHTTPHeaders: observedHistory.headers,
+      });
+      try {
+        const historyRaw = await readObservedConversationHistories(historyRequest, observedHistory, raw, manifest, logger);
+        raw = coalesceRaw([...raw, ...historyRaw]);
+        raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
+        raw = raw.slice(0, config.limit);
+      } finally {
+        await historyRequest.dispose().catch(() => undefined);
+      }
+    } else {
+      manifest.warnings.push('THREAD_HISTORY_PROBE_OPT_IN_REQUIRED');
     }
     const messages = raw.flatMap((c) => c.messages ?? []);
     if (!reliableSelfId && messages.some((message) => !message.direction)) {

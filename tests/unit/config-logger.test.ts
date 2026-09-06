@@ -8,6 +8,7 @@ describe('config', () => {
     const config = parseConfig(['export', '--limit', '17'], {}, 'C:\\workspace');
     expect(config.limit).toBe(17);
     expect(config.probeReadThread).toBe(false);
+    expect(config.withHistoryProbe).toBe(false);
     expect(path.isAbsolute(config.statePath)).toBe(true);
   });
   it('rejects dangerous roots', () => {
@@ -23,6 +24,10 @@ describe('config', () => {
   it('keeps the one-thread probe default-off and metadata-only', () => {
     expect(parseConfig(['export', '--probe-read-thread'], {}, 'C:\\workspace').probeReadThread).toBe(true);
     expect(() => parseConfig(['export', '--probe-read-thread', '--diagnostics-content'], {}, 'C:\\workspace')).toThrow(/metadata only/);
+  });
+  it('requires a separate explicit flag for export history discovery', () => {
+    expect(parseConfig(['export', '--with-history-probe'], {}, 'C:\\workspace').withHistoryProbe).toBe(true);
+    expect(() => parseConfig(['export', '--probe-read-thread', '--with-history-probe'], {}, 'C:\\workspace')).toThrow(/separate explicit workflows/);
   });
 });
 

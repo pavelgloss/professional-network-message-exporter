@@ -44,6 +44,7 @@ describe('login storage state to export isolation', () => {
       timeoutMs: 5_000,
       headless: true,
       probeReadThread: false,
+      withHistoryProbe: false,
       diagnosticsContent: false,
     };
     const logger = createLogger({ write: () => true });

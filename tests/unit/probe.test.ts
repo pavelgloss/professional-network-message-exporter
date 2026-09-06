@@ -4,6 +4,7 @@ import type { RawConversation } from '../../src/domain/schema.js';
 import { assertSafeProbeConversation, navigateOneSafeProbeThread, observedHistoryQueryTemplate, selectSafeProbeConversation } from '../../src/linkedin/probe.js';
 import { parseNetworkPayload } from '../../src/linkedin/network/response-parser.js';
 import { explicitProbeGraphqlConversationIds } from '../../src/linkedin/probe-navigation.js';
+import { instantiateObservedHistoryUrl } from '../../src/linkedin/history-reader.js';
 
 describe('one already-read thread probe', () => {
   const readConversation: RawConversation = {
@@ -111,5 +112,34 @@ describe('one already-read thread probe', () => {
     expect([...explicitProbeGraphqlConversationIds('GET', `https://www.linkedin.com${path}?queryId=messengerMessagesByConversation&variables=(conversationUrn:OTHER)`)]).toEqual(['OTHER']);
     expect(explicitProbeGraphqlConversationIds('GET', 'https://www.linkedin.com/voyager/api/graphql?urn=urn%3Ali%3AmessagingThread%3AOTHER').size).toBe(0);
     expect(explicitProbeGraphqlConversationIds('POST', 'https://www.linkedin.com/voyager/api/graphql?urn=urn%3Ali%3AmessagingThread%3AOTHER').size).toBe(0);
+  });
+
+  it('rebinds only the target identity while preserving an observed history URL encoding', () => {
+    const oldId = 'READ==';
+    const newId = 'NEXT==';
+    const variables = encodeURIComponent(JSON.stringify({
+      conversationUrn: `urn:li:messagingThread:${oldId}`,
+      mailboxUrn: 'urn:li:fsd_profile:SELF',
+    }));
+    const template = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?variables=${variables}&queryId=messengerMessages.${'a'.repeat(32)}&includeWebMetadata=true`;
+    const rebound = instantiateObservedHistoryUrl(template, [oldId], newId);
+    expect(rebound).toBe(template.replace(encodeURIComponent(oldId), encodeURIComponent(newId)));
+    expect(instantiateObservedHistoryUrl(template, [oldId], oldId)).toBe(template);
+    expect(() => instantiateObservedHistoryUrl(template, [oldId], 'UNSAFE/ID')).toThrow(/identity/);
+  });
+
+  it('leaves unrelated tracking fields and persisted query bytes unchanged when rebinding', () => {
+    const oldId = 'ABCDEF123==';
+    const newId = 'ZYX987654==';
+    const variables = encodeURIComponent(JSON.stringify({
+      conversationUrn: `urn:li:messagingThread:${oldId}`,
+      tracking: oldId,
+    }));
+    const queryId = `messengerMessages.${'a'.repeat(32)}`;
+    const template = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?variables=${variables}&queryId=${queryId}`;
+    const rebound = instantiateObservedHistoryUrl(template, [oldId], newId);
+    const decodedVariables = JSON.parse(new URL(rebound).searchParams.get('variables')!) as Record<string, string>;
+    expect(decodedVariables).toEqual({ conversationUrn: `urn:li:messagingThread:${newId}`, tracking: oldId });
+    expect(new URL(rebound).searchParams.get('queryId')).toBe(queryId);
   });
 });

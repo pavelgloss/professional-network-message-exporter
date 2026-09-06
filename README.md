@@ -34,6 +34,15 @@ Bezpečný network-first režim:
 npm.cmd run export -- --limit 100
 ```
 
+Tento výchozí příkaz neotevře žádné vlákno a při chybějící historii bezpečně
+vytvoří jen `.partial` kandidát. Pro úplný export je nutný samostatný vědomý opt-in,
+který otevře nejvýše jedno serverem potvrzené již přečtené vlákno, zachytí jeho
+read-only GET šablonu a stejným během načte historie:
+
+```powershell
+npm.cmd run export -- --limit 100 --with-history-probe
+```
+
 Každý export vytvoří fresh ephemeral Chromium context, načte pouze storage state,
 zakáže service workery a nainstaluje HTTP/WebSocket guardy před vytvořením stránky.
 
@@ -43,8 +52,9 @@ do `data/linkedin/messages.json.partial` a poslední úplný export nezmění. O
 běh sloučí data podle LinkedIn ID nebo deterministického fallback ID a zachová dříve
 načtenou historii.
 
-LinkedIn často načte celou historii až po otevření konkrétního vlákna. Exportní běh
-vlákna nikdy neotevírá a při nepotvrzené úplnosti skončí jako `partial`.
+LinkedIn často načte celou historii až po otevření konkrétního vlákna. Výchozí
+exportní běh vlákna nikdy neotevírá a při nepotvrzené úplnosti skončí jako
+`partial`; pouze varianta s `--with-history-probe` má popsaný one-thread opt-in.
 
 Samostatný, výchozím stavem vypnutý probe lze použít pouze k nalezení redigované
 šablony GET dotazu na historii:

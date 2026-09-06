@@ -15,6 +15,7 @@ export type AppConfig = {
   timeoutMs: number;
   headless: boolean;
   probeReadThread: boolean;
+  withHistoryProbe: boolean;
   diagnosticsContent: boolean;
 };
 
@@ -34,7 +35,7 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
 type ParsedArgs = { values: Map<string, string>; flags: Set<string> };
 function parseArguments(args: string[], command: Command): ParsedArgs {
   const valueOptions = new Set(command === 'login' ? ['--state-file', '--timeout-ms'] : ['--state-file', '--output', '--limit', '--timeout-ms']);
-  const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--probe-read-thread', '--diagnostics-content']);
+  const booleanOptions = new Set(command === 'login' ? [] : ['--headed', '--probe-read-thread', '--with-history-probe', '--diagnostics-content']);
   const parsed: ParsedArgs = { values: new Map(), flags: new Set() };
   for (let index = 1; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -77,6 +78,9 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
   if (parsed.flags.has('--probe-read-thread') && parsed.flags.has('--diagnostics-content')) {
     throw new AppError('CONFIG_INVALID', '--probe-read-thread captures redacted request metadata only and cannot be combined with --diagnostics-content', 2);
   }
+  if (parsed.flags.has('--probe-read-thread') && parsed.flags.has('--with-history-probe')) {
+    throw new AppError('CONFIG_INVALID', '--probe-read-thread and --with-history-probe are separate explicit workflows', 2);
+  }
   return {
     command,
     statePath,
@@ -86,6 +90,7 @@ export function parseConfig(args = process.argv.slice(2), env = process.env, cwd
     timeoutMs,
     headless: parsed.flags.has('--headed') ? false : bool(env.LINKEDIN_HEADLESS, true),
     probeReadThread: parsed.flags.has('--probe-read-thread'),
+    withHistoryProbe: parsed.flags.has('--with-history-probe'),
     diagnosticsContent: parsed.flags.has('--diagnostics-content'),
   };
 }

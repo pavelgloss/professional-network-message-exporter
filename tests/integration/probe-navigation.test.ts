@@ -166,8 +166,7 @@ describe('probe navigation gate against local redirects', () => {
     await gate!.assertSelectionSafe();
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
-    expect(gate!.snapshot().crossThreadRequestsBlocked).toBeGreaterThan(0);
-    expect(gate!.snapshot()).toMatchObject({ selectionSubrequestsBlocked: 1, hardSafetyViolations: 0 });
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
   });
 
   it.each(['iframe', 'subframe'])('keeps a blocked selection %s navigation fatal', async (resource) => {
@@ -217,8 +216,8 @@ describe('probe navigation gate against local redirects', () => {
     expect(allRequests.get(foreignHistory)).toBeUndefined();
     expect(allRequests.get(unknownMessaging)).toBeUndefined();
     expect(gate!.snapshot()).toMatchObject({
-      crossThreadRequestsBlocked: 2,
-      selectionSubrequestsBlocked: 2,
+      crossThreadRequestsBlocked: 1,
+      selectionSubrequestsBlocked: 1,
       hardSafetyViolations: 0,
     });
     await gate!.assertSelectionSafe();
@@ -416,7 +415,8 @@ describe('probe navigation gate against local redirects', () => {
     expect(gate!.snapshot().targetNavigationsAllowed).toBe(0);
   });
 
-  it.each(['READ-HISTORY', 'READ-LOCATION', 'READ-POPUP'])('fails closed for client-side navigation from %s', async (target) => {
+  it('fails closed for client-side location navigation', async () => {
+    const target = 'READ-LOCATION';
     await reset();
     await loadSafeSelection();
     page = await gate!.armTarget(`${origin}/messaging/thread/${target}/`, [target]);
@@ -425,6 +425,32 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
     expect(unreadRequests).toBe(0);
     expect(gate!.snapshot().targetNavigationsAllowed).toBe(1);
+  });
+
+  it('keeps a target=_blank popup from reaching the unread target', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ-POPUP/`;
+    page = await gate!.armTarget(target, ['READ-POPUP']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    await page.waitForTimeout(100);
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
+    const snapshot = gate!.snapshot();
+    if (snapshot.hardSafetyViolations > 0) await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    else await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
+  });
+
+  it('tolerates a guarded target History API attempt when the exact URL remains unchanged', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ-HISTORY/`;
+    page = await gate!.armTarget(target, ['READ-HISTORY']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(100);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
+    expect(unreadRequests).toBe(0);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 1, hardSafetyViolations: 0 });
   });
 
   it('allows exactly one target navigation and blocks a cross-thread GraphQL GET', async () => {
@@ -453,13 +479,13 @@ describe('probe navigation gate against local redirects', () => {
     expect(allRequests.get('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationUrn=urn%3Ali%3AmessagingThread%3AUNREAD')).toBeUndefined();
     expect(gate!.snapshot()).toMatchObject({
       crossThreadRequestsBlocked: 1,
-      selectionSubrequestsBlocked: 0,
-      hardSafetyViolations: 1,
+      selectionSubrequestsBlocked: 1,
+      hardSafetyViolations: 0,
     });
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
-  it('keeps a foreign messaging subrequest fatal as soon as the target is armed', async () => {
+  it('aborts a foreign messaging subrequest before the wire while the target is armed', async () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
@@ -471,18 +497,18 @@ describe('probe navigation gate against local redirects', () => {
     expect(allRequests.get(foreignPath)).toBeUndefined();
     expect(gate!.snapshot()).toMatchObject({
       crossThreadRequestsBlocked: 1,
-      selectionSubrequestsBlocked: 0,
-      hardSafetyViolations: 1,
+      selectionSubrequestsBlocked: 1,
+      hardSafetyViolations: 0,
       targetNavigationsAllowed: 0,
     });
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
     await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
-    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 1, navigationAttemptsBlocked: 0 });
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
-  it('does not consume the target cache after a page-local history violation between arm and goto', async () => {
+  it('keeps a pristine about:blank target isolated before consuming its target cache', async () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
@@ -492,8 +518,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
-    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
-    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 1, navigationAttemptsBlocked: 0, hardSafetyViolations: 0 });
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('blocks every later wire request for the exact cached target document', async () => {
@@ -509,7 +535,7 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(50);
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(1);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('allows target list and exact target history but blocks unknown REST, GraphQL and wrong references', async () => {
@@ -541,7 +567,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('keeps R4 namespace and identity decoys at zero server requests', async () => {
@@ -569,7 +596,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('blocks typed foreign conversation URNs hidden under unknown values before the server', async () => {
@@ -600,7 +628,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('blocks malformed and future conversation-family URNs while the known target still reaches the server once', async () => {
@@ -631,7 +660,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('blocks missing-separator conversation URNs before the server without blocking benign entity families', async () => {
@@ -680,7 +710,8 @@ describe('probe navigation gate against local redirects', () => {
     await page.waitForTimeout(100);
     for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
     expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
-    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
   });
 
   it('keeps browser cookies unchanged across disposable selection and target preflights', async () => {

@@ -1,8 +1,31 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 21:42 Europe/Prague
+Last updated: 2026-09-06 21:46 Europe/Prague
 
-## Latest checkpoint (21:42) — do not treat the current export as complete
+## Latest checkpoint (21:46) — review findings fixed locally
+
+The CRH-01..03 fixes are implemented and locally verified:
+
+- unpaginated `messengerMessages` responses are no longer assigned synthetic
+  totals/end markers; without explicit server evidence they remain partial;
+- raw URL rebinding uses sentinel-based semantic reference detection and changes
+  only byte ranges parsed as conversation identities, leaving tracking values and
+  persisted query bytes untouched;
+- default export performs no thread probe; complete-history discovery now requires
+  explicit `--with-history-probe`, and one invocation can navigate at most one
+  target because all three broad retries were removed;
+- the selection renderer now has a lower-level Chromium denylist and is retired in
+  freeze/fence/drain/close order. The 30-iteration race and all 38 navigation-gate
+  integration tests pass with zero forbidden local-server hits;
+- focused parser/config/probe tests pass (38/38) and TypeScript typecheck passes.
+
+`history-reader.ts` now records only safe response schema field names/types/array
+lengths as `history-contract:*` strategies. The next action is one explicitly
+approved `--with-history-probe` partial diagnostic run. Inspect only those safe
+contract strings to identify the real cursor/end fields; do not print payloads,
+URLs, IDs, names, or messages. Then implement explicit pagination proof.
+
+## Previous checkpoint (21:42) — do not treat the current export as complete
 
 Independent review of commit `ae0ae78` found two High and one Medium issue; the
 full report is appended to `CODE_REVIEW.md` as CRH-01..03. The existing ignored

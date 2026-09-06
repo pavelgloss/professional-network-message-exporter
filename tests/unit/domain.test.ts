@@ -30,6 +30,16 @@ describe('normalization and stable IDs', () => {
     expect(a.messages[0]).toMatchObject({ direction: 'inbound', text: 'Hi\nthere', sequence: 0 });
   });
 
+  it('preserves auditable conversation history coverage metadata', () => {
+    const conversation = normalizeConversation({
+      id: 'c',
+      participants: [{ id: 'me', name: 'Me', isSelf: true }],
+      messages: [{ id: 'm', senderId: 'me', senderName: 'Me', text: 'sent' }],
+      sourceMetadata: { historyComplete: true, historyEvidence: '[]' },
+    }, 'me');
+    expect(conversation.sourceMetadata).toEqual({ historyComplete: true, historyEvidence: '[]' });
+  });
+
   it('keeps deterministic ordinal IDs for identical fallback messages', () => {
     const raw = { id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [0, 1].map(() => ({ senderId: 'me', senderName: 'Me', sentAt: '2026-01-01T00:00:00Z', text: 'same' })) };
     const messages = normalizeConversation(raw, 'me').messages;

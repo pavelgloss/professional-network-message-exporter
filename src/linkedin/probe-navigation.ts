@@ -142,14 +142,19 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
   }
 }
 
-async function retireSelectionPage(session: CDPSession, page: Page, onFenced: () => void): Promise<boolean> {
+async function retireSelectionPage(session: CDPSession, page: Page, onFenced: () => void, drainRoutes: () => Promise<void>): Promise<boolean> {
   // Fence the old renderer at Chromium's network layer before closing it. Any
   // timer racing page.close is therefore denied independently of Playwright's
   // route lifecycle, while avoiding a terminateExecution/Page.navigate CDP
   // deadlock observed on the real LinkedIn renderer.
   try {
+    // Freeze first so no new timer can enter the narrow interval between the
+    // route drain and Chromium's network fence. Already-started routes are
+    // drained only after the fence is active and before page.close.
+    await session.send('Page.setWebLifecycleState', { state: 'frozen' });
     await session.send('Network.setBlockedURLs', { urls: ['*'] });
     onFenced();
+    await drainRoutes();
     await page.close({ runBeforeUnload: false });
     return page.isClosed();
   } catch {
@@ -205,6 +210,18 @@ export async function installProbeNavigationGate(context: BrowserContext, select
   try {
     selectionSession = await context.newCDPSession(selectionPage);
     await selectionSession.send('Network.enable');
+    // A renderer can dispatch a timer-backed request in the tiny interval in
+    // which page.close tears down Playwright routing. Block every legacy or UI
+    // thread surface at Chromium's lower network layer for the entire selection
+    // lifetime. The one exact modern GraphQL path remains available only through
+    // the stricter route proxy below.
+    await selectionSession.send('Network.setBlockedURLs', { urls: [
+      '*://*/messaging/thread/*',
+      '*://*/voyager/api/messaging*',
+      '*://*/voyager/api/*MessagingRest*',
+      '*://*/voyager/api/*MessagingGraphQLV2*',
+      '*://*/voyager/api/graphqlV2*',
+    ] });
   } catch {
     throw new AppError('READ_POLICY_BLOCK', 'Probe could not prepare the selection network fence', 4);
   }
@@ -510,7 +527,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       phase = 'closing-selection';
       if (!selectionSession || !await retireSelectionPage(selectionSession, selectionPage, () => {
         selectionNetworkFenced = true;
-      })) markHardViolation();
+      }, drainRoutes)) markHardViolation();
       await drainRoutes();
       if (hardViolated || !selectionPage.isClosed() || context.pages().length !== 0) {
         if (!hardViolated) markHardViolation();
