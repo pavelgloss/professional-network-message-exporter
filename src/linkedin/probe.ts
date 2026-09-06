@@ -149,6 +149,8 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeHardSafetyViolations = snapshot.hardSafetyViolations;
       manifest.counts.probeSelectionPreflightGets = snapshot.selectionPreflightGets;
       manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
+      manifest.counts.probeSelectionPreflightFailures = snapshot.selectionPreflightFailures;
+      manifest.counts.probeTargetPreflightFailures = snapshot.targetPreflightFailures;
       await navigationGate.dispose().catch(() => undefined);
     }
     manifest.finishedAt = new Date().toISOString();

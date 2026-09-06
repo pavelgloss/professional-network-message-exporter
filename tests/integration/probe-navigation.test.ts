@@ -59,6 +59,13 @@ describe('probe navigation gate against local redirects', () => {
         response.end(body);
         return;
       }
+      if (request.url === '/messaging/thread/READ-DELAY/') {
+        setTimeout(() => {
+          response.writeHead(200, { 'content-type': 'text/html' });
+          response.end('<!doctype html><title>delayed safe target</title>');
+        }, 350);
+        return;
+      }
       if (request.url === '/worker.js') {
         response.writeHead(200, { 'content-type': 'text/javascript' });
         response.end("fetch('/messaging/thread/UNREAD/').catch(()=>{})");
@@ -86,6 +93,12 @@ describe('probe navigation gate against local redirects', () => {
         '/selection-history': '<script>try { history.pushState({}, "", "/messaging/thread/UNREAD/") } catch {}</script>',
         '/selection-location': '<script>location.href="/messaging/thread/UNREAD/"</script>',
         '/selection-popup': '<body><script>const link=document.createElement("a");link.href="/messaging/thread/UNREAD/";link.target="_blank";document.body.append(link);link.click()</script></body>',
+        '/selection-delayed-history': '<script>setTimeout(()=>{try{history.pushState({},"","/messaging/thread/UNREAD/")}catch{}},100)</script>',
+        '/selection-delayed-foreign': '<script>setTimeout(()=>fetch("/voyager/api/messagingV2/conversations/UNREAD/events").catch(()=>{}),100)</script>',
+        '/selection-delayed-location': '<script>setTimeout(()=>{location.href="/messaging/thread/UNREAD/"},100)</script>',
+        '/selection-delayed-popup': '<body><script>setTimeout(()=>{const link=document.createElement("a");link.href="/messaging/thread/UNREAD/";link.target="_blank";document.body.append(link);link.click()},100)</script></body>',
+        '/selection-delayed-subframe': '<body><script>setTimeout(()=>{const frame=document.createElement("iframe");frame.src="/messaging/thread/UNREAD/";document.body.append(frame)},100)</script></body>',
+        '/selection-delayed-hash': '<script>setTimeout(()=>{location.hash="unsafe"},100)</script>',
       };
       response.writeHead(200, {
         'content-type': 'text/html',
@@ -136,7 +149,13 @@ describe('probe navigation gate against local redirects', () => {
     await page.goto(`${origin}/selection-redirect`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
     expect(unreadRequests).toBe(0);
-    expect(gate!.snapshot()).toMatchObject({ selectionPreflightGets: 1, selectionNavigationsAllowed: 0, targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
+    expect(gate!.snapshot()).toMatchObject({
+      selectionPreflightGets: 1,
+      selectionPreflightFailures: 1,
+      selectionNavigationsAllowed: 0,
+      targetNavigationsAllowed: 0,
+      navigationAttemptsBlocked: 1,
+    });
   });
 
   it.each(['img', 'prefetch', 'worker'])('safely tolerates a blocked selection thread URL used by a %s', async (resource) => {
@@ -157,7 +176,7 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
-    expect(gate!.snapshot()).toMatchObject({ crossThreadRequestsBlocked: 1, selectionSubrequestsBlocked: 0 });
+    expect(gate!.snapshot()).toMatchObject({ crossThreadRequestsBlocked: 1, selectionSubrequestsBlocked: 0, navigationAttemptsBlocked: 1 });
     expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
   });
 
@@ -225,7 +244,12 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.armTarget(`${origin}/messaging/thread/READ-REDIRECT/`, ['READ-REDIRECT'])).rejects.toThrow(/preflight/);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/READ-REDIRECT/')).toBe(1);
-    expect(gate!.snapshot()).toMatchObject({ targetPreflightGets: 1, targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
+    expect(gate!.snapshot()).toMatchObject({
+      targetPreflightGets: 1,
+      targetPreflightFailures: 1,
+      targetNavigationsAllowed: 0,
+      navigationAttemptsBlocked: 0,
+    });
   });
 
   it.each(['READ-HEADER-LOCATION', 'READ-OVERSIZE'])('rejects an unsafe target preflight response for %s', async (targetId) => {
@@ -235,7 +259,47 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.armTarget(target, [targetId])).rejects.toThrow(/preflight/);
     expect(targetRequests.get(`/messaging/thread/${targetId}/`)).toBe(1);
     expect(unreadRequests).toBe(0);
-    expect(gate!.snapshot()).toMatchObject({ targetPreflightGets: 1, targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
+    expect(gate!.snapshot()).toMatchObject({
+      targetPreflightGets: 1,
+      targetPreflightFailures: 1,
+      targetNavigationsAllowed: 0,
+      navigationAttemptsBlocked: 0,
+    });
+  });
+
+  it.each([
+    { fixture: 'history', routedNavigations: 0 },
+    { fixture: 'foreign', routedNavigations: 0 },
+    { fixture: 'location', routedNavigations: 1 },
+    { fixture: 'popup', routedNavigations: undefined },
+    { fixture: 'subframe', routedNavigations: 1 },
+    { fixture: 'hash', routedNavigations: 0 },
+  ])('invalidates a delayed target preflight after selection $fixture activity', async ({ fixture, routedNavigations }) => {
+    await reset(`/selection-delayed-${fixture}`);
+    await page.goto(`${origin}/selection-delayed-${fixture}`, { waitUntil: 'domcontentloaded' });
+    await gate!.assertSelectionSafe();
+    const target = `${origin}/messaging/thread/READ-DELAY/`;
+    await expect(gate!.armTarget(target, ['READ-DELAY'])).rejects.toThrow(/unsafe selection-page change/);
+
+    const beforeTargetAttempt = gate!.snapshot();
+    expect(beforeTargetAttempt).toMatchObject({
+      targetPreflightGets: 1,
+      targetPreflightFailures: 0,
+      targetNavigationsAllowed: 0,
+      hardSafetyViolations: expect.any(Number),
+    });
+    expect(beforeTargetAttempt.hardSafetyViolations).toBeGreaterThan(0);
+    if (routedNavigations !== undefined) expect(beforeTargetAttempt.navigationAttemptsBlocked).toBe(routedNavigations);
+    if (fixture === 'popup') expect(beforeTargetAttempt.popupPagesBlocked).toBeGreaterThan(0);
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
+    expect(targetRequests.get('/messaging/thread/READ-DELAY/')).toBe(1);
+
+    // A caller cannot consume the cache after armTarget rejects. The only
+    // target server request remains the isolated preflight.
+    await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    expect(targetRequests.get('/messaging/thread/READ-DELAY/')).toBe(1);
+    expect(gate!.snapshot().targetNavigationsAllowed).toBe(0);
   });
 
   it.each(['READ-HISTORY', 'READ-LOCATION', 'READ-POPUP'])('fails closed for client-side navigation from %s', async (target) => {
@@ -259,7 +323,16 @@ describe('probe navigation gate against local redirects', () => {
     expect(browserResponse?.headers()['set-cookie']).toBeUndefined();
     expect(browserResponse?.headers()['x-private-canary']).toBeUndefined();
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
-    expect(gate!.snapshot()).toMatchObject({ targetPreflightGets: 1, targetNavigationsAllowed: 1, navigationAttemptsBlocked: 0 });
+    const exactHistory = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=READ';
+    await page.evaluate((url) => fetch(url), exactHistory);
+    await gate!.assertTargetSafe();
+    expect(allRequests.get(exactHistory)).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({
+      targetPreflightGets: 1,
+      targetPreflightFailures: 0,
+      targetNavigationsAllowed: 1,
+      navigationAttemptsBlocked: 0,
+    });
 
     await page.evaluate(() => fetch('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationUrn=urn%3Ali%3AmessagingThread%3AUNREAD').catch(() => undefined));
     await page.waitForTimeout(50);
@@ -287,7 +360,26 @@ describe('probe navigation gate against local redirects', () => {
       hardSafetyViolations: 1,
       targetNavigationsAllowed: 0,
     });
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+    await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+  });
+
+  it('does not consume the target cache after a page-local history violation between arm and goto', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+    await page.evaluate(() => { try { history.pushState({}, '', '/messaging/thread/UNREAD/'); } catch { /* expected guard */ } });
+    // Do not add a wait here: the target route itself must close the reporting race.
+    await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 1 });
+    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
   });
 
   it('blocks every later wire request for the exact cached target document', async () => {

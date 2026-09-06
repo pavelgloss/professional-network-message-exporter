@@ -13,6 +13,8 @@ export type ProbeNavigationSnapshot = {
   hardSafetyViolations: number;
   selectionPreflightGets: number;
   targetPreflightGets: number;
+  selectionPreflightFailures: number;
+  targetPreflightFailures: number;
 };
 
 export type ProbeNavigationGate = {
@@ -23,7 +25,7 @@ export type ProbeNavigationGate = {
   dispose(): Promise<void>;
 };
 
-type Phase = 'selection' | 'armed' | 'target-used';
+type Phase = 'selection' | 'armed' | 'target-used' | 'failed';
 type CachedDocument = { status: 200; headers: Record<string, string>; body: Buffer };
 const MAX_PROBE_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const MAX_PROBE_API_BYTES = 16 * 1024 * 1024;
@@ -48,10 +50,15 @@ export function explicitProbeGraphqlConversationIds(method: string, rawUrl: stri
   return references.valid ? references.ids : new Set();
 }
 
-async function pageHistoryWasBlocked(page: Page): Promise<boolean> {
+type ProbePageState = { href: string; historyBlocked: boolean };
+
+async function probePageState(page: Page): Promise<ProbePageState | undefined> {
   try {
-    return await page.evaluate(() => Boolean((globalThis as typeof globalThis & { __linkedinReaderProbeHistoryBlocked?: boolean }).__linkedinReaderProbeHistoryBlocked));
-  } catch { return true; }
+    return await page.evaluate(() => ({
+      href: location.href,
+      historyBlocked: Boolean((globalThis as typeof globalThis & { __linkedinReaderProbeHistoryBlocked?: boolean }).__linkedinReaderProbeHistoryBlocked),
+    }));
+  } catch { return undefined; }
 }
 
 async function cacheSafeDocument(response: APIResponse, expectedLocation: string): Promise<CachedDocument | undefined> {
@@ -125,6 +132,7 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
   let targetIds = new Set<string>();
   let targetDocument: CachedDocument | undefined;
   let hardViolated = false;
+  let historyViolationReported = false;
   const counts: ProbeNavigationSnapshot = {
     selectionNavigationsAllowed: 0,
     targetNavigationsAllowed: 0,
@@ -135,33 +143,69 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
     hardSafetyViolations: 0,
     selectionPreflightGets: 1,
     targetPreflightGets: 0,
+    selectionPreflightFailures: 0,
+    targetPreflightFailures: 0,
   };
 
   const markHardViolation = (): void => {
     hardViolated = true;
+    phase = 'failed';
+    selectionDocument = undefined;
+    targetDocument = undefined;
     counts.hardSafetyViolations += 1;
   };
 
   selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation);
+  if (!selectionDocument) {
+    counts.selectionPreflightFailures += 1;
+    markHardViolation();
+  }
+
+  await context.exposeBinding('__linkedinReaderProbeReportHistoryViolation', ({ page: sourcePage }) => {
+    if (sourcePage !== page) return;
+    historyViolationReported = true;
+    markHardViolation();
+  });
 
   await page.addInitScript(() => {
-    const state = globalThis as typeof globalThis & { __linkedinReaderProbeHistoryBlocked?: boolean };
+    const state = globalThis as typeof globalThis & {
+      __linkedinReaderProbeHistoryBlocked?: boolean;
+      __linkedinReaderProbeReportHistoryViolation?: () => Promise<void>;
+    };
     let blocked = false;
+    const reportViolation = state.__linkedinReaderProbeReportHistoryViolation;
+    if (reportViolation) {
+      Object.defineProperty(state, '__linkedinReaderProbeReportHistoryViolation', {
+        configurable: false,
+        writable: false,
+        value: reportViolation,
+      });
+    }
+    const rememberViolation = () => {
+      blocked = true;
+      void reportViolation?.().catch(() => undefined);
+    };
     Object.defineProperty(state, '__linkedinReaderProbeHistoryBlocked', { configurable: false, get: () => blocked, set: () => undefined });
     const patch = (name: 'pushState' | 'replaceState') => {
       const original = history[name].bind(history);
       const guarded = ((...args: Parameters<History['pushState']>) => {
         const destination = args[2];
         if (destination === undefined || new URL(String(destination), location.href).href === location.href) return original(...args);
-        blocked = true;
+        rememberViolation();
         throw new DOMException('Probe blocked client-side navigation', 'SecurityError');
       }) as History[typeof name];
       Object.defineProperty(history, name, { configurable: false, writable: false, value: guarded });
     };
     patch('pushState');
     patch('replaceState');
+    const initialHref = location.href;
+    const rememberSameDocumentNavigation = () => {
+      if (location.href !== initialHref) rememberViolation();
+    };
+    addEventListener('hashchange', rememberSameDocumentNavigation, true);
+    addEventListener('popstate', rememberSameDocumentNavigation, true);
     const guardedOpen = (() => {
-      blocked = true;
+      rememberViolation();
       return null;
     }) as typeof window.open;
     Object.defineProperty(window, 'open', { configurable: false, writable: false, value: guardedOpen });
@@ -177,10 +221,17 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
 
   const block = async (route: Route, kind: 'navigation' | 'cross-thread', fatal = true): Promise<void> => {
     if (fatal) markHardViolation();
-    else counts.selectionSubrequestsBlocked += 1;
-    if (kind === 'navigation') counts.navigationAttemptsBlocked += 1;
-    else counts.crossThreadRequestsBlocked += 1;
-    await route.abort('blockedbyclient').catch(() => undefined);
+    const navigation = route.request().isNavigationRequest();
+    try {
+      await route.abort('blockedbyclient');
+      if (navigation) counts.navigationAttemptsBlocked += 1;
+      if (kind === 'cross-thread') counts.crossThreadRequestsBlocked += 1;
+      if (!fatal) counts.selectionSubrequestsBlocked += 1;
+    } catch {
+      // A tolerated attempt is only safe after Playwright confirms the abort.
+      // Any inability to abort becomes terminal and the cached target is lost.
+      if (!fatal) markHardViolation();
+    }
   };
 
   const blockedMessagingAttemptIsFatal = (request: Request): boolean =>
@@ -206,6 +257,21 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
     }
     if (phase === 'armed' && counts.targetNavigationsAllowed === 0 && location === targetLocation
       && targetDocument && mainPageNavigation(route)) {
+      const selectionStillSafe = () => !hardViolated && !historyViolationReported && phase === 'armed'
+        && Boolean(targetDocument) && exactCanonicalLocation(page.url()) === selectionLocation;
+      if (!selectionStillSafe()) {
+        await block(route, 'cross-thread');
+        return;
+      }
+      // Yield once while the navigation route remains paused. This drains a
+      // concurrently reported History/popup/request violation, then the
+      // hard/page/cache state is checked again with no further await before the
+      // document is consumed and fulfilled.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (!selectionStillSafe()) {
+        await block(route, 'cross-thread');
+        return;
+      }
       counts.targetNavigationsAllowed += 1;
       phase = 'target-used';
       const document = targetDocument;
@@ -245,9 +311,15 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
   };
   await context.route('**/*', routeHandler);
 
+  const pageMatches = async (expected: string): Promise<boolean> => {
+    if (hardViolated) return false;
+    const state = await probePageState(page);
+    // This second hard-state read closes races while page.evaluate was pending.
+    return !hardViolated && Boolean(state && exactCanonicalLocation(state.href) === expected && !state.historyBlocked);
+  };
+
   const assertLocation = async (expected: string, expectedAllowed: number, phaseName: string): Promise<void> => {
-    const actual = exactCanonicalLocation(page.url());
-    const unsafePageState = actual !== expected || expectedAllowed !== 1 || await pageHistoryWasBlocked(page);
+    const unsafePageState = expectedAllowed !== 1 || !await pageMatches(expected);
     if (unsafePageState && !hardViolated) markHardViolation();
     if (hardViolated || unsafePageState) {
       throw new AppError('READ_POLICY_BLOCK', `Probe ${phaseName} navigation did not remain within its exact safe target`, 4);
@@ -271,18 +343,32 @@ export async function installProbeNavigationGate(context: BrowserContext, page: 
         || normalizedIds.some((id) => !id) || !ids.has(routeId) || [...ids].some((id) => id !== routeId)) {
         throw new AppError('READ_POLICY_BLOCK', 'Probe target URL or identity was ambiguous', 4);
       }
+      // Revalidate at the boundary even if the caller already asserted the
+      // selection page before choosing a candidate.
+      if (!await pageMatches(selectionLocation)) {
+        if (!hardViolated) markHardViolation();
+        throw new AppError('READ_POLICY_BLOCK', 'Probe target could not be armed after the selection page changed', 4);
+      }
       targetLocation = location;
       targetIds = ids;
       // From this point on, even blocked background selection-page messaging
       // attempts are fatal: the one-target phase has begun.
       phase = 'armed';
       counts.targetPreflightGets += 1;
-      targetDocument = await isolatedCachedDocument(context, targetUrl, location);
-      if (!targetDocument) {
+      const document = await isolatedCachedDocument(context, targetUrl, location);
+      if (!document) {
+        counts.targetPreflightFailures += 1;
         markHardViolation();
-        counts.navigationAttemptsBlocked += 1;
         throw new AppError('READ_POLICY_BLOCK', 'Probe target preflight did not return one exact safe document', 4);
       }
+      // The selection document remains active throughout the isolated preflight.
+      // Do not publish the cache until both its local evidence and concurrent
+      // Node-side route/popup state have been revalidated after the await.
+      if (!await pageMatches(selectionLocation) || hardViolated || phase !== 'armed') {
+        if (!hardViolated) markHardViolation();
+        throw new AppError('READ_POLICY_BLOCK', 'Probe target preflight overlapped an unsafe selection-page change', 4);
+      }
+      targetDocument = document;
     },
     async assertTargetSafe() {
       if (!targetLocation) throw new AppError('READ_POLICY_BLOCK', 'Probe target was not armed', 4);
