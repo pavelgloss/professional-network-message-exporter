@@ -1,8 +1,32 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 21:50 Europe/Prague
+Last updated: 2026-09-06 21:56 Europe/Prague
 
-## Latest checkpoint (21:50) — live response contract identified
+## Latest checkpoint (21:56) — sync-token dead end proven
+
+Commit `f57a589` added a one-GET, in-memory-only experiment for the one plausible
+`newSyncToken` binding. A fresh 100-conversation partial run reached a 20-element
+history, added `syncToken` to the otherwise byte-identical Rest.li variables, and
+received: 1 element, 1 parsed message, **0 distinct stable aliases** relative to
+the initial page, and `shouldClearCache=false`. This proves that `newSyncToken` is
+an incremental refresh/cache token, not an older-history cursor. Do not build
+history pagination from it. The experimental continuation was not merged into
+output and the result remained partial.
+
+The request variables are now also structurally confirmed as raw Rest.li with
+fields `conversationUrn,urn`; their URN entity types are `msg_conversation` and
+`fsd_profile`. The `urn` variable is therefore the viewer/profile context, not a
+history anchor.
+
+Next action: select a currently server-confirmed read thread known from the local
+ignored partial candidate to have a 20-message initial window. The selection page
+may scroll only the conversation list (safe GETs, no thread open), then must retire
+as before. Open exactly that one thread and perform DOM scrollTop-only attempts in
+the fresh guarded target page; capture safe operation/variable shapes for any
+additional `messengerMessages` GET. Never click, type, or issue a non-GET. This is
+the required observation of LinkedIn's separate older-history operation.
+
+## Previous checkpoint (21:50) — live response contract identified
 
 Commit `59af6c6` contains the review fixes and resumption checkpoint. A fresh,
 explicitly authorized run of
