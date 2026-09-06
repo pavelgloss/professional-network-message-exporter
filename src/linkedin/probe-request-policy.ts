@@ -68,32 +68,47 @@ function classifyProbeUrnEntity(entityType: string): ProbeUrnEntityClass {
 function collectConversationUrns(value: string, result: ReferenceResult): void {
   const normalized = repeatedlyDecodeAndNormalize(value);
   if (normalized === undefined) { result.valid = false; return; }
-  const starts = [...normalized.matchAll(/urn:li:([\w-]+):/giu)];
+  // Start at the LinkedIn namespace and classify the entity before requiring
+  // the canonical value separator. A private endpoint could normalize
+  // `urn:li:messagingThread/OTHER` (or `=OTHER`) even though our ordinary URN
+  // parser correctly rejects it. Such a conversation-shaped token must make
+  // the probe fail closed rather than disappear from its target evidence.
+  const starts = [...normalized.matchAll(/urn:li:([\w-]+)/giu)];
   for (const match of starts) {
     const entityType = match[1];
     if (match.index === undefined || !entityType) continue;
+    const entityClass = classifyProbeUrnEntity(entityType);
+    if (entityClass !== 'supported-conversation' && entityClass !== 'suspicious-conversation-family') continue;
+    result.sawKey = true;
     let end = match.index + match[0].length;
+    if (normalized[end] !== ':') {
+      result.valid = false;
+      continue;
+    }
+    end += 1;
     if (normalized[end] === '(') {
       let depth = 0;
+      let closed = false;
       for (; end < normalized.length; end += 1) {
         if (normalized[end] === '(') depth += 1;
         else if (normalized[end] === ')') {
           depth -= 1;
-          if (depth === 0) { end += 1; break; }
+          if (depth === 0) { end += 1; closed = true; break; }
         }
+      }
+      if (!closed || (end < normalized.length && !/[\s"'`,;)\]}]/u.test(normalized[end]!))) {
+        result.valid = false;
+        continue;
       }
     } else {
       while (end < normalized.length && !/[\s"'`,;)\]}]/u.test(normalized[end]!)) end += 1;
     }
     const urn = normalized.slice(match.index, end);
-    const entityClass = classifyProbeUrnEntity(entityType);
     if (entityClass === 'supported-conversation') {
-      result.sawKey = true;
       const id = conversationIdFromUrn(urn);
       if (id) result.ids.add(id);
       else result.valid = false;
-    } else if (entityClass === 'suspicious-conversation-family') {
-      result.sawKey = true;
+    } else {
       result.valid = false;
     }
   }

@@ -351,6 +351,55 @@ describe('probe navigation gate against local redirects', () => {
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
   });
 
+  it('blocks missing-separator conversation URNs before the server without blocking benign entity families', async () => {
+    await reset();
+    await loadSafeSelection();
+    const target = `${origin}/messaging/thread/READ/`;
+    await gate!.armTarget(target, ['READ']);
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+
+    const history = (variables: string) => `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
+    const json = (value: unknown) => history(JSON.stringify(value));
+    const allowed = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread:READ' }),
+      json({
+        conversationId: 'READ',
+        payload: [
+          'urn:li:fsd_profile/UNREAD',
+          'urn:li:messagingParticipant',
+          'urn:li:messagingMessageV2/UNREAD',
+          'urn:li:mailboxV2=UNREAD',
+          'urn:li:company/UNREAD',
+          'prefixurn:li:fsd_profile/UNREAD',
+          'messagingThread is a plain word, not a URN',
+        ],
+      }),
+    ];
+    for (const url of allowed) await page.evaluate((candidate) => fetch(candidate), url);
+    for (const url of allowed) expect(allRequests.get(url), url).toBe(1);
+    await gate!.assertTargetSafe();
+
+    const blocked = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread=UNREAD' }),
+      json({ conversationId: 'READ', nested: { refs: ['urn%3Ali%3AmessagingThread%2FUNREAD'] } }),
+      json({ conversationId: 'READ', payload: 'UrN:Li:MeSsAgInGtHrEaD/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThreadV3/UNREAD' }),
+      history(encodeURIComponent(JSON.stringify({ conversationId: 'READ', payload: 'urn:li:messagingThread=UNREAD' }))),
+      history('(conversationId:READ,payload:urn:li:messagingThread/UNREAD)'),
+      history('(conversationId:READ,outer:(payload:urn%3Ali%3AmessagingThread%3DUNREAD))'),
+      json({ conversationId: 'READ', payload: 'prefixurn:li:messagingThread/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ' }),
+      json({ conversationId: 'READ', payload: 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ)/UNREAD' }),
+    ];
+    await page.evaluate(async (urls) => { await Promise.all(urls.map((url) => fetch(url).catch(() => undefined))); }, blocked);
+    await page.waitForTimeout(100);
+    for (const url of blocked) expect(allRequests.get(url), url).toBeUndefined();
+    expect(gate!.snapshot().crossThreadRequestsBlocked).toBe(blocked.length);
+    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+  });
+
   it('keeps browser cookies unchanged across disposable selection and target preflights', async () => {
     await context.addCookies([{ name: 'authCanary', value: 'original', url: origin }]);
     await reset('/selection-cookie');

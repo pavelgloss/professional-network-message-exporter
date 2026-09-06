@@ -149,4 +149,48 @@ describe('probe phase-specific messaging request policy', () => {
       ],
     }))).toMatchObject({ allow: true, kind: 'conversation-history' });
   });
+
+  it('rejects conversation-shaped URNs whose canonical value separator is missing', () => {
+    const history = (variables: string) => `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
+    const json = (value: unknown) => history(JSON.stringify(value));
+    const blocked = [
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread=UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread?UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThread#UNREAD' }),
+      json({ conversationId: 'READ', payload: 'UrN:Li:MeSsAgInGtHrEaD/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:messagingThreadV3/UNREAD' }),
+      json({ conversationId: 'READ', nested: { refs: ['urn%3Ali%3AmessagingThread%2FUNREAD'] } }),
+      history(encodeURIComponent(JSON.stringify({ conversationId: 'READ', payload: 'urn:li:messagingThread=UNREAD' }))),
+      history('(conversationId:READ,payload:urn:li:messagingThread/UNREAD)'),
+      history('(conversationId:READ,outer:(payload:urn%3Ali%3AmessagingThread%3DUNREAD))'),
+      history('(conversationId:READ,payload:urn:li:messagingParticipantThread/UNREAD)'),
+      json({ conversationId: 'READ', payload: 'prefixurn:li:messagingThread/UNREAD' }),
+      json({ conversationId: 'READ', payload: 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ' }),
+      json({ conversationId: 'READ', payload: 'urn:li:msg_conversation:(urn:li:fsd_profile:MEMBER,READ)/UNREAD' }),
+    ];
+    for (const url of blocked) expect(decide('target', url), url).toMatchObject({ allow: false, kind: 'blocked' });
+
+    const ignoredNonConversation = json({
+      conversationId: 'READ',
+      payload: [
+        'urn:li:fsd_profile/UNREAD',
+        'urn:li:person=UNREAD',
+        'urn:li:messagingParticipant',
+        'urn:li:messagingMessageV2/UNREAD',
+        'urn:li:messageEventV2=UNREAD',
+        'urn:li:mailboxV2/UNREAD',
+        'urn:li:inboxV2=UNREAD',
+        'urn:li:company/UNREAD',
+        'prefixurn:li:fsd_profile/UNREAD',
+        'messagingThread is a plain word, not a URN',
+      ],
+    });
+    const benignDecision = decide('target', ignoredNonConversation);
+    expect(benignDecision).toMatchObject({ allow: true, kind: 'conversation-history' });
+    expect([...benignDecision.referencedIds]).toEqual(['READ']);
+    expect(decide('target', json({ conversationId: 'READ', payload: 'urn:li:messagingThread:READ' })))
+      .toMatchObject({ allow: true, kind: 'conversation-history' });
+  });
 });
