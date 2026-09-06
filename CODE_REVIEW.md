@@ -1604,3 +1604,146 @@ preflight/redirect selhání a každá odchylka po armování targetu zůstávaj
 Kandidát se nadále smí vytvořit jen z browseru předané exact conversation-list GET
 odpovědi s explicitním network `read === true`; odmítnutá nebo redirect odpověď se
 do page/network capture vůbec nepředá.
+
+---
+
+## Security re-review selection tolerance HEAD `a6b1e6c`
+
+### Verdikt
+
+**Critical: 0 / High: 0 / Medium: 3.** Samotné zúžení tolerance na selection
+non-navigation messaging/thread subrequesty funguje: requesty jsou abortované před
+sítí a nejsou omylem fatální. Dvě TOCTOU mezery kolem asynchronního target preflightu
+ale dovolí pokračovat k target navigaci po zakázané aktivitě; jedna z nich umí
+zakázaný History API pokus zcela vymazat z finálního výsledku. Navíc agregát
+`navigationAttemptsBlocked` neodpovídá skutečným navigation requestům.
+
+**NO-GO pro opakování skutečného `--probe-read-thread`.** První schválený běh měl
+nula thread navigací a skončil fail-safe. Před druhým během je potřeba uzavřít
+AR-01 až AR-03; běžný network-only export bez thread-open režimu nálezy nemění.
+
+### AR-01 — MEDIUM — History/location violation během preflightu se po target navigation ztratí
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:51-55`,
+  `src/linkedin/probe-navigation.ts:147-168`,
+  `src/linkedin/probe-navigation.ts:248-285`;
+  orchestrace `src/linkedin/probe.ts:114-128`
+- **Problém:** zakázané `pushState`/`replaceState` nastaví pouze flag uvnitř právě
+  načteného documentu. `assertSelectionSafe()` se volá před `armTarget()`, ale
+  `armTarget()` po svém asynchronním preflightu page-local flag ani přesnou selection
+  location znovu nekontroluje. Cached target navigation vytvoří nový document a
+  init script flag resetuje. Stejná časová mezera existuje pro fragment/same-document
+  location změny, které nevytvoří routovaný síťový navigation request.
+- **Nezávislá reprodukce:** syntetická selection stránka naplánovala
+  `history.pushState(..., '/messaging/thread/UNREAD/')` za 100 ms, target preflight
+  byl lokálním serverem zpožděn o 350 ms. První selection assertion prošla; zakázaný
+  History pokus proběhl během preflightu. `armTarget()` přesto resolve, cached target
+  navigation proběhla a `assertTargetSafe()` chybně prošla. Snapshot:
+  `hardSafetyViolations=0`, `targetNavigationsAllowed=1`; unread server hit byl `0`.
+- **Dopad:** probe může uložit success/template i poté, co selection document
+  prokazatelně zkusil zakázanou client-side cross-thread navigaci. Samotný pokus je
+  JS wrapperem zastaven před sítí, proto nález není High, ale integrita hard-safety
+  rozhodnutí je porušena.
+- **Doporučení:** před návratem z `armTarget()` znovu atomicky ověřit
+  `hardViolated`, exact selection location a `pageHistoryWasBlocked(page)`. Totéž
+  ověřit při spotřebování cached target documentu těsně před `route.fulfill`, nebo
+  History violation okamžitě propagovat do Node-side hard state. Přidat delayed
+  preflight test pro History API i same-document location/hash.
+
+### AR-02 — MEDIUM — Již zaznamenaná hard violation nezastaví cached target navigaci
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:178-231`,
+  `src/linkedin/probe-navigation.ts:261-285`;
+  `src/linkedin/probe.ts:118-128`
+- **Problém:** fáze se správně přepne na `armed` před target preflightem, takže
+  pozdější foreign request je server `0` a volá `markHardViolation()`. Po dokončení
+  preflightu ale `armTarget()` stav znovu netestuje. Exact cached target exception
+  v route handleru je navíc před ostatními policy větvemi a nemá podmínku
+  `!hardViolated`; target je tedy stále otevřen a teprve závěrečný assertion selže.
+- **Nezávislá reprodukce:** během stejného 350ms preflightu selection dokument
+  spustil jednou foreign `messagingV2` fetch a v druhém běhu `location.href` na
+  unread thread. Oba foreign/unread endpointy měly server hit `0` a snapshot již po
+  `armTarget()` obsahoval `hardSafetyViolations=1`, přesto `armTarget()` resolve a
+  target navigation měla `targetNavigationsAllowed=1`. Až `assertTargetSafe()`
+  odmítl běh.
+- **Dopad:** background request typický pro živou messaging stránku může během
+  target preflightu vytvořit hard failure, ale probe přesto provede uživatelsky
+  významnou thread navigation. Cíl je stále explicitně network-confirmed read, takže
+  nejde o foreign/unread server access, ale „hard fatal before target“ invariant a
+  předvídatelnost opakování probe nejsou splněny.
+- **Doporučení:** po preflight await odmítnout `armTarget()`, pokud je
+  `hardViolated`; cached target document zahodit. Target fulfill větev musí při hard
+  stavu request abortovat, ne dokument vydat. Test musí vyžadovat
+  `armTarget rejects`, `targetNavigationsAllowed=0` a žádný druhý wire document GET
+  pro delayed foreign fetch, main/subframe location i popup.
+
+### AR-03 — MEDIUM — `navigationAttemptsBlocked` má false negative i false positive
+
+- **Soubor/řádky:** `src/linkedin/probe-navigation.ts:178-184`,
+  `src/linkedin/probe-navigation.ts:219-221`,
+  `src/linkedin/probe-navigation.ts:280-284`
+- **Problém:** `block()` zvyšuje buď `navigationAttemptsBlocked`, nebo
+  `crossThreadRequestsBlocked` podle předaného `kind`. Každá thread URL ale vždy
+  používá `kind='cross-thread'`, i když `request.isNavigationRequest() === true`.
+  Main/subframe/iframe/object navigation se proto do navigation counteru nezapíše.
+  Opačně neúspěšný isolated target preflight ručně přičte
+  `navigationAttemptsBlocked`, přestože žádná browser navigation nezačala.
+- **Nezávislá reprodukce:** delayed `location.href` na unread thread i existující
+  iframe/object test mají server `0`, `hardSafetyViolations=1` a
+  `crossThreadRequestsBlocked=1`, ale `navigationAttemptsBlocked=0`. Target
+  preflight 302/bad response naopak skončí s `targetNavigationsAllowed=0` a
+  `navigationAttemptsBlocked=1`.
+- **Dopad:** agregát `navigationAttemptsBlocked=0` nelze používat jako důkaz, že se
+  žádná navigation nepokusila nastat; právě tak byl interpretován redigovaný runtime
+  manifest. Safety blokace samotná funguje, ale auditní evidence a rozhodování o
+  dalším probe jsou zavádějící.
+- **Doporučení:** počítat nezávislé dimenze: každý routovaný
+  `request.isNavigationRequest()` zvýší navigation counter, messaging/thread nav
+  může současně zvýšit cross-thread counter. Pro preflight failure zavést samostatný
+  `probePreflightFailures`; nezapočítávat jej jako browser navigation. Přidat přesné
+  counter testy pro main, iframe, object, popup/History a selection/target preflight.
+
+### Co prošlo
+
+- Pět souběžných denied selection fetchů dalo přesně
+  `crossThreadRequestsBlocked=5`, `selectionSubrequestsBlocked=5`,
+  `hardSafetyViolations=0`, všechny server hits `0`; selection assertion, target
+  arm i jediná cached target navigation následně prošly.
+- Selection image, prefetch a worker-fetch jsou nonfatal a server `0`; iframe,
+  object/subframe, popup a History/location pokus před selection assertion jsou
+  fatální. Main selection redirect je zastaven před unread serverem.
+- Allowed conversation-list GET s 302, HTTP 500 nebo HTML content type není
+  fulfillnut do browseru, zvyšuje hard violation a selection assertion selže.
+  Redirect-list integrační test navíc potvrdil nulový browser `response`, takže z
+  něj capture nevytvoří kandidáta. Selection i target document preflight failure
+  zůstává fail-closed.
+- Po přechodu do `armed` i v target phase mají foreign/unknown messaging HTTP
+  requesty server `0` a nastaví hard violation. Exact target/list GET, redirect
+  `maxRedirects:0`, disposable cookie jar, stripped response headers a jedno použití
+  cached targetu zůstávají beze změny.
+- Candidate selection nadále vyžaduje exact Dash conversation-list GET,
+  `sourceMetadata.read === true`, `readEvidence === 'network-explicit'`, shodu všech
+  ID/URN/route aliasů a odmítá konflikt s explicitním unread záznamem.
+- Plný suite znovu ověřil POST, WebSocket, persistent-SW isolation, starší R4–R7
+  namespace/URN invariants, DOM mutation canary, parser/provenance, atomic
+  main/partial chování a absenci export-store volání v probe větvi.
+
+### Testy, data a Git
+
+- `npm.cmd run check`: **PASS** — typecheck, **15 test files / 126 tests**, build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Fresh missing-state `npm.cmd run probe:read-thread -- --state-file <missing>
+  --output <unique>`: `AUTH_REQUIRED`, exit `3`, bez vytvoření parent adresáře,
+  state, main, `.partial` nebo diagnostics.
+- `.auth/`, exporty a diagnostics jsou ignorované; tracked secret scan nenašel
+  credential value, private key ani runtime session/export artifact.
+- `git diff --check`: **PASS** před zápisem tohoto dodatku. Review pracovalo pouze
+  se syntetickými lokálními HTTP/Chromium fixtures a redigovanými agregáty uvedenými
+  v zadání; LinkedIn, storageState, session ani reálná data nebyly použity.
+
+### Residual risk (Low)
+
+`block()` připíše nonfatal selection counter před dokončením `route.abort()` a
+chybu abortu potlačí. Playwright běžně request drží před sítí a testy potvrzují
+server `0`; pro striktně dokazatelnou toleranci by se ale nonfatal stav měl potvrdit
+až po úspěšném abortu a abort exception změnit na hard failure.
