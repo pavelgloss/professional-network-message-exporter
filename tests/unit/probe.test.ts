@@ -35,6 +35,8 @@ describe('one already-read thread probe', () => {
     expect(make({ unreadCount: 0 })?.sourceMetadata?.read).toBe(true);
     expect(make({ unreadCount: 2 })?.sourceMetadata?.read).toBe(false);
     expect(make({ unreadCount: -1 })?.sourceMetadata?.read).toBeUndefined();
+    const renamed = parseNetworkPayload({ data: { messengerConversationsByCategory: { elements: [{ entityUrn: 'urn:li:messagingThread:RENAMED', participants: [{ id: 'P' }], events: [], unreadCount: 0 }] } } }, source, { observedMethod: 'GET' });
+    expect(renamed.conversations[0]?.sourceMetadata?.read).toBe(true);
     expect(parseNetworkPayload(payload({ read: true }), source).conversations[0]?.sourceMetadata?.read).toBeUndefined();
     expect(parseNetworkPayload(payload({ read: true }), source, { observedMethod: 'POST' }).conversations[0]?.sourceMetadata?.read).toBeUndefined();
     expect(parseNetworkPayload(payload({ read: true }), 'https://tracking.linkedin.com/random/conversation.json', { observedMethod: 'GET' }).conversations[0]?.sourceMetadata?.read).toBeUndefined();

@@ -12,7 +12,6 @@ import { assertAuthenticated, detectAuthState } from './auth-check.js';
 import { attachNetworkCapture } from './network/capture.js';
 import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-navigation.js';
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
-import { collectConversationList } from './dom/conversation-list.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
 
@@ -111,10 +110,15 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       throw new AppError('READ_POLICY_BLOCK', 'Probe selection navigation failed inside the enforced navigation gate', 4);
     }
     assertAuthenticated(await detectAuthState(selectionPage));
-    await selectionPage.waitForTimeout(Math.min(2_000, config.timeoutMs));
-    const observedList = await collectConversationList(selectionPage, config.limit);
-    manifest.counts.probeObservedListRows = observedList.observedRows;
-    await selectionCapture.drain();
+    // Selection depends solely on the allowlisted list GET. Avoid waiting for
+    // or manipulating LinkedIn's mutable DOM: once one response has been parsed,
+    // the renderer can be fenced immediately.
+    const selectionDeadline = Date.now() + Math.min(8_000, config.timeoutMs);
+    do {
+      await selectionPage.waitForTimeout(200);
+      await selectionCapture.drain();
+    } while (!selectionCapture.conversations.length && Date.now() < selectionDeadline);
+    manifest.counts.probeObservedListRows = 0;
     // Keep only redacted structural diagnostics from selection. They contain
     // key paths and counts, never message values, identifiers, cookies or bodies.
     manifest.networkResponses = selectionManifest.networkResponses;

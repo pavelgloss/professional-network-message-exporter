@@ -206,11 +206,19 @@ function trustedObservedConversationObjects(payload: unknown, sourceUrl: string,
     if (!operation || !/^messengerConversations(?:[._-][A-Za-z0-9_-]+)?$/.test(operation)) return trusted;
     const root = record(payload) ? payload : undefined;
     const data = root && record(root.data) ? root.data : undefined;
-    const collection = data && record(data.messengerConversations)
-      ? data.messengerConversations
-      : root && record(root.messengerConversations) ? root.messengerConversations : undefined;
-    if (!collection) return trusted;
-    for (const value of childrenFrom(collection, 'elements', 'nodes', 'edges')) if (record(value)) trusted.add(value);
+    // The persisted operation keeps a stable messengerConversations name while
+    // LinkedIn can rename its direct response field. Trust only direct GraphQL
+    // result collections from this exact observed GET; never recursively trust
+    // similarly shaped tracking or nested objects.
+    const collections = [
+      ...(data ? Object.values(data).filter(record) : []),
+      ...(root && !data ? Object.values(root).filter(record) : []),
+    ];
+    for (const collection of collections) {
+      for (const value of childrenFrom(collection, 'elements', 'nodes', 'edges')) {
+        if (record(value)) trusted.add(value);
+      }
+    }
     return trusted;
   } catch { return trusted; }
 }
