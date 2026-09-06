@@ -10,6 +10,7 @@ export type ProbeNavigationSnapshot = {
   popupPagesBlocked: number;
   crossThreadRequestsBlocked: number;
   selectionSubrequestsBlocked: number;
+  selectionHistoryAttemptsBlocked: number;
   hardSafetyViolations: number;
   selectionPreflightGets: number;
   targetPreflightGets: number;
@@ -166,6 +167,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     popupPagesBlocked: 0,
     crossThreadRequestsBlocked: 0,
     selectionSubrequestsBlocked: 0,
+    selectionHistoryAttemptsBlocked: 0,
     hardSafetyViolations: 0,
     selectionPreflightGets: 1,
     targetPreflightGets: 0,
@@ -194,8 +196,12 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     markHardViolation();
   }
 
-  await context.exposeBinding('__linkedinReaderProbeReportHistoryViolation', ({ page: sourcePage }) => {
+  await context.exposeBinding('__linkedinReaderProbeReportHistoryViolation', ({ page: sourcePage }, kind: unknown) => {
     if (sourcePage !== selectionPage && sourcePage !== targetPage) return;
+    if (kind === 'history' && sourcePage === selectionPage && phase === 'selection') {
+      counts.selectionHistoryAttemptsBlocked += 1;
+      return;
+    }
     historyViolationReported = true;
     markHardViolation();
   });
@@ -204,7 +210,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     const state = globalThis as typeof globalThis & {
       __linkedinReaderProbeHistoryBlocked?: boolean;
       __linkedinReaderProbeGuardReady?: boolean;
-      __linkedinReaderProbeReportHistoryViolation?: () => Promise<void>;
+      __linkedinReaderProbeReportHistoryViolation?: (kind: 'history' | 'same-document' | 'popup') => Promise<void>;
     };
     let blocked = false;
     const reportViolation = state.__linkedinReaderProbeReportHistoryViolation;
@@ -215,9 +221,9 @@ export async function installProbeNavigationGate(context: BrowserContext, select
         value: reportViolation,
       });
     }
-    const rememberViolation = () => {
+    const rememberViolation = (kind: 'history' | 'same-document' | 'popup') => {
       blocked = true;
-      void reportViolation?.().catch(() => undefined);
+      void reportViolation?.(kind).catch(() => undefined);
     };
     Object.defineProperty(state, '__linkedinReaderProbeHistoryBlocked', { configurable: false, get: () => blocked, set: () => undefined });
     const patch = (name: 'pushState' | 'replaceState') => {
@@ -227,7 +233,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
         if (destination === undefined || new URL(String(destination), location.href).href === location.href) {
           return Reflect.apply(original, this, args);
         }
-        rememberViolation();
+        rememberViolation('history');
         throw new DOMException('Probe blocked client-side navigation', 'SecurityError');
       }) as History[typeof name];
       Object.defineProperty(History.prototype, name, { configurable: false, writable: false, value: guarded });
@@ -237,12 +243,12 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     patch('replaceState');
     const initialHref = location.href;
     const rememberSameDocumentNavigation = () => {
-      if (location.href !== initialHref) rememberViolation();
+      if (location.href !== initialHref) rememberViolation('same-document');
     };
     addEventListener('hashchange', rememberSameDocumentNavigation, true);
     addEventListener('popstate', rememberSameDocumentNavigation, true);
     const guardedOpen = (() => {
-      rememberViolation();
+      rememberViolation('popup');
       return null;
     }) as typeof window.open;
     Object.defineProperty(window, 'open', { configurable: false, writable: false, value: guardedOpen });
@@ -377,7 +383,10 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     if (hardViolated) return false;
     const state = await probePageState(candidatePage);
     // This second hard-state read closes races while page.evaluate was pending.
-    return !hardViolated && Boolean(state?.guardReady && exactCanonicalLocation(state.href) === expected && !state.historyBlocked);
+    const toleratedSelectionHistory = candidatePage === selectionPage && phase === 'selection'
+      && counts.selectionHistoryAttemptsBlocked > 0;
+    return !hardViolated && Boolean(state?.guardReady && exactCanonicalLocation(state.href) === expected
+      && (!state.historyBlocked || toleratedSelectionHistory));
   };
 
   return {

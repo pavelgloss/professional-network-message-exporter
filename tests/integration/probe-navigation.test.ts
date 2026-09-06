@@ -181,7 +181,17 @@ describe('probe navigation gate against local redirects', () => {
     expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
   });
 
-  it.each(['history', 'location', 'popup'])('keeps selection %s escape attempts fatal', async (resource) => {
+  it('tolerates a blocked selection History API route change while keeping the exact URL', async () => {
+    await reset('/selection-history');
+    await page.goto(`${origin}/selection-history`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(100);
+    await gate!.assertSelectionSafe();
+    expect(page.url()).toBe(`${origin}/selection-history`);
+    expect(unreadRequests).toBe(0);
+    expect(gate!.snapshot()).toMatchObject({ selectionHistoryAttemptsBlocked: 1, hardSafetyViolations: 0 });
+  });
+
+  it.each(['location', 'popup'])('keeps selection %s escape attempts fatal', async (resource) => {
     await reset(`/selection-${resource}`);
     await page.goto(`${origin}/selection-${resource}`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     await page.waitForTimeout(100);
@@ -292,10 +302,15 @@ describe('probe navigation gate against local redirects', () => {
       replaceWritable: false,
       instanceMatchesPrototype: true,
     });
-    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    await gate!.assertSelectionSafe();
     expect(unreadRequests).toBe(0);
-    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 0 });
-    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+    expect(page.url()).toBe(`${origin}/selection`);
+    expect(gate!.snapshot()).toMatchObject({
+      targetNavigationsAllowed: 0,
+      navigationAttemptsBlocked: 0,
+      selectionHistoryAttemptsBlocked: 2,
+      hardSafetyViolations: 0,
+    });
   });
 
   it.each(['history', 'foreign', 'location', 'popup', 'subframe', 'hash', 'prototype'])('retires selection before delayed %s code can overlap target preflight', async (fixture) => {
