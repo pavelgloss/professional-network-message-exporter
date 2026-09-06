@@ -1,4 +1,4 @@
-import { request as playwrightRequest, type APIResponse, type BrowserContext, type Page, type Request, type Route } from 'playwright';
+import { request as playwrightRequest, type APIResponse, type BrowserContext, type CDPSession, type Page, type Request, type Route } from 'playwright';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 import { AppError } from '../errors.js';
 import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
@@ -123,24 +123,24 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
   }
 }
 
-async function sealAndCloseSelectionPage(context: BrowserContext, page: Page): Promise<boolean> {
-  // Closing a renderer while a timer is dispatching fetch() can race Playwright's
-  // route callback and let that request reach the network. Seal this Chromium
-  // target at the browser-network layer first, then terminate its JS execution.
-  // The CDP session belongs only to the selection Page and is not inherited by
-  // the fresh target Page created later.
-  let session: Awaited<ReturnType<BrowserContext['newCDPSession']>> | undefined;
+async function retireSelectionPage(session: CDPSession, page: Page): Promise<boolean> {
+  // Never close the live selection renderer directly: Chromium can race a
+  // timer-dispatched fetch past route teardown. Its CDP fence is prepared before
+  // selection starts. Block every URL at the target network layer, terminate the
+  // old JS execution, and replace the document with local about:blank while the
+  // context route remains installed. The retired blank Page stays alive until
+  // the whole isolated context is closed.
   try {
-    session = await context.newCDPSession(page);
-    await session.send('Network.enable');
     await session.send('Network.setBlockedURLs', { urls: ['*'] });
     await session.send('Runtime.terminateExecution');
-    await page.close({ runBeforeUnload: false });
-    return page.isClosed();
+    const navigation = await session.send('Page.navigate', { url: 'about:blank' });
+    if (navigation.errorText) return false;
+    await page.waitForURL('about:blank', { waitUntil: 'commit', timeout: 5_000 });
+    const state = await probePageState(page);
+    return !page.isClosed() && page.url() === 'about:blank' && page.frames().length === 1
+      && state?.href === 'about:blank' && state.guardReady && !state.historyBlocked;
   } catch {
     return false;
-  } finally {
-    await session?.detach().catch(() => undefined);
   }
 }
 
@@ -158,6 +158,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
   let historyViolationReported = false;
   let expectedTargetPageCreation = false;
   let internallyCreatedPage: Page | undefined;
+  let selectionSession: CDPSession | undefined;
   const counts: ProbeNavigationSnapshot = {
     selectionNavigationsAllowed: 0,
     targetNavigationsAllowed: 0,
@@ -179,6 +180,13 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     targetDocument = undefined;
     counts.hardSafetyViolations += 1;
   };
+
+  try {
+    selectionSession = await context.newCDPSession(selectionPage);
+    await selectionSession.send('Network.enable');
+  } catch {
+    throw new AppError('READ_POLICY_BLOCK', 'Probe could not prepare the selection network fence', 4);
+  }
 
   selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation);
   if (!selectionDocument) {
@@ -296,7 +304,9 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       // target exception consumes the cache synchronously from one internally
       // created pristine about:blank page; there is no browser timer barrier.
       if (hardViolated || historyViolationReported || targetPage.url() !== 'about:blank'
-        || targetPage.frames().length !== 1 || context.pages().some((candidate) => candidate !== targetPage)) {
+        || targetPage.frames().length !== 1 || selectionPage.url() !== 'about:blank'
+        || context.pages().length !== 2
+        || context.pages().some((candidate) => candidate !== targetPage && candidate !== selectionPage)) {
         await block(route, 'cross-thread');
         return;
       }
@@ -400,11 +410,11 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       targetLocation = location;
       targetIds = ids;
       phase = 'closing-selection';
-      if (!await sealAndCloseSelectionPage(context, selectionPage)) markHardViolation();
+      if (!selectionSession || !await retireSelectionPage(selectionSession, selectionPage)) markHardViolation();
       await drainRoutes();
-      if (hardViolated || !selectionPage.isClosed()) {
+      if (hardViolated || selectionPage.isClosed() || selectionPage.url() !== 'about:blank') {
         if (!hardViolated) markHardViolation();
-        throw new AppError('READ_POLICY_BLOCK', 'Probe selection page did not close before target setup', 4);
+        throw new AppError('READ_POLICY_BLOCK', 'Probe selection page was not safely retired before target setup', 4);
       }
 
       expectedTargetPageCreation = true;
@@ -421,7 +431,8 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       internallyCreatedPage = undefined;
       const pristine = await probePageState(targetPage);
       if (hardViolated || targetPage.isClosed() || targetPage.url() !== 'about:blank' || targetPage.frames().length !== 1
-        || await targetPage.opener() !== null || context.pages().some((candidate) => candidate !== targetPage)
+        || await targetPage.opener() !== null || context.pages().length !== 2
+        || context.pages().some((candidate) => candidate !== targetPage && candidate !== selectionPage)
         || !pristine?.guardReady || pristine.href !== 'about:blank' || pristine.historyBlocked) {
         if (!hardViolated) markHardViolation();
         await targetPage.close({ runBeforeUnload: false }).catch(() => undefined);
@@ -439,7 +450,9 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       }
       const stillPristine = await probePageState(targetPage);
       if (hardViolated || phase !== 'target-preflight' || targetPage.isClosed() || targetPage.url() !== 'about:blank'
-        || targetPage.frames().length !== 1 || context.pages().some((candidate) => candidate !== targetPage)
+        || targetPage.frames().length !== 1 || selectionPage.isClosed() || selectionPage.url() !== 'about:blank'
+        || context.pages().length !== 2
+        || context.pages().some((candidate) => candidate !== targetPage && candidate !== selectionPage)
         || !stillPristine?.guardReady || stillPristine.href !== 'about:blank' || stillPristine.historyBlocked) {
         if (!hardViolated) markHardViolation();
         await targetPage.close({ runBeforeUnload: false }).catch(() => undefined);
@@ -461,6 +474,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     async dispose() {
       context.off('page', popupHandler);
       await context.unroute('**/*', trackedRouteHandler);
+      await selectionSession?.detach().catch(() => undefined);
     },
   };
 }

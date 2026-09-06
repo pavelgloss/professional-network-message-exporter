@@ -298,17 +298,18 @@ describe('probe navigation gate against local redirects', () => {
     expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
   });
 
-  it.each(['history', 'foreign', 'location', 'popup', 'subframe', 'hash', 'prototype'])('closes selection before delayed %s code can overlap target preflight', async (fixture) => {
+  it.each(['history', 'foreign', 'location', 'popup', 'subframe', 'hash', 'prototype'])('retires selection before delayed %s code can overlap target preflight', async (fixture) => {
     await reset(`/selection-delayed-${fixture}`);
     await page.goto(`${origin}/selection-delayed-${fixture}`, { waitUntil: 'domcontentloaded' });
     await gate!.assertSelectionSafe();
     const selectionPage = page;
     const target = `${origin}/messaging/thread/READ-DELAY/`;
     page = await gate!.armTarget(target, ['READ-DELAY']);
-    expect(selectionPage.isClosed()).toBe(true);
+    expect(selectionPage.isClosed()).toBe(false);
+    expect(selectionPage.url()).toBe('about:blank');
     expect(page).not.toBe(selectionPage);
     expect(page.url()).toBe('about:blank');
-    expect(context.pages()).toEqual([page]);
+    expect(new Set(context.pages())).toEqual(new Set([selectionPage, page]));
     expect(gate!.snapshot()).toMatchObject({
       targetPreflightGets: 1,
       targetPreflightFailures: 0,
@@ -372,9 +373,10 @@ describe('probe navigation gate against local redirects', () => {
         if (beforeNavigation.hardSafetyViolations > 0) {
           expect(freshTarget).toBeUndefined();
         } else {
-          expect(selectionPage.isClosed()).toBe(true);
+          expect(selectionPage.isClosed()).toBe(false);
+          expect(selectionPage.url()).toBe('about:blank');
           expect(freshTarget).toBeDefined();
-          expect(raceContext.pages()).toEqual([freshTarget]);
+          expect(new Set(raceContext.pages())).toEqual(new Set([selectionPage, freshTarget!]));
           const preflightHits = targetRequests.get(targetPath) ?? 0;
           await freshTarget!.goto(`${origin}${targetPath}`, { waitUntil: 'domcontentloaded' });
           expect(targetRequests.get(targetPath)).toBe(preflightHits);
