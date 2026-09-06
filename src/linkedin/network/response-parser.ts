@@ -161,7 +161,13 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   });
   const parserMisses = messageValues.length - messages.length;
   const lastActivityAt = numberOrStringAt(obj, 'lastActivityAt', 'lastActivity', 'updatedAt', 'createdAt');
-  const url = stringAt(obj, 'conversationUrl', 'navigationUrl') ?? (id ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/` : undefined);
+  // A typed conversation URN is the stable identity boundary. LinkedIn's
+  // conversationUrl field is presentation data and currently varies between
+  // relative, decorated and SPA forms, so derive the exact thread route from
+  // the verified identity whenever it is available.
+  const url = id
+    ? `https://www.linkedin.com/messaging/thread/${encodeURIComponent(id)}/`
+    : stringAt(obj, 'conversationUrl', 'navigationUrl');
   const paging = record(obj.paging) ? obj.paging : record(obj.pageInfo) ? obj.pageInfo : undefined;
   const total = paging && typeof paging.total === 'number' ? paging.total : undefined;
   const historyComplete = messageValues.length > 0 && parserMisses === 0 && (paging?.hasNextPage === false || (total !== undefined && messageValues.length >= total));
