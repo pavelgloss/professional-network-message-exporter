@@ -1,8 +1,35 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 22:13 Europe/Prague
+Last updated: 2026-09-06 22:21 Europe/Prague
 
-## Latest checkpoint (22:13) — separate older-history operation found
+## Latest checkpoint (22:21) — exact older-page binding identified
+
+The allowlisted tokenized bundle-context pass completed without storing any
+LinkedIn content, identities, URLs, cookies, token values, or operation hashes.
+It shows that the separate persisted operation is called
+`messengerMessagesBySyncToken.<hash>` and takes exactly these semantic variables:
+
+```text
+conversationUrn, syncToken
+```
+
+The older-page response/client state uses `prevCursor`; completion uses
+`fullyLoaded`. The initial `messengerMessages.<hash>` response's `newSyncToken`
+is therefore the starting input for the separate operation; subsequent backwards
+requests must use the prior response's `prevCursor` and stop only when
+`fullyLoaded === true`. Never substitute the returned `newSyncToken` into the
+initial operation again; that experiment was already proven to be incremental
+refresh rather than older-history paging.
+
+Active uncommitted work in `src/linkedin/probe.ts` extracts only the exact
+`messengerMessagesBySyncToken.<hex>` persisted-operation identifier from already
+downloaded static JavaScript and keeps it in process memory. The identifier must
+not be logged. The manifest records only how many unique matching operation IDs
+were found. Next: typecheck/test this capture, run one guarded known-read probe to
+prove exactly one operation ID is available, then implement the GET-only chain in
+the parser/history reader and validate it first on one bounded thread.
+
+## Previous checkpoint (22:13) — separate older-history operation found
 
 Schema-name inspection of JavaScript bundles already downloaded by the guarded
 page found the missing client contract. Relevant identifiers cluster together:
