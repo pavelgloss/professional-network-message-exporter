@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config.js';
+import { request as playwrightRequest } from 'playwright';
 import { AppError } from '../errors.js';
 import type { Logger } from '../logger.js';
 import { createManifest, saveContentDiagnostics, saveContentDiagnosticsOnFailure, saveManifest } from '../io/diagnostics.js';
@@ -14,8 +15,23 @@ import { collectConversationList, type ConversationListHint } from './dom/conver
 import { canonicalLinkedInUrl, normalizeConversation, normalizeTimestamp } from '../domain/normalize.js';
 import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../domain/stable-id.js';
 import { ExportSchema, type LinkedInExport, type RawConversation, type RawMessage, type RawParticipant } from '../domain/schema.js';
+import { probeReadThread, type ObservedHistoryGet } from './probe.js';
+import { readObservedConversationHistories } from './history-reader.js';
+
+async function discoverHistoryGet(config: AppConfig, logger: Logger): Promise<ObservedHistoryGet> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try { return await probeReadThread(config, logger); }
+    catch (error) {
+      lastError = error;
+      logger.warn('history-template-discovery-retry', { attempt });
+    }
+  }
+  throw lastError;
+}
 
 export async function exportMessages(config: AppConfig, logger: Logger): Promise<LinkedInExport> {
+  const observedHistory = await discoverHistoryGet(config, logger);
   const manifest = createManifest();
   const context = await launchContext(config, 'export', manifest, logger);
   let page = context.pages()[0] ?? await context.newPage();
@@ -66,6 +82,18 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
     raw = raw.slice(0, config.limit);
 
     if (!raw.length) throw new AppError('PARSER_NO_DATA', 'LinkedIn loaded, but no conversations could be read. Selectors or response formats may have changed.', 4);
+    const historyRequest = await playwrightRequest.newContext({
+      storageState: await context.storageState(),
+      extraHTTPHeaders: observedHistory.headers,
+    });
+    try {
+      const historyRaw = await readObservedConversationHistories(historyRequest, observedHistory, raw, manifest, logger);
+      raw = coalesceRaw([...raw, ...historyRaw]);
+      raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
+      raw = raw.slice(0, config.limit);
+    } finally {
+      await historyRequest.dispose().catch(() => undefined);
+    }
     const messages = raw.flatMap((c) => c.messages ?? []);
     if (!reliableSelfId && messages.some((message) => !message.direction)) {
       throw new AppError('VALIDATION_FAILED', 'A stable account identity was unavailable, so message direction cannot be determined safely.', 4);

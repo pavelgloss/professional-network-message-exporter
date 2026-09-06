@@ -1,8 +1,44 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 20:12 Europe/Prague
+Last updated: 2026-09-06 21:30 Europe/Prague
 
-## Latest checkpoint (20:12)
+## Latest checkpoint (21:30)
+
+The first complete real run succeeded. `npm run export -- --limit 100` performed
+100 validated history GETs (one per conversation), with 0 read failures and no
+pagination pages required by the observed unpaginated persisted operation. It
+wrote `data/linkedin/messages.json` with 100 conversations, 158 messages,
+`partial: false`, no empty conversations, 200/200 participant recruiter fields,
+and no missing message directions. Message counts range from 1 to 20; 20
+conversations have more than one message.
+
+The final file validates against `ExportSchema`. The normalized output initially
+omitted the internal per-conversation `historyComplete` evidence even though the
+pre-write coverage check used it. `normalizeConversation` has now been patched to
+preserve safe conversation `sourceMetadata`; the required second idempotence run
+will rewrite the complete file with that auditable evidence. After that, compare
+the stable-ID digest, run full tests/build/audit, update old integration
+expectations for confirmed-abort semantics, and commit.
+
+## Previous checkpoint (20:23)
+
+Commit `4d1fb85` contains the successful real probe and its safety-policy fixes.
+After that commit, uncommitted work adds `src/linkedin/history-reader.ts`, returns
+the validated history request from `probeReadThread` only in process memory, and
+wires it into `exportMessages` through an isolated authenticated GET-only request
+context.
+
+The first integrated `npm run export -- --limit 100` safely reached 100 list
+conversations but all 100 history reads failed before any page was accepted, so
+only `messages.json.partial` was updated (100 conversations / 100 preview
+messages); no incomplete data replaced the final path. The likely cause was
+rebuilding the observed nested Rest.li query through `URLSearchParams`, which
+changed LinkedIn's exact percent encoding. `instantiateObservedHistoryUrl` has
+now been changed to preserve the raw observed URL byte-for-byte and substitute
+only exact raw/encoded forms of the validated conversation ID. Next action is a
+focused real retry, then inspect only aggregate history counts.
+
+## Previous checkpoint (20:12)
 
 The real one-thread probe now succeeds. Aggregate result: 20 list conversations,
 12 explicitly read candidates, exactly 1 target navigation, exactly 1 validated

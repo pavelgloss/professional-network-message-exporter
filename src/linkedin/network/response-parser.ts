@@ -315,7 +315,12 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: N
 function restEnvelopeElements(payload: unknown): unknown[] {
   if (!record(payload)) return [];
   if (Array.isArray(payload.elements)) return payload.elements;
-  return record(payload.data) && Array.isArray(payload.data.elements) ? payload.data.elements : [];
+  if (!record(payload.data)) return [];
+  if (Array.isArray(payload.data.elements)) return payload.data.elements;
+  // Current persisted messengerMessages GraphQL responses wrap the resource
+  // collection under one operation-specific field below `data`.
+  return Object.values(payload.data).filter(record)
+    .flatMap((value) => Array.isArray(value.elements) ? value.elements : []);
 }
 
 function looksLikeMessageReference(value: string): boolean {
@@ -445,7 +450,12 @@ function readEvidence(value: unknown): HistoryEvidence[] {
 }
 
 function isHistoryResource(sourceUrl: string): boolean {
-  try { return /\/(?:events|messages|history)(?:[/?#]|$)/i.test(new URL(sourceUrl, 'https://www.linkedin.com').pathname); }
+  try {
+    const url = new URL(sourceUrl, 'https://www.linkedin.com');
+    if (/\/(?:events|messages|history)(?:[/?#]|$)/i.test(url.pathname)) return true;
+    return url.pathname === '/voyager/api/voyagerMessagingGraphQL/graphql'
+      && /^messengerMessages(?:\.[A-Fa-f0-9]{32,128})?$/.test(url.searchParams.get('queryId') ?? '');
+  }
   catch { return false; }
 }
 

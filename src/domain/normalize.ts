@@ -63,7 +63,15 @@ export function normalizeConversation(raw: RawConversation, selfId?: string): Co
   messages.sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '') || Number(a.sourceMetadata?.sourceOrder ?? 0) - Number(b.sourceMetadata?.sourceOrder ?? 0) || a.id.localeCompare(b.id));
   messages.forEach((message, sequence) => { message.sequence = sequence; });
   const lastActivityAt = normalizeTimestamp(raw.lastActivityAt) ?? [...messages].reverse().find((m) => m.sentAt)?.sentAt;
-  return { id, ...(entityUrn ? { entityUrn } : {}), ...(url ? { url } : {}), ...(lastActivityAt ? { lastActivityAt } : {}), participants, messages };
+  return {
+    id,
+    ...(entityUrn ? { entityUrn } : {}),
+    ...(url ? { url } : {}),
+    ...(lastActivityAt ? { lastActivityAt } : {}),
+    participants,
+    messages,
+    ...(raw.sourceMetadata ? { sourceMetadata: raw.sourceMetadata } : {}),
+  };
 }
 
 function normalizeMessage(raw: RawMessage, conversationId: string, participants: Map<string, ReturnType<typeof participant>>, selfIds: Set<string>, sourceOrder: number, fallbackCounts: Map<string, number>) {

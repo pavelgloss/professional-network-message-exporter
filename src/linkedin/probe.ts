@@ -14,6 +14,29 @@ import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-na
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
 
 export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQueries']>[number];
+export type ObservedHistoryGet = {
+  url: string;
+  headers: Record<string, string>;
+  targetIds: string[];
+  seedConversations: RawConversation[];
+  paginationUrls: string[];
+};
+
+function safeObservedHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) =>
+    /^(?:accept|accept-language|user-agent|csrf-token|x-li-[a-z0-9-]+|x-restli-protocol-version)$/i.test(name)));
+}
+
+function safeVariableShape(rawUrl: string): string | undefined {
+  try {
+    const raw = new URL(rawUrl).searchParams.get('variables');
+    const variables = raw ? repeatedlyDecodeAndNormalize(raw) : undefined;
+    if (!variables) return undefined;
+    const fields = [...variables.matchAll(/(?:^|[({,])\s*([A-Za-z][A-Za-z0-9]{0,60})\s*:\s*(-?\d+)?/g)]
+      .map((match) => match[2] === undefined ? match[1]! : `${match[1]}=${match[2]}`);
+    return [...new Set(fields)].sort().slice(0, 40).join(',') || undefined;
+  } catch { return undefined; }
+}
 
 function safeKnownId(value: string | undefined): string | undefined {
   const normalized = value ? repeatedlyDecodeAndNormalize(value) : undefined;
@@ -115,7 +138,7 @@ export async function navigateOneSafeProbeThread(page: Pick<Page, 'goto'>, conve
   }
 }
 
-export async function probeReadThread(config: AppConfig, logger: Logger): Promise<void> {
+export async function probeReadThread(config: AppConfig, logger: Logger): Promise<ObservedHistoryGet> {
   const manifest = createManifest();
   const context = await launchContext(config, 'export', manifest, logger);
   const selectionPage = await context.newPage();
@@ -123,7 +146,10 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
   const selectionManifest = createManifest();
   const selectionCapture = attachNetworkCapture(selectionPage, selectionManifest, logger);
   const templates = new Map<string, ProbeHistoryQuery>();
+  let targetCapture: ReturnType<typeof attachNetworkCapture> | undefined;
   let requestHandler: ((request: Request) => void) | undefined;
+  let observedRequest: Request | undefined;
+  let result: ObservedHistoryGet | undefined;
   let navigationGate: ProbeNavigationGate | undefined;
   try {
     logger.info('read-thread-probe-started', { scope: 'one-explicitly-read-network-conversation' });
@@ -175,10 +201,14 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     // No selection response/listener survives into the target lifecycle.
     selectionCapture.detach();
     targetPage = await navigationGate.armTarget(targetUrl.toString(), candidateIds);
+    targetCapture = attachNetworkCapture(targetPage, manifest, logger);
 
     requestHandler = (request: Request) => {
       const template = observedHistoryQueryTemplate(request.method(), request.url(), candidateIds);
-      if (template) templates.set(JSON.stringify(template), template);
+      if (template) {
+        templates.set(JSON.stringify(template), template);
+        observedRequest ??= request;
+      }
       else {
         const canonical = canonicalUrlView(request.url());
         const decision = probeMessagingRequestPolicy('target', request.method(), request.url(), 'https://www.linkedin.com', candidateIds);
@@ -197,10 +227,25 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     targetPage.on('request', requestHandler);
     await navigateOneSafeProbeThread(targetPage, candidate, config.timeoutMs);
     await targetPage.waitForTimeout(Math.min(3_000, config.timeoutMs));
+    await targetCapture.drain();
     await navigationGate.assertTargetSafe();
     manifest.probeHistoryQueries = [...templates.values()];
     manifest.counts.probeHistoryQueryTemplates = templates.size;
     if (!templates.size) throw new AppError('PARSER_NO_DATA', 'The one-thread probe observed no safe GET history query template', 4);
+    if (!observedRequest) throw new AppError('PARSER_NO_DATA', 'The one-thread probe did not retain its validated history GET', 4);
+    result = {
+      url: observedRequest.url(),
+      headers: safeObservedHeaders(await observedRequest.allHeaders()),
+      targetIds: [...candidateIds],
+      seedConversations: targetCapture.conversations.filter((conversation) =>
+        Boolean(conversation.id && candidateIds.has(conversation.id))),
+      paginationUrls: [...targetCapture.paginationUrls],
+    };
+    const variableShape = safeVariableShape(result.url);
+    if (variableShape) manifest.strategies.push(`probe-history-variable-shape:${variableShape}`);
+    manifest.counts.probeHistoryParsedConversations = result.seedConversations.length;
+    manifest.counts.probeHistoryParsedMessages = result.seedConversations
+      .reduce((sum, conversation) => sum + (conversation.messages?.length ?? 0), 0);
     manifest.status = 'success';
     logger.info('read-thread-probe-complete', { threadNavigations: navigationGate.snapshot().targetNavigationsAllowed, historyQueryTemplates: templates.size });
   } catch (error) {
@@ -213,6 +258,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeHistoryQueryTemplates = templates.size;
     }
     if (requestHandler && targetPage) targetPage.off('request', requestHandler);
+    targetCapture?.detach();
     selectionCapture.detach();
     if (navigationGate) {
       const snapshot = navigationGate.snapshot();
@@ -240,4 +286,6 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     await closeContext(context);
     await saveManifest(config.diagnosticsDir, manifest).catch(() => undefined);
   }
+  if (!result) throw new AppError('PARSER_NO_DATA', 'The one-thread probe produced no validated history GET', 4);
+  return result;
 }
