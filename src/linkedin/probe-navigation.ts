@@ -12,6 +12,7 @@ export type ProbeNavigationSnapshot = {
   selectionSubrequestsBlocked: number;
   selectionHistoryAttemptsBlocked: number;
   selectionPopupAttemptsBlocked: number;
+  selectionSameDocumentAttemptsBlocked: number;
   hardSafetyViolations: number;
   selectionPreflightGets: number;
   targetPreflightGets: number;
@@ -180,6 +181,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     selectionSubrequestsBlocked: 0,
     selectionHistoryAttemptsBlocked: 0,
     selectionPopupAttemptsBlocked: 0,
+    selectionSameDocumentAttemptsBlocked: 0,
     hardSafetyViolations: 0,
     selectionPreflightGets: 1,
     targetPreflightGets: 0,
@@ -210,9 +212,10 @@ export async function installProbeNavigationGate(context: BrowserContext, select
 
   await context.exposeBinding('__linkedinReaderProbeReportHistoryViolation', ({ page: sourcePage }, kind: unknown) => {
     if (sourcePage !== selectionPage && sourcePage !== targetPage) return;
-    if (sourcePage === selectionPage && (kind === 'history' || kind === 'popup')) {
+    if (sourcePage === selectionPage && (kind === 'history' || kind === 'popup' || kind === 'same-document')) {
       if (kind === 'history') counts.selectionHistoryAttemptsBlocked += 1;
-      else counts.selectionPopupAttemptsBlocked += 1;
+      else if (kind === 'popup') counts.selectionPopupAttemptsBlocked += 1;
+      else counts.selectionSameDocumentAttemptsBlocked += 1;
       return;
     }
     historyViolationReported = true;
@@ -411,6 +414,11 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     if (candidatePage === selectionPage && state) {
       counts.selectionHistoryAttemptsBlocked = Math.max(counts.selectionHistoryAttemptsBlocked, state.historyAttemptsBlocked);
       counts.selectionPopupAttemptsBlocked = Math.max(counts.selectionPopupAttemptsBlocked, state.popupAttemptsBlocked);
+    }
+    if (candidatePage === selectionPage && phase === 'selection') {
+      const current = state ? canonicalUrlView(state.href) : undefined;
+      return !hardViolated && Boolean(state?.guardReady && current
+        && current.url.origin === expectedOrigin && !current.url.username && !current.url.password);
     }
     const toleratedSelectionClientAttempt = candidatePage === selectionPage && phase === 'selection'
       && Boolean(state && !state.hardClientViolation
