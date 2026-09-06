@@ -93,38 +93,40 @@ export async function navigateOneSafeProbeThread(page: Pick<Page, 'goto'>, conve
 export async function probeReadThread(config: AppConfig, logger: Logger): Promise<void> {
   const manifest = createManifest();
   const context = await launchContext(config, 'export', manifest, logger);
-  const page = await context.newPage();
+  const selectionPage = await context.newPage();
+  let targetPage: Page | undefined;
   const selectionManifest = createManifest();
-  const selectionCapture = attachNetworkCapture(page, selectionManifest, logger);
+  const selectionCapture = attachNetworkCapture(selectionPage, selectionManifest, logger);
   const templates = new Map<string, ProbeHistoryQuery>();
   let requestHandler: ((request: Request) => void) | undefined;
   let navigationGate: ProbeNavigationGate | undefined;
   try {
     logger.info('read-thread-probe-started', { scope: 'one-explicitly-read-network-conversation' });
     const selectionUrl = 'https://www.linkedin.com/messaging/';
-    navigationGate = await installProbeNavigationGate(context, page, selectionUrl);
+    navigationGate = await installProbeNavigationGate(context, selectionPage, selectionUrl);
     try {
-      await page.goto(selectionUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+      await selectionPage.goto(selectionUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
     } catch {
       throw new AppError('READ_POLICY_BLOCK', 'Probe selection navigation failed inside the enforced navigation gate', 4);
     }
-    assertAuthenticated(await detectAuthState(page));
-    await page.waitForTimeout(Math.min(2_000, config.timeoutMs));
+    assertAuthenticated(await detectAuthState(selectionPage));
+    await selectionPage.waitForTimeout(Math.min(2_000, config.timeoutMs));
     await selectionCapture.drain();
     await navigationGate.assertSelectionSafe();
     const candidate = selectSafeProbeConversation(selectionCapture.conversations);
     const targetUrl = assertSafeProbeConversation(candidate);
     const candidateIds = knownProbeConversationIds(candidate);
-    await navigationGate.armTarget(targetUrl.toString(), candidateIds);
+    // No selection response/listener survives into the target lifecycle.
     selectionCapture.detach();
+    targetPage = await navigationGate.armTarget(targetUrl.toString(), candidateIds);
 
     requestHandler = (request: Request) => {
       const template = observedHistoryQueryTemplate(request.method(), request.url(), candidateIds);
       if (template) templates.set(JSON.stringify(template), template);
     };
-    page.on('request', requestHandler);
-    await navigateOneSafeProbeThread(page, candidate, config.timeoutMs);
-    await page.waitForTimeout(Math.min(3_000, config.timeoutMs));
+    targetPage.on('request', requestHandler);
+    await navigateOneSafeProbeThread(targetPage, candidate, config.timeoutMs);
+    await targetPage.waitForTimeout(Math.min(3_000, config.timeoutMs));
     await navigationGate.assertTargetSafe();
     manifest.probeHistoryQueries = [...templates.values()];
     manifest.counts.probeHistoryQueryTemplates = templates.size;
@@ -136,7 +138,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     manifest.status = safeError.code;
     throw safeError;
   } finally {
-    if (requestHandler) page.off('request', requestHandler);
+    if (requestHandler && targetPage) targetPage.off('request', requestHandler);
     selectionCapture.detach();
     if (navigationGate) {
       const snapshot = navigationGate.snapshot();

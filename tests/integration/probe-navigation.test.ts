@@ -99,6 +99,7 @@ describe('probe navigation gate against local redirects', () => {
         '/selection-delayed-popup': '<body><script>setTimeout(()=>{const link=document.createElement("a");link.href="/messaging/thread/UNREAD/";link.target="_blank";document.body.append(link);link.click()},100)</script></body>',
         '/selection-delayed-subframe': '<body><script>setTimeout(()=>{const frame=document.createElement("iframe");frame.src="/messaging/thread/UNREAD/";document.body.append(frame)},100)</script></body>',
         '/selection-delayed-hash': '<script>setTimeout(()=>{location.hash="unsafe"},100)</script>',
+        '/selection-delayed-prototype': '<script>const back=location.href;setTimeout(()=>{try{History.prototype.pushState.call(history,{},"",location.origin+"/messaging/thread/UNREAD/")}catch{};try{Reflect.apply(History.prototype.replaceState,history,[{},"",back])}catch{}},100)</script>',
       };
       response.writeHead(200, {
         'content-type': 'text/html',
@@ -213,7 +214,7 @@ describe('probe navigation gate against local redirects', () => {
     await gate!.assertSelectionSafe();
 
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
     await gate!.assertTargetSafe();
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
@@ -267,45 +268,143 @@ describe('probe navigation gate against local redirects', () => {
     });
   });
 
-  it.each([
-    { fixture: 'history', routedNavigations: 0 },
-    { fixture: 'foreign', routedNavigations: 0 },
-    { fixture: 'location', routedNavigations: 1 },
-    { fixture: 'popup', routedNavigations: undefined },
-    { fixture: 'subframe', routedNavigations: 1 },
-    { fixture: 'hash', routedNavigations: 0 },
-  ])('invalidates a delayed target preflight after selection $fixture activity', async ({ fixture, routedNavigations }) => {
+  it('guards History.prototype against call and Reflect.apply bypasses', async () => {
+    await reset();
+    await page.goto(`${origin}/selection`, { waitUntil: 'domcontentloaded' });
+    await gate!.assertSelectionSafe();
+    const descriptors = await page.evaluate((foreignUrl) => {
+      const push = Object.getOwnPropertyDescriptor(History.prototype, 'pushState');
+      const replace = Object.getOwnPropertyDescriptor(History.prototype, 'replaceState');
+      try { History.prototype.pushState.call(history, {}, '', foreignUrl); } catch { /* expected */ }
+      try { Reflect.apply(History.prototype.replaceState, history, [{}, '', foreignUrl]); } catch { /* expected */ }
+      return {
+        pushConfigurable: push?.configurable,
+        pushWritable: push?.writable,
+        replaceConfigurable: replace?.configurable,
+        replaceWritable: replace?.writable,
+        instanceMatchesPrototype: history.pushState === History.prototype.pushState && history.replaceState === History.prototype.replaceState,
+      };
+    }, `${origin}/messaging/thread/UNREAD/`);
+    expect(descriptors).toEqual({
+      pushConfigurable: false,
+      pushWritable: false,
+      replaceConfigurable: false,
+      replaceWritable: false,
+      instanceMatchesPrototype: true,
+    });
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    expect(unreadRequests).toBe(0);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 0, navigationAttemptsBlocked: 0 });
+    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+  });
+
+  it.each(['history', 'foreign', 'location', 'popup', 'subframe', 'hash', 'prototype'])('closes selection before delayed %s code can overlap target preflight', async (fixture) => {
     await reset(`/selection-delayed-${fixture}`);
     await page.goto(`${origin}/selection-delayed-${fixture}`, { waitUntil: 'domcontentloaded' });
     await gate!.assertSelectionSafe();
+    const selectionPage = page;
     const target = `${origin}/messaging/thread/READ-DELAY/`;
-    await expect(gate!.armTarget(target, ['READ-DELAY'])).rejects.toThrow(/unsafe selection-page change/);
-
-    const beforeTargetAttempt = gate!.snapshot();
-    expect(beforeTargetAttempt).toMatchObject({
+    page = await gate!.armTarget(target, ['READ-DELAY']);
+    expect(selectionPage.isClosed()).toBe(true);
+    expect(page).not.toBe(selectionPage);
+    expect(page.url()).toBe('about:blank');
+    expect(context.pages()).toEqual([page]);
+    expect(gate!.snapshot()).toMatchObject({
       targetPreflightGets: 1,
       targetPreflightFailures: 0,
       targetNavigationsAllowed: 0,
-      hardSafetyViolations: expect.any(Number),
+      hardSafetyViolations: 0,
+      navigationAttemptsBlocked: 0,
+      popupPagesBlocked: 0,
     });
-    expect(beforeTargetAttempt.hardSafetyViolations).toBeGreaterThan(0);
-    if (routedNavigations !== undefined) expect(beforeTargetAttempt.navigationAttemptsBlocked).toBe(routedNavigations);
-    if (fixture === 'popup') expect(beforeTargetAttempt.popupPagesBlocked).toBeGreaterThan(0);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
     expect(targetRequests.get('/messaging/thread/READ-DELAY/')).toBe(1);
-
-    // A caller cannot consume the cache after armTarget rejects. The only
-    // target server request remains the isolated preflight.
     await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     expect(targetRequests.get('/messaging/thread/READ-DELAY/')).toBe(1);
+    expect(gate!.snapshot()).toMatchObject({ targetNavigationsAllowed: 1, hardSafetyViolations: 0 });
+    await gate!.assertTargetSafe();
+  });
+
+  it('keeps 30 zero-to-ten-millisecond selection races disjoint from the fresh target page', async () => {
+    await context.close();
+    gate = undefined;
+    const foreignPath = '/voyager/api/messagingV2/conversations/UNREAD/events';
+    const targetPath = '/messaging/thread/READ/';
+
+    for (let index = 0; index < 30; index += 1) {
+      allRequests.delete(foreignPath);
+      const raceContext = await browser.newContext({ serviceWorkers: 'block' });
+      const selectionPage = await raceContext.newPage();
+      const selectionUrl = `${origin}/selection`;
+      const raceGate = await installProbeNavigationGate(raceContext, selectionPage, selectionUrl);
+      try {
+        await selectionPage.goto(selectionUrl, { waitUntil: 'domcontentloaded' });
+        await raceGate.assertSelectionSafe();
+        await selectionPage.evaluate(({ delay, kind, foreignUrl, unreadUrl, backUrl }) => {
+          setTimeout(() => {
+            if (kind === 0) {
+              try { Reflect.apply(History.prototype.pushState, history, [{}, '', unreadUrl]); } catch { /* guarded */ }
+              try { History.prototype.replaceState.call(history, {}, '', backUrl); } catch { /* guarded */ }
+            } else if (kind === 1) {
+              void fetch(foreignUrl).catch(() => undefined);
+            } else {
+              try { history.pushState({}, '', unreadUrl); } catch { /* guarded */ }
+            }
+          }, delay);
+        }, {
+          delay: index % 11,
+          kind: index % 3,
+          foreignUrl: `${origin}${foreignPath}`,
+          unreadUrl: `${origin}/messaging/thread/UNREAD/`,
+          backUrl: selectionUrl,
+        });
+
+        let freshTarget: Page | undefined;
+        try { freshTarget = await raceGate.armTarget(`${origin}${targetPath}`, ['READ']); }
+        catch { /* a pre-close violation is an expected fail-closed outcome */ }
+        const beforeNavigation = raceGate.snapshot();
+        expect(beforeNavigation.targetNavigationsAllowed).toBe(0);
+        expect(allRequests.get(foreignPath), JSON.stringify({ index, delay: index % 11, kind: index % 3, snapshot: beforeNavigation })).toBeUndefined();
+        expect(unreadRequests).toBe(0);
+        expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
+
+        if (beforeNavigation.hardSafetyViolations > 0) {
+          expect(freshTarget).toBeUndefined();
+        } else {
+          expect(selectionPage.isClosed()).toBe(true);
+          expect(freshTarget).toBeDefined();
+          expect(raceContext.pages()).toEqual([freshTarget]);
+          const preflightHits = targetRequests.get(targetPath) ?? 0;
+          await freshTarget!.goto(`${origin}${targetPath}`, { waitUntil: 'domcontentloaded' });
+          expect(targetRequests.get(targetPath)).toBe(preflightHits);
+          await raceGate.assertTargetSafe();
+          expect(raceGate.snapshot()).toMatchObject({ targetNavigationsAllowed: 1, hardSafetyViolations: 0 });
+        }
+        expect(!(raceGate.snapshot().targetNavigationsAllowed > 0 && raceGate.snapshot().hardSafetyViolations > 0)).toBe(true);
+      } finally {
+        await raceGate.dispose().catch(() => undefined);
+        await raceContext.close().catch(() => undefined);
+      }
+    }
+  });
+
+  it('treats every externally created third page as fatal and never as the internal target page', async () => {
+    await reset();
+    await loadSafeSelection();
+    const rogue = await context.newPage();
+    await page.waitForTimeout(50);
+    expect(rogue.isClosed()).toBe(true);
+    expect(gate!.snapshot().popupPagesBlocked).toBe(1);
+    expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+    await expect(gate!.armTarget(`${origin}/messaging/thread/READ/`, ['READ'])).rejects.toThrow(/unsafe selection/);
     expect(gate!.snapshot().targetNavigationsAllowed).toBe(0);
   });
 
   it.each(['READ-HISTORY', 'READ-LOCATION', 'READ-POPUP'])('fails closed for client-side navigation from %s', async (target) => {
     await reset();
     await loadSafeSelection();
-    await gate!.armTarget(`${origin}/messaging/thread/${target}/`, [target]);
+    page = await gate!.armTarget(`${origin}/messaging/thread/${target}/`, [target]);
     await page.goto(`${origin}/messaging/thread/${target}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     await page.waitForTimeout(100);
     await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
@@ -317,7 +416,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     const browserResponse = await page.goto(target, { waitUntil: 'domcontentloaded' });
     await gate!.assertTargetSafe();
     expect(browserResponse?.headers()['set-cookie']).toBeUndefined();
@@ -349,11 +448,12 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
-    const foreignHistory = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD';
+    page = await gate!.armTarget(target, ['READ']);
+    const foreignPath = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD';
+    const foreignHistory = `${origin}${foreignPath}`;
     await page.evaluate((url) => fetch(url).catch(() => undefined), foreignHistory);
     await page.waitForTimeout(50);
-    expect(allRequests.get(foreignHistory)).toBeUndefined();
+    expect(allRequests.get(foreignPath)).toBeUndefined();
     expect(gate!.snapshot()).toMatchObject({
       crossThreadRequestsBlocked: 1,
       selectionSubrequestsBlocked: 0,
@@ -371,10 +471,9 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
-    await page.evaluate(() => { try { history.pushState({}, '', '/messaging/thread/UNREAD/'); } catch { /* expected guard */ } });
-    // Do not add a wait here: the target route itself must close the reporting race.
+    await page.evaluate((foreignUrl) => { try { history.pushState({}, '', foreignUrl); } catch { /* expected guard */ } }, `${origin}/messaging/thread/UNREAD/`);
     await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
@@ -386,7 +485,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
     await gate!.assertTargetSafe();
     expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
@@ -402,7 +501,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
 
     const allowed = [
@@ -434,7 +533,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
     await gate!.assertTargetSafe();
 
@@ -462,7 +561,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
 
     const history = (variables: string) => `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
@@ -493,7 +592,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
 
     const history = (variables: string) => `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
@@ -524,7 +623,7 @@ describe('probe navigation gate against local redirects', () => {
     await reset();
     await loadSafeSelection();
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     await page.goto(target, { waitUntil: 'domcontentloaded' });
 
     const history = (variables: string) => `/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&variables=${encodeURIComponent(variables)}`;
@@ -580,7 +679,7 @@ describe('probe navigation gate against local redirects', () => {
     expect(await context.cookies()).toEqual([expect.objectContaining({ name: 'authCanary', value: 'original' })]);
 
     const target = `${origin}/messaging/thread/READ/`;
-    await gate!.armTarget(target, ['READ']);
+    page = await gate!.armTarget(target, ['READ']);
     expect(requestCookies.get('/messaging/thread/READ/')).toContain('authCanary=original');
     expect(requestCookies.get('/messaging/thread/READ/')).not.toContain('selectionPrivate');
     expect(await context.cookies()).toEqual([expect.objectContaining({ name: 'authCanary', value: 'original' })]);
