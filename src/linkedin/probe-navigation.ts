@@ -44,7 +44,7 @@ function exactCanonicalLocation(rawUrl: string): string | undefined {
 
 function normalizedId(value: string): string | undefined {
   const normalized = repeatedlyDecodeAndNormalize(value);
-  return normalized && /^[\p{L}\p{N}_.-]+$/u.test(normalized) ? normalized : undefined;
+  return normalized && (/^[\p{L}\p{N}_.-]+$/u.test(normalized) || /^[A-Za-z0-9._~=-]+$/.test(normalized)) ? normalized : undefined;
 }
 
 export function explicitProbeGraphqlConversationIds(method: string, rawUrl: string): Set<string> {

@@ -1,7 +1,7 @@
 import type { Page, Request } from 'playwright';
 import type { AppConfig } from '../config.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
-import { conversationIdFromUrn } from '../domain/stable-id.js';
+import { conversationIdFromUrn, parseLinkedInUrn } from '../domain/stable-id.js';
 import { AppError } from '../errors.js';
 import { closeContext, launchContext } from '../browser/context.js';
 import { requestPolicy } from '../browser/request-guard.js';
@@ -17,7 +17,22 @@ export type ProbeHistoryQuery = NonNullable<DiagnosticsManifest['probeHistoryQue
 
 function safeKnownId(value: string | undefined): string | undefined {
   const normalized = value ? repeatedlyDecodeAndNormalize(value) : undefined;
-  return normalized && /^[\p{L}\p{N}_.-]+$/u.test(normalized) ? normalized : undefined;
+  return normalized && (/^[\p{L}\p{N}_.-]+$/u.test(normalized) || /^[A-Za-z0-9._~=-]+$/.test(normalized)) ? normalized : undefined;
+}
+
+function safeRouteConversationId(value: string | undefined): string | undefined {
+  const normalized = value ? repeatedlyDecodeAndNormalize(value) : undefined;
+  return safeKnownId(normalized) ?? safeKnownId(conversationIdFromUrn(normalized));
+}
+
+function probeRouteShape(conversation: RawConversation): string {
+  const canonical = conversation.url ? canonicalUrlView(conversation.url) : undefined;
+  const value = canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1] ?? '';
+  if (/^urn:li:/i.test(value)) return 'linkedin-urn';
+  if (/^\(/.test(value)) return 'composite';
+  if (/^[\p{L}\p{N}_.-]+$/u.test(value)) return 'canonical';
+  if (/^[A-Za-z0-9._~=-]+$/.test(value)) return 'extended-ascii';
+  return value ? 'other' : 'missing';
 }
 
 export function knownProbeConversationIds(conversation: RawConversation): Set<string> {
@@ -28,27 +43,37 @@ export function knownProbeConversationIds(conversation: RawConversation): Set<st
   if (urn) ids.add(urn);
   if (conversation.url) {
     const canonical = canonicalUrlView(conversation.url);
-    const route = safeKnownId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+    const route = safeRouteConversationId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
     if (route) ids.add(route);
   }
   return ids;
 }
 
 export function assertSafeProbeConversation(conversation: RawConversation): URL {
-  if (conversation.sourceMetadata?.read !== true || conversation.sourceMetadata.readEvidence !== 'network-explicit' || !conversation.url) {
+  const rejected = safeProbeConversationRejection(conversation);
+  if (rejected === 'read-evidence' || rejected === 'missing-url') {
     throw new AppError('READ_POLICY_BLOCK', 'Probe requires a network conversation with explicit read=true evidence');
   }
+  if (rejected) throw new AppError('READ_POLICY_BLOCK', 'Probe conversation URL was not an exact safe LinkedIn thread URL');
+  return canonicalUrlView(conversation.url!)!.url;
+}
+
+function safeProbeConversationRejection(conversation: RawConversation): string | undefined {
+  if (conversation.sourceMetadata?.read !== true || conversation.sourceMetadata.readEvidence !== 'network-explicit') return 'read-evidence';
+  if (!conversation.url) return 'missing-url';
   const canonical = canonicalUrlView(conversation.url);
-  const routeId = safeKnownId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
+  if (!canonical) return 'invalid-url';
+  if (canonical.url.origin !== 'https://www.linkedin.com' || canonical.url.username || canonical.url.password) return 'origin';
+  if (canonical.url.search || canonical.url.hash) return 'decorated-url';
+  if (!/^\/messaging\/thread\/[^/]+\/?$/i.test(canonical.pathname)) return 'thread-path';
+  if (!requestPolicy('GET', canonical.url.toString()).allow) return 'global-policy';
+  const routeId = safeRouteConversationId(canonical.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
   const knownIds = knownProbeConversationIds(conversation);
   const declaredIds = [safeKnownId(conversation.id), safeKnownId(conversationIdFromUrn(conversation.entityUrn))].filter((id): id is string => Boolean(id));
-  if (!canonical || canonical.url.origin !== 'https://www.linkedin.com' || canonical.url.username || canonical.url.password
-    || canonical.url.search || canonical.url.hash || !/^\/messaging\/thread\/[^/]+\/?$/i.test(canonical.pathname)
-    || !requestPolicy('GET', canonical.url.toString()).allow || !routeId || !declaredIds.length
-    || [...knownIds].some((id) => id !== routeId)) {
-    throw new AppError('READ_POLICY_BLOCK', 'Probe conversation URL was not an exact safe LinkedIn thread URL');
-  }
-  return canonical.url;
+  if (!routeId) return 'route-id';
+  if (!declaredIds.length) return 'declared-id';
+  if ([...knownIds].some((id) => id !== routeId)) return 'identity-mismatch';
+  return undefined;
 }
 
 export function selectSafeProbeConversation(conversations: RawConversation[]): RawConversation {
@@ -126,6 +151,23 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     manifest.counts.probeExplicitReadConversations = selectionCapture.conversations
       .filter((conversation) => conversation.sourceMetadata?.read === true
         && conversation.sourceMetadata.readEvidence === 'network-explicit').length;
+    for (const conversation of selectionCapture.conversations) {
+      if (conversation.sourceMetadata?.read !== true || conversation.sourceMetadata.readEvidence !== 'network-explicit') continue;
+      const rejection = safeProbeConversationRejection(conversation);
+      if (rejection) {
+        manifest.counts[`probeCandidateRejected_${rejection}`] = (manifest.counts[`probeCandidateRejected_${rejection}`] ?? 0) + 1;
+        const routeShape = probeRouteShape(conversation);
+        manifest.counts[`probeCandidateRoute_${routeShape}`] = (manifest.counts[`probeCandidateRoute_${routeShape}`] ?? 0) + 1;
+        const identityShape = conversationIdFromUrn(conversation.entityUrn) ? 'typed-urn'
+          : safeKnownId(conversation.id) ? 'canonical-id' : conversation.entityUrn ? 'other-urn' : 'missing';
+        manifest.counts[`probeCandidateIdentity_${identityShape}`] = (manifest.counts[`probeCandidateIdentity_${identityShape}`] ?? 0) + 1;
+        const entityType = parseLinkedInUrn(conversation.entityUrn)?.entityType;
+        if (entityType && /^[A-Za-z][A-Za-z0-9_-]{0,80}$/.test(entityType)) {
+          const strategy = `probe-candidate-entity-type:${entityType}`;
+          if (!manifest.strategies.includes(strategy)) manifest.strategies.push(strategy);
+        }
+      }
+    }
     await navigationGate.assertSelectionSafe();
     const candidate = selectSafeProbeConversation(selectionCapture.conversations);
     const targetUrl = assertSafeProbeConversation(candidate);

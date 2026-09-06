@@ -43,7 +43,7 @@ function typedRouteId(value: string | undefined, expected: RegExp): string | und
 
 function safeRouteId(value?: string): string | undefined {
   const clean = value?.trim();
-  return clean && /^[\w.-]+$/u.test(clean) ? clean : undefined;
+  return clean && (/^[\w.-]+$/u.test(clean) || /^[A-Za-z0-9._~=-]+$/.test(clean)) ? clean : undefined;
 }
 
 export function personIdFromUrn(value?: string): string | undefined { return typedRouteId(value, PERSON_TYPES); }

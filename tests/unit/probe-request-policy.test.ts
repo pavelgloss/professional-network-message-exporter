@@ -4,7 +4,7 @@ import { probeMessagingRequestPolicy } from '../../src/linkedin/probe-request-po
 describe('probe phase-specific messaging request policy', () => {
   const origin = 'https://www.linkedin.com';
   const dash = `${origin}/voyager/api/voyagerMessagingGraphQL/graphql`;
-  const target = new Set(['READ']);
+  const target = new Set(['READ', 'READ==']);
   const decide = (phase: 'selection' | 'target', url: string, method = 'GET') =>
     probeMessagingRequestPolicy(phase, method, url, origin, target);
 
@@ -29,6 +29,7 @@ describe('probe phase-specific messaging request policy', () => {
     const hash = 'b'.repeat(32);
     const allowed = [
       `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=messengerMessagesByConversation&conversationId=${encodeURIComponent('READ==')}`,
       `${dash}?queryId=messengerMessages.${hash}&conversationId=READ`,
       `${dash}?queryId=messengerMessagesByConversation.${hash}&conversationId=READ`,
       `${dash}?queryId=messengerMessagesByConversation&conversationUrn=${encodeURIComponent('urn:li:messagingThread:READ')}`,

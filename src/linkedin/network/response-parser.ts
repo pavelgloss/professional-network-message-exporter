@@ -151,7 +151,8 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   const looksConversation = (/(?:messagingThread|messengerConversation|messagingConversation|msg_conversation|conversation)/i.test(entityUrn ?? '') && hasConversationShape)
     || (participantValues.length > 0 && ('events' in obj || 'messages' in obj));
   if (!looksConversation) return undefined;
-  const id = conversationIdFromUrn(entityUrn) ?? cleanText(stringAt(obj, 'id'));
+  const rawId = cleanText(stringAt(obj, 'id'));
+  const id = conversationIdFromUrn(entityUrn) ?? conversationIdFromUrn(rawId) ?? rawId;
   const participants = participantValues.map((p) => participantFrom(p, index)).filter((p): p is RawParticipant => Boolean(p));
   const resolvedMessageValues = messageValues.map((value) => resolveIncludedReference(value, index).object);
   resolvedMessageValues.filter(record).forEach((value) => wrappedMessageObjects?.add(value));

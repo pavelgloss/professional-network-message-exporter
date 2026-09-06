@@ -10,6 +10,10 @@ describe('one already-read thread probe', () => {
     id: 'READ', url: 'https://www.linkedin.com/messaging/thread/READ/', sourceMetadata: { read: true, readEvidence: 'network-explicit' },
   };
 
+  const paddedReadConversation: RawConversation = {
+    id: 'READ==', url: 'https://www.linkedin.com/messaging/thread/READ%3D%3D/', sourceMetadata: { read: true, readEvidence: 'network-explicit' },
+  };
+
   it('accepts only exact thread URLs with explicit network read=true evidence', () => {
     expect(selectSafeProbeConversation([
       { id: 'UNREAD', url: 'https://www.linkedin.com/messaging/thread/UNREAD/', sourceMetadata: { read: false } },
@@ -23,7 +27,17 @@ describe('one already-read thread probe', () => {
     expect(() => assertSafeProbeConversation({ ...readConversation, url: 'https://www.linkedin.com/messaging/thread/READ/extra' })).toThrow();
     expect(() => assertSafeProbeConversation({ ...readConversation, url: 'https://evil.example/messaging/thread/READ/' })).toThrow();
     expect(() => assertSafeProbeConversation({ ...readConversation, id: 'OTHER' })).toThrow();
+    expect(assertSafeProbeConversation({
+      ...readConversation,
+      entityUrn: 'urn:li:messagingThread:READ',
+      url: `https://www.linkedin.com/messaging/thread/${encodeURIComponent('urn:li:messagingThread:READ')}/`,
+    }).pathname).toContain('/messaging/thread/');
     expect(() => assertSafeProbeConversation({ url: 'https://www.linkedin.com/messaging/thread/READ/', sourceMetadata: { read: true, readEvidence: 'network-explicit' } })).toThrow();
+    expect(assertSafeProbeConversation(paddedReadConversation).pathname).toBe('/messaging/thread/READ%3D%3D/');
+    expect(assertSafeProbeConversation({
+      ...paddedReadConversation,
+      entityUrn: 'urn:li:msg_conversation:(urn:li:fsd_profile:SELF,READ==)',
+    }).pathname).toBe('/messaging/thread/READ%3D%3D/');
   });
 
   it('preserves explicit read booleans and trusted unreadCount evidence from network conversations', () => {

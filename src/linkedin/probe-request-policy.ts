@@ -40,7 +40,7 @@ function hasCanonicalIdentityKeySpelling(key: string): boolean {
 
 function normalizedId(value: string): string | undefined {
   const normalized = repeatedlyDecodeAndNormalize(value.trim().replace(/^['"]|['"]$/g, ''));
-  return normalized && /^[\p{L}\p{N}_.-]+$/u.test(normalized) ? normalized : undefined;
+  return normalized && (/^[\p{L}\p{N}_.-]+$/u.test(normalized) || /^[A-Za-z0-9._~=-]+$/.test(normalized)) ? normalized : undefined;
 }
 
 function parseReferenceValue(value: unknown): string | undefined {
