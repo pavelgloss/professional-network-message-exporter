@@ -1,8 +1,35 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 21:46 Europe/Prague
+Last updated: 2026-09-06 21:50 Europe/Prague
 
-## Latest checkpoint (21:46) — review findings fixed locally
+## Latest checkpoint (21:50) — live response contract identified
+
+Commit `59af6c6` contains the review fixes and resumption checkpoint. A fresh,
+explicitly authorized run of
+`npm.cmd run export -- --limit 100 --with-history-probe` then completed exactly
+one safe thread navigation and 100/100 direct history GETs with zero read
+failures. It correctly wrote only `messages.json.partial` (100 conversations / 158
+messages, `partial:true`); the main JSON was not changed.
+
+Safe schema-only diagnostics across all 100 current history responses show this
+exact collection contract:
+
+```text
+collection: _recipeType, _type, elements[1..20], metadata
+metadata: _recipeType, _type, deletedUrns[], newSyncToken<string>,
+          shouldClearCache=true
+```
+
+No `total`, `start`, `end`, `hasNextPage`, `nextCursor`, or response link is
+present. `newSyncToken` is therefore the only server-provided continuation/sync
+candidate in the current persisted operation. Its value was never logged or
+written. Next: add a tightly bounded in-memory contract probe for this token and
+compare only response counts/stable message aliases. If it returns a distinct
+older page, formalize its exact variable binding and completion evidence; if it
+is merely an incremental-refresh token, the UI must be observed while scrolling
+one explicitly-read long thread to capture the separate older-history operation.
+
+## Previous checkpoint (21:46) — review findings fixed locally
 
 The CRH-01..03 fixes are implemented and locally verified:
 
