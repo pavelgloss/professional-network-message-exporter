@@ -15,10 +15,11 @@ import { installProbeNavigationGate, type ProbeNavigationGate } from './probe-na
 import { probeMessagingRequestPolicy } from './probe-request-policy.js';
 import { domSelectors } from './dom/selectors.js';
 
-type BundleHintCapture = { drain(): Promise<void>; detach(): void };
+type BundleHintCapture = { olderQueryIds: Set<string>; drain(): Promise<void>; detach(): void };
 
 function attachBundleContractHints(page: Page, manifest: DiagnosticsManifest): BundleHintCapture {
   const pending = new Set<Promise<void>>();
+  const olderQueryIds = new Set<string>();
   let inspected = 0;
   const terms = ['messengerMessagesBySyncToken', 'prevCursor', 'ADD_OLDER_MESSAGES', 'messengerMessages', 'newSyncToken', 'shouldClearCache'];
   const relevantIdentifier = /message|sync|cursor|anchor|page|before|after|older|previous|next|load|cache|history|event|conversation|query|variables|metadata|element|fully/i;
@@ -31,6 +32,7 @@ function attachBundleContractHints(page: Page, manifest: DiagnosticsManifest): B
     const job = (async () => {
       const source = await response.text();
       if (source.length > 12 * 1024 * 1024) return;
+      for (const match of source.matchAll(/messengerMessagesBySyncToken\.[A-Fa-f0-9]{32,128}/g)) olderQueryIds.add(match[0]);
       for (const term of terms) {
         let offset = 0;
         for (let occurrence = 0; occurrence < 6; occurrence += 1) {
@@ -61,6 +63,7 @@ function attachBundleContractHints(page: Page, manifest: DiagnosticsManifest): B
   };
   page.on('response', handle);
   return {
+    olderQueryIds,
     async drain() { await Promise.allSettled([...pending]); },
     detach() { page.off('response', handle); },
   };
@@ -74,6 +77,7 @@ export type ObservedHistoryGet = {
   seedConversations: RawConversation[];
   paginationUrls: string[];
   continuationUrls: string[];
+  olderQueryIds: string[];
 };
 
 async function preferredProbeIds(outputPath: string): Promise<Set<string>> {
@@ -406,7 +410,9 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
         Boolean(conversation.id && candidateIds.has(conversation.id))),
       paginationUrls: [...targetCapture.paginationUrls],
       continuationUrls: [...observedRequests.keys()].filter((url) => url !== observedRequest!.url()),
+      olderQueryIds: [...new Set([...selectionBundleHints.olderQueryIds, ...(targetBundleHints?.olderQueryIds ?? [])])],
     };
+    manifest.counts.probeOlderHistoryOperationIds = result.olderQueryIds.length;
     for (const url of observedRequests.keys()) {
       const variableShape = safeVariableShape(url);
       if (variableShape) {
