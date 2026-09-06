@@ -24,8 +24,9 @@ const canonicalReferenceNames = new Map([
   ['messagingthreadid', 'messagingThreadId'],
 ]);
 const semanticStem = /messag|conversation|thread|inbox|mailbox/i;
-const listOperation = /^messengerConversations$/;
-const historyOperation = /^(?:messengerMessagesByConversation|messengerConversationMessages)$/;
+const persistedHashSuffix = String.raw`(?:\.[A-Fa-f0-9]{32,128})?`;
+const listOperation = new RegExp(`^messengerConversations${persistedHashSuffix}$`);
+const historyOperation = new RegExp(`^(?:messengerMessagesByConversation|messengerConversationMessages)${persistedHashSuffix}$`);
 
 function isIdentityLikeKey(key: string): boolean {
   return /(?:id|ids|urn|urns)$/i.test(key);

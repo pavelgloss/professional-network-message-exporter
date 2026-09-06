@@ -380,7 +380,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
           const operation = canonical?.query.find(({ name }) => name === 'queryId')?.value;
           const safeOperation = operation && /^[A-Za-z][A-Za-z0-9_.-]{0,160}$/.test(operation)
             ? operation : 'opaque';
-          const shape = `${redactedPathShape(canonical?.pathname ?? '')}?queryId=${safeOperation}`;
+          const shape = `path ${redactedPathShape(canonical?.pathname ?? '')} operation ${safeOperation}`;
           if (!counts.selectionBlockedRequestShapes.includes(shape)) counts.selectionBlockedRequestShapes.push(shape);
         }
         await block(route, 'cross-thread', blockedMessagingAttemptIsFatal(request));

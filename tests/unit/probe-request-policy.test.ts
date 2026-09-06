@@ -9,15 +9,20 @@ describe('probe phase-specific messaging request policy', () => {
     probeMessagingRequestPolicy(phase, method, url, origin, target);
 
   it('allows only the exact Dash conversation-list GET during selection', () => {
+    const hash = 'a'.repeat(32);
     expect(decide('selection', `${dash}?queryId=messengerConversations`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('selection', `${dash}?queryId=messengerConversations.not-a-hash`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ cursor: 'next' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
   });
 
   it('allows target history only when exactly one robustly parsed reference is the target', () => {
+    const hash = 'b'.repeat(32);
     const allowed = [
       `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`,
+      `${dash}?queryId=messengerMessagesByConversation.${hash}&conversationId=READ`,
       `${dash}?queryId=messengerMessagesByConversation&conversationUrn=${encodeURIComponent('urn:li:messagingThread:READ')}`,
       `${dash}?queryId=messengerConversationMessages&variables=${encodeURIComponent(JSON.stringify({ input: { threadId: 'READ' } }))}`,
       `${dash}?queryId=messengerMessagesByConversation&variables=${encodeURIComponent('(conversationUrn:urn:li:messagingThread:READ)')}`,
