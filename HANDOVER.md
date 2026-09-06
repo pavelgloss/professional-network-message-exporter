@@ -1,8 +1,27 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 22:21 Europe/Prague
+Last updated: 2026-09-06 22:26 Europe/Prague
 
-## Latest checkpoint (22:21) — exact older-page binding identified
+## Latest checkpoint (22:26) — direct operation-ID regex was a dead end
+
+Commit `e19760b` added the in-memory-only exact-string capture and passed
+typecheck plus 16 focused tests. A real `probe:read-thread` then completed with
+one target thread navigation, zero hard safety violations, and one initial
+history template, but `probeOlderHistoryOperationIds=0`. The public bundle has
+the `messengerMessagesBySyncToken` client function and its variables, but does
+not contain a literal adjacent `messengerMessagesBySyncToken.<hex>` string. Do
+not repeat the exact-string regex approach.
+
+Next: use the observed initial `messengerMessages.<hex>` operation as a public,
+non-personal lookup key against only the already-downloaded relevant bundle
+sources held in memory. Identify how the query registry associates imported
+artifacts/IDs with operation names, record only counts/structural facts, and
+derive exactly one older-operation ID without logging or persisting its value.
+In parallel, the implementation subagent is adding fail-closed policy/parser
+support and tests for the known separate operation; it must not access LinkedIn
+or edit the history reader/probe.
+
+## Previous checkpoint (22:21) — exact older-page binding identified
 
 The allowlisted tokenized bundle-context pass completed without storing any
 LinkedIn content, identities, URLs, cookies, token values, or operation hashes.
