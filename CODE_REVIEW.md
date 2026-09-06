@@ -1419,3 +1419,85 @@ export bez probe/thread-open režimu tímto nálezem dotčen není.
 - `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
   reálná data, credentials ani existující session; implementační kód nebyl změněn
   a nic nebylo commitováno.
+
+---
+
+## Finální security re-review HEAD `fa6ec2b`
+
+### Verdikt
+
+**Critical: 0 / High: 1 / Medium: 0.** R6-01 je pro tři future entity namespaces
+a empty-value current URN opravený. Rozšířená požadovaná malformed/missing-ID
+matice však odhalila navazující fail-open případ: conversation-shaped token, který
+nemá canonical druhou dvojtečku, vůbec nevstoupí do URN klasifikace.
+
+**NO-GO pro jeden skutečný `--probe-read-thread`.** Exact history request s
+`urn:li:messagingThread/UNREAD` dosáhl lokálního serveru a gate stále hlásil safe.
+Běžný network-only export bez probe/thread-open režimu tímto nálezem dotčen není.
+
+### R7-01 / R6-01 — HIGH — Malformed conversation token bez canonical separatoru unikne URN klasifikaci
+
+- **Soubor/řádky:** `src/linkedin/probe-request-policy.ts:55-99`,
+  `src/linkedin/probe-request-policy.ts:175-198`,
+  `src/linkedin/probe-request-policy.ts:217-238`
+- **Problém:** `collectConversationUrns()` hledá pouze regex
+  `urn:li:([\w-]+):`. Tokeny `urn:li:messagingThread`,
+  `urn:li:messagingThread/UNREAD`, `urn:li:messagingThread=UNREAD` a obdobný tvar
+  s `?`/`#` proto nenajde. `isSensitiveProbeSurface()` je sice podle slova
+  `messagingThread` označí za sensitive, ale nenastaví `references.valid=false`;
+  vedle `conversationId=READ` tak request splní exact history allow podmínku.
+- **Nezávislá reprodukce:** policy pro šest malformed variant v JSON payloadu
+  vrátila `allow:true`, `referencedIds=[READ]`. Lokální Chromium route-chain poslal
+  reprezentativní missing-value, slash+foreign a equals+foreign request serveru
+  (`malformedHits=[1,1,1]`), `crossThreadRequestsBlocked=0` a
+  `assertTargetSafe=true`. Stejný běh potvrdil, že tři R6 future types, canonical
+  empty current URN a dva supported foreign URNs mají server count `0`.
+- **Dopad:** pokud soukromý endpoint nebo mezivrstva akceptuje/normalizuje
+  alternativní separator či nový serializační tvar, může foreign unread identity
+  projít vedle target návnady bez violation. I pokud jej současný backend odmítne,
+  explicitně požadovaný invariant „ambiguous/malformed fail-closed“ není splněn.
+- **Doporučení:** před extrakcí validních URN detekovat každý normalizovaný
+  `urn:li:` prefix. Obsahuje-li následující token `messag|conversation|thread`, musí
+  se celý kandidát buď rozparsovat jako podporovaný canonical conversation URN s
+  platným ID, nebo nastavit `result.valid=false`; slash/equal/missing separator se
+  nesmí tiše ignorovat. Explicitně známé profile/person/participant/message/event/
+  mailbox/inbox entity dál ignorovat. Přidat policy a server-count `0` testy pro
+  missing colon/ID i `/`, `=`, `?`, `#` JSON/Rest.li a repeated-encoded varianty.
+
+### Ověřené opravy a regrese
+
+- **R6-01 uzavřeno v původním rozsahu:** `messagingThreadV2`,
+  `messagingConversationV2`, `conversation-v2` i canonical empty
+  `messagingThread:` vedle target aliasu mají server count `0` a blocked counter.
+  Case, hyphen, underscore, numeric prefix/suffix a mixed conversation/nonconversation
+  entity type se klasifikují konzervativně; conversation/thread marker má prioritu.
+- **Pozitivní/negativní typed URN:** šest podporovaných target namespaces
+  (`messagingThread`, composite `msg_conversation`, `fsd_messengerConversation`,
+  `messengerConversation`, `messagingConversation`, `conversation`) mělo každý
+  právě jeden server hit a safe assertion. Supported foreign simple/composite URN
+  měly hit `0`. Profile/person/participant/message/event/mailbox/inbox entity pod
+  neidentity payloadem se do conversation setu nepřimíchaly a target request prošel.
+- **Encoding a kombinace:** canonical empty ID, unbalanced composite, double colon,
+  mixed target+foreign, více URN v jednom scalaru, quoted/delimited hodnoty a
+  URL/JSON/Rest.li repeated encoding byly blokované nebo správně rozlišeny. R7-01
+  je omezený na malformed conversation-like prefix, který vůbec nesplní start regex.
+- **Namespace/transport:** R4 namespace default-deny, allowed GET redirect
+  (`source=1`, `target=0`), cached document/API response, isolated cookie jar,
+  thread img/iframe/object/prefetch/worker/fetch, POST, WebSocket a persistent-SW
+  regrese prošly. Exactly-one target stále vyžaduje explicitní network
+  `read===true`, shodný route ID a jednu cached browser navigation.
+- Probe větev nadále nepoužívá export store ani DOM thread extraction. Fresh
+  missing-state běh skončil `AUTH_REQUIRED`, exit `3`, bez main, `.partial`,
+  diagnostics či jiného souboru; existující storage state/session nebyl čten.
+
+### Testy a Git
+
+- `npm.cmd run check`: **PASS** — 15 test files / 119 tests, typecheck i build.
+- `npm.cmd audit --omit=dev --audit-level=high`: **PASS**, 0 zranitelností.
+- Nezávislé local-Chromium/policy matice: požadované R6 a starší regrese **PASS**;
+  malformed missing-separator R7-01 varianty **FAIL** podle nálezu výše.
+- `.auth/`, main/partial exporty a diagnostics jsou ignorované; tracked obsah nemá
+  nalezenou credential value ani runtime export/session artifact.
+- `git diff --check`: **PASS** před zápisem dodatku. Review nepoužilo LinkedIn,
+  reálná data, credentials ani existující session; implementační kód nebyl změněn
+  a nic nebylo commitováno.
