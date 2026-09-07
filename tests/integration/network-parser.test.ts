@@ -212,6 +212,22 @@ describe('network parser', () => {
     })]);
   });
 
+  it('does not label an ordinary text renderer discriminator as an attachment', () => {
+    const payload = { data: { operationSpecificField: { elements: [{
+      entityUrn: 'urn:li:messagingMessage:TEXT',
+      backendConversationUrn: 'urn:li:messagingThread:CONV',
+      sender: { hostIdentityUrn: 'urn:li:fsd_profile:EXT', name: 'External' },
+      deliveredAt: 1_725_000_000_000,
+      body: { text: 'ordinary text', attributes: [] },
+      renderContent: [{ renderer: { type: 'genericRendererDiscriminator' } }],
+    }] } } };
+    const source = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessages.${'a'.repeat(32)}&conversationId=CONV`;
+    const parsed = parseNetworkPayload(payload, source, { observedMethod: 'GET' });
+    expect(parsed.misses).toBe(0);
+    expect(parsed.conversations[0]?.messages?.[0]).toMatchObject({ id: 'TEXT', text: 'ordinary text' });
+    expect(parsed.conversations[0]?.messages?.[0]?.attachments).toBeUndefined();
+  });
+
   it('fails closed and preserves the main export for a missed top-level REST history event', async () => {
     const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-standalone-parser-miss.json', import.meta.url), 'utf8'));
     const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');

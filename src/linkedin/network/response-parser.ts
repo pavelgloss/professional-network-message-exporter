@@ -131,7 +131,7 @@ function firstStringInTree(root: unknown, keys: readonly string[]): string | und
   return undefined;
 }
 
-function attachmentFrom(root: unknown): Attachment | undefined {
+function attachmentFrom(root: unknown, allowTypeOnly: boolean): Attachment | undefined {
   const id = firstStringInTree(root, ['id', 'entityUrn', 'urn', 'mediaUrn', 'assetUrn', 'digitalmediaAssetUrn']);
   const name = firstStringInTree(root, ['fileName', 'filename', 'name', 'title']);
   const type = firstStringInTree(root, ['mimeType', 'mediaType', 'contentType', 'type']);
@@ -143,20 +143,22 @@ function attachmentFrom(root: unknown): Attachment | undefined {
       if (parsed.protocol === 'https:' && /(^|\.)linkedin\.com$/i.test(parsed.hostname)) url = parsed.toString();
     } catch { /* malformed attachment URLs are omitted without losing the message */ }
   }
-  if (!id && !name && !type && !url) return undefined;
+  const meaningfulType = Boolean(type && (allowTypeOnly || type.includes('/') || /file|image|video|audio|document|attachment/i.test(type)));
+  if (!id && !name && !url && !meaningfulType) return undefined;
   return { ...(id ? { id } : {}), ...(name ? { name } : {}), ...(type ? { type } : {}), ...(url ? { url } : {}) };
 }
 
-function attachmentsFrom(obj: JsonRecord): Attachment[] {
-  const roots: unknown[] = [];
-  for (const key of ['attachments', 'renderContent']) {
-    const value = obj[key];
-    if (Array.isArray(value)) roots.push(...value);
-    else if (record(value)) roots.push(value);
-  }
+function attachmentsFrom(obj: JsonRecord, allowWeakRenderContent: boolean): Attachment[] {
+  const roots: Array<{ value: unknown; allowTypeOnly: boolean }> = [];
+  const explicit = obj.attachments;
+  if (Array.isArray(explicit)) roots.push(...explicit.map((value) => ({ value, allowTypeOnly: true })));
+  else if (record(explicit)) roots.push({ value: explicit, allowTypeOnly: true });
+  const rendered = obj.renderContent;
+  if (Array.isArray(rendered)) roots.push(...rendered.map((value) => ({ value, allowTypeOnly: allowWeakRenderContent })));
+  else if (record(rendered)) roots.push({ value: rendered, allowTypeOnly: allowWeakRenderContent });
   const unique = new Map<string, Attachment>();
   for (const root of roots.slice(0, 100)) {
-    const attachment = attachmentFrom(root);
+    const attachment = attachmentFrom(root.value, root.allowTypeOnly);
     if (!attachment) continue;
     const key = JSON.stringify([attachment.id, attachment.name, attachment.type, attachment.url]);
     unique.set(key, attachment);
@@ -168,7 +170,7 @@ function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, 
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = identityUrnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
-  const attachments = attachmentsFrom(obj);
+  const attachments = attachmentsFrom(obj, !text);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
   // Empty text is accepted only when the bounded adapter preserved meaningful
   // attachment/rich-content metadata. Unknown content still fails coverage closed.
