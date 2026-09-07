@@ -1990,3 +1990,29 @@ race, ale selection teardown stále nedává deterministickou síťovou bariéru
 prováděny přes fresh Playwright Chromium/API context, metodou GET, s
 `maxRedirects: 0`; změny samy o sobě nesahají na běžný Chrome profil. Review
 nepoužilo LinkedIn, session ani reálná data a nezměnilo implementaci.
+
+---
+
+## Finální review a re-review HEAD `b611a61` (2026-09-07)
+
+### Verdikt
+
+**GO — Critical 0 · High 0 · Medium 0** v kontrolovaném rozsahu.
+
+První finální průchod našel dva High a jeden Medium nález. Commit `b611a61` je
+uzavřel a stejný nezávislý reviewer provedl úzký re-review:
+
+- lokální export už pouze řadí kandidáty; otevřený thread vždy pochází z aktuální
+  network capture, má aktuální explicitní `read=true` a projde kontrolou konfliktu
+  s `read=false`;
+- opětovné použití prokázané historie vyžaduje společný stabilní message ID/URN;
+  id-less fingerprint ani pouhá shoda conversation ID nestačí a no-overlap test
+  zachová výsledek neúplný;
+- diagnostika proměnných a response kontraktů ukládá pro number/boolean jen typ,
+  nikdy konkrétní hodnotu nebo timestamp.
+
+Reviewer: typecheck **PASS**, cílené testy **19/19 PASS**, žádný další blokující
+nález. Root po opravách: `npm.cmd run check` **PASS** — 16 souborů / **150 testů**,
+typecheck a build; `npm.cmd audit --audit-level=high` **PASS**, 0 zranitelností.
+Review nepoužilo browser, LinkedIn, session, diagnostiku ani runtime exporty a nic
+neupravilo.
