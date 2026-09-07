@@ -1,8 +1,29 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 11:31 Europe/Prague
+Last updated: 2026-09-07 11:39 Europe/Prague
 
-## Latest checkpoint (11:31) — sync request stopped locally; encoding fixed
+## Latest checkpoint (11:39) — separate persisted query ID conclusively required
+
+The bounded limit-1 experiment now passed every local URL/origin/method/identity
+guard and issued the corrected `(conversationUrn,syncToken)` GET. LinkedIn
+returned HTTP 400 when it used the initial `messengerMessages.<hash>` query ID.
+No mutation was attempted and the candidate remained partial. This conclusively
+rules out reuse of the initial persisted query ID; a separate operation ID is
+required.
+
+The reliable implementation now constructs the new variables from the parsed
+response's exact `conversationUrn`, verifies that it resolves to the one target
+ID, preserves every non-variables URL byte, and re-runs the exact GET policy.
+The earlier raw-encoding guesses can be deleted from history; do not return to
+them. Diagnostics expose only stage plus `HTTP_400`, never response bodies or
+token values.
+
+Next: broaden the in-memory static-artifact lookup from a hex-only suffix to the
+actual persisted-ID alphabet and run one safe probe. If exactly one literal is
+found, use it only in memory. If still zero, inspect the public query registry's
+module/dataflow rather than trying further server requests with guessed IDs.
+
+## Previous checkpoint (11:31) — sync request stopped locally; encoding fixed
 
 A full 100-conversation diagnostic run and several limit-1 runs all remained
 partial and preserved the existing main export. The 100 run completed 100/100
