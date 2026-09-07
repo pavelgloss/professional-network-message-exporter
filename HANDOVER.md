@@ -1,8 +1,32 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 16:43 Europe/Prague
+Last updated: 2026-09-07 16:49 Europe/Prague
 
-## Latest checkpoint (16:43) — repeat preserved output; probe omitted continuation URL
+## Latest checkpoint (16:49) — derived fallback reaches 99/100; prefer short probe target
+
+Commit `c3b3c27` implements and tests the byte-preserving derived fallback. The
+repeat then reached 99/100 complete, 200 pages and zero parser misses. The sole
+failure is the one 55-message conversation; all other conversation histories
+completed. Page arithmetic shows the long thread fetched its initial page and
+one full older page, then failed before the third page. This strongly suggests
+the server accepted the mixed raw delimiter encoding but ignored/repeated the
+derived anchor. The complete main candidate remained unchanged with its prior
+digest; only `.partial` was replaced.
+
+The reason the server-emitted template disappeared is now clear in code:
+`freshPreferredProbeConversation` and `preferredProbeIds` deliberately selected
+only conversations with at least 20 messages, and sorted longest-first. Such a
+target rendered one page without a usable scroller and emitted no older GET.
+The earlier successful probes used a short read thread, for which LinkedIn
+automatically emitted the terminal anchored GET while filling the viewport.
+
+Next: change both preferences to a non-empty `<20` message history and choose
+the shortest fresh, network-proven `read=true` candidate. Keep the derived path
+as a fail-closed fallback, but require the actual server-emitted anchored
+template for the 55-message thread. Rerun into the same complete candidate;
+expect captured template count 1, 100/100 complete and unchanged digest.
+
+## Previous checkpoint (16:43) — repeat preserved output; probe omitted continuation URL
 
 The exact repeat run ended partial, and atomic persistence preserved the clean
 complete candidate unchanged with the same content digest
