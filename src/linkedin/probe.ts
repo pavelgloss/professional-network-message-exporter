@@ -33,9 +33,11 @@ async function preferredProbeIds(outputPath: string): Promise<Set<string>> {
       if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { conversations?: unknown }).conversations)) continue;
       const conversations = (parsed as { conversations: unknown[] }).conversations
         .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
-        .sort((left, right) => (Array.isArray(right.messages) ? right.messages.length : 0) - (Array.isArray(left.messages) ? left.messages.length : 0));
+        .sort((left, right) => (Array.isArray(left.messages) ? left.messages.length : Number.POSITIVE_INFINITY)
+          - (Array.isArray(right.messages) ? right.messages.length : Number.POSITIVE_INFINITY));
       for (const conversation of conversations) {
-        if (!Array.isArray(conversation.messages) || conversation.messages.length < 20 || typeof conversation.url !== 'string') continue;
+        if (!Array.isArray(conversation.messages) || conversation.messages.length < 1
+          || conversation.messages.length >= 20 || typeof conversation.url !== 'string') continue;
         const canonical = canonicalUrlView(conversation.url);
         const id = safeRouteConversationId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
         if (id) output.add(id);
@@ -54,12 +56,13 @@ async function freshPreferredProbeConversation(outputPath: string): Promise<RawC
         || !Array.isArray(parsed.conversations)) continue;
       const candidates = parsed.conversations
         .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
-        .filter((conversation) => Array.isArray(conversation.messages) && conversation.messages.length >= 20
+        .filter((conversation) => Array.isArray(conversation.messages) && conversation.messages.length >= 1
+          && conversation.messages.length < 20
           && typeof conversation.url === 'string'
           && conversation.sourceMetadata && typeof conversation.sourceMetadata === 'object'
           && (conversation.sourceMetadata as Record<string, unknown>).read === true
           && (conversation.sourceMetadata as Record<string, unknown>).readEvidence === 'network-explicit')
-        .sort((left, right) => (right.messages as unknown[]).length - (left.messages as unknown[]).length);
+        .sort((left, right) => (left.messages as unknown[]).length - (right.messages as unknown[]).length);
       for (const conversation of candidates) {
         const url = conversation.url as string;
         const canonical = canonicalUrlView(url);
