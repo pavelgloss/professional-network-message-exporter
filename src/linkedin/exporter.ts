@@ -340,6 +340,10 @@ export function reuseProvenHistorySnapshots(
     if (!conversation.id || conversation.sourceMetadata?.historyComplete === true) return conversation;
     const prior = priorById.get(conversation.id);
     if (!prior) return conversation;
+    const priorMessageAliases = new Set((prior.messages ?? []).flatMap((message) => [...rawMessageAliases(message)]));
+    const hasStableOverlap = (conversation.messages ?? []).some((message) =>
+      [...rawMessageAliases(message)].some((alias) => priorMessageAliases.has(alias)));
+    if (!hasStableOverlap) return conversation;
     const { historyEvidence: _historyEvidence, historyComplete: _historyComplete, parserMisses: _parserMisses, ...freshMetadata } = conversation.sourceMetadata ?? {};
     const fresh: RawConversation = {
       ...conversation,

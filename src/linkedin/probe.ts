@@ -47,43 +47,6 @@ async function preferredProbeIds(outputPath: string): Promise<Set<string>> {
   return output;
 }
 
-async function freshPreferredProbeConversation(outputPath: string): Promise<RawConversation | undefined> {
-  for (const candidatePath of [`${outputPath}.partial`, outputPath]) {
-    try {
-      const parsed = JSON.parse(await readFile(candidatePath, 'utf8')) as Record<string, unknown>;
-      const exportedAt = typeof parsed.exportedAt === 'string' ? Date.parse(parsed.exportedAt) : Number.NaN;
-      if (!Number.isFinite(exportedAt) || Date.now() - exportedAt < 0 || Date.now() - exportedAt > 30 * 60_000
-        || !Array.isArray(parsed.conversations)) continue;
-      const candidates = parsed.conversations
-        .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
-        .filter((conversation) => Array.isArray(conversation.messages) && conversation.messages.length >= 1
-          && conversation.messages.length < 20
-          && typeof conversation.url === 'string'
-          && conversation.sourceMetadata && typeof conversation.sourceMetadata === 'object'
-          && (conversation.sourceMetadata as Record<string, unknown>).read === true
-          && (conversation.sourceMetadata as Record<string, unknown>).readEvidence === 'network-explicit')
-        .sort((left, right) => (left.messages as unknown[]).length - (right.messages as unknown[]).length);
-      for (const conversation of candidates) {
-        const url = conversation.url as string;
-        const canonical = canonicalUrlView(url);
-        const id = safeRouteConversationId(canonical?.pathname.match(/^\/messaging\/thread\/([^/]+)\/?$/i)?.[1]);
-        const entityUrn = typeof conversation.entityUrn === 'string'
-          && conversationIdFromUrn(conversation.entityUrn) === id ? conversation.entityUrn : undefined;
-        if (!id) continue;
-        const candidate: RawConversation = {
-          id,
-          ...(entityUrn ? { entityUrn } : {}),
-          url,
-          sourceMetadata: { read: true, readEvidence: 'network-explicit' },
-        };
-        assertSafeProbeConversation(candidate);
-        return candidate;
-      }
-    } catch { /* Missing, stale or malformed local evidence is never trusted. */ }
-  }
-  return undefined;
-}
-
 async function scrollTargetHistoryWithoutReading(page: Page, observedUrlCount: () => number): Promise<number> {
   await page.locator(domSelectors.messageContainers.join(',')).first().waitFor({ state: 'attached', timeout: 5_000 }).catch(() => undefined);
   const baseline = observedUrlCount();
@@ -124,7 +87,7 @@ function safeVariableShape(rawUrl: string): string | undefined {
     const variables = raw ? repeatedlyDecodeAndNormalize(raw) : undefined;
     if (!variables) return undefined;
     const fields = [...variables.matchAll(/(?:^|[({,])\s*([A-Za-z][A-Za-z0-9]{0,60})\s*:\s*(-?\d+)?/g)]
-      .map((match) => match[2] === undefined ? match[1]! : `${match[1]}=${match[2]}`);
+      .map((match) => match[2] === undefined ? match[1]! : `${match[1]}=number`);
     const rawVariables = url.search.match(/(?:^|[?&])variables=([^&]*)/)?.[1] ?? '';
     const encoding = rawVariables.startsWith('(') ? 'restli-raw'
       : /^%28/i.test(rawVariables) ? 'restli-encoded'
@@ -285,7 +248,6 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       await selectionCapture.drain();
     } while (!selectionCapture.conversations.length && Date.now() < selectionDeadline);
     const preferredIds = await preferredProbeIds(config.outputPath);
-    const freshPreferred = await freshPreferredProbeConversation(config.outputPath);
     manifest.counts.probeObservedListRows = 0;
     // Keep only redacted structural diagnostics from selection. They contain
     // key paths and counts, never message values, identifiers, cookies or bodies.
@@ -312,8 +274,9 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       }
     }
     await navigationGate.assertSelectionSafe();
-    const candidate = freshPreferred ?? selectSafeProbeConversation(selectionCapture.conversations, preferredIds);
-    if (freshPreferred) manifest.strategies.push('probe-candidate:fresh-local-network-read-evidence');
+    // Local exports may only influence ordering. The selected object and its
+    // read evidence must always come from this run's current list response.
+    const candidate = selectSafeProbeConversation(selectionCapture.conversations, preferredIds);
     const targetUrl = assertSafeProbeConversation(candidate);
     const candidateIds = knownProbeConversationIds(candidate);
     // No selection response/listener survives into the target lifecycle.

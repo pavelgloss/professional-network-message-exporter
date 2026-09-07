@@ -336,7 +336,7 @@ export function historyCollectionContractShapes(payload: unknown): string[] {
       if (!safeKey) return undefined;
       if (Array.isArray(value)) return `${safeKey}:array(${value.length})`;
       if (value === null) return `${safeKey}:null`;
-      if (typeof value === 'boolean' || typeof value === 'number') return `${safeKey}:${typeof value}(${String(value)})`;
+      if (typeof value === 'boolean' || typeof value === 'number') return `${safeKey}:${typeof value}`;
       if (typeof value === 'string') return `${safeKey}:string`;
       return value && typeof value === 'object' ? `${safeKey}:object` : `${safeKey}:${typeof value}`;
     };

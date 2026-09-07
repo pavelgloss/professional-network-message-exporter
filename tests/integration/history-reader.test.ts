@@ -4,10 +4,20 @@ import type { RawConversation } from '../../src/domain/schema.js';
 import { createManifest } from '../../src/io/diagnostics.js';
 import type { Logger } from '../../src/logger.js';
 import { coalesceRaw } from '../../src/linkedin/exporter.js';
-import { readObservedConversationHistories } from '../../src/linkedin/history-reader.js';
+import { historyCollectionContractShapes, readObservedConversationHistories } from '../../src/linkedin/history-reader.js';
 import type { ObservedHistoryGet } from '../../src/linkedin/probe.js';
 
 describe('observed anchored history reader', () => {
+  it('never includes exact numeric or boolean metadata values in structural contracts', () => {
+    const shapes = historyCollectionContractShapes({ data: { operationSpecificField: {
+      elements: [], metadata: { deliveredAt: 1_760_000_030_000, shouldClearCache: true },
+    } } }).join(';');
+    expect(shapes).toContain('deliveredAt:number');
+    expect(shapes).toContain('shouldClearCache:boolean');
+    expect(shapes).not.toContain('1760000030000');
+    expect(shapes).not.toContain('(true)');
+  });
+
   it('derives a byte-preserving anchor, walks backward, and emits complete contiguous evidence', async () => {
     const targetId = 'CONV';
     const conversationUrn = `urn:li:msg_conversation:${targetId}`;

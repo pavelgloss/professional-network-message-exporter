@@ -55,4 +55,24 @@ describe('export store', () => {
     expect(result.conversations[0]?.messages?.map((message) => message.id)).toEqual(['M1', 'M2']);
     expect(result.conversations[0]?.sourceMetadata).toMatchObject({ read: true, historyComplete: true, historyEvidence: evidence });
   });
+
+  it('refuses to reuse a proven snapshot when the fresh window has no stable overlap', () => {
+    const evidence = JSON.stringify([{ resource: 'prior', page: 'page-0', start: 0, count: 2, end: true, valid: true }]);
+    const previous = [{
+      id: 'CONV', participants: [],
+      messages: [1, 2].map((value) => ({ id: `M${value}`, conversationId: 'CONV', senderId: 'EXT', text: `old-${value}` })),
+      sourceMetadata: { historyComplete: true, historyEvidence: evidence },
+    }];
+    const current = [{
+      id: 'CONV', participants: [],
+      messages: [31, 32].map((value) => ({ id: `M${value}`, conversationId: 'CONV', senderId: 'EXT', text: `new-${value}` })),
+      sourceMetadata: { historyComplete: false, parserMisses: 1 },
+    }];
+
+    const result = reuseProvenHistorySnapshots(current, previous);
+
+    expect(result.reused).toBe(0);
+    expect(result.conversations).toEqual(current);
+    expect(result.conversations[0]?.sourceMetadata?.historyComplete).toBe(false);
+  });
 });
