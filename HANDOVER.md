@@ -1,8 +1,37 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-06 22:26 Europe/Prague
+Last updated: 2026-09-07 00:05 Europe/Prague
 
-## Latest checkpoint (22:26) — direct operation-ID regex was a dead end
+## Latest checkpoint (00:05) — corrected sync variables; active edits tracked
+
+The literal operation-ID hypothesis is now explicitly **unconfirmed**. Scanning
+both public scripts and the cached target HTML found zero literal
+`messengerMessagesBySyncToken.<hex>` IDs. One attempt failed closed before any
+thread opened; the next opened exactly one already-read thread and ended with
+zero hard safety violations. The temporary HTML scan was reverted because it
+provided no value.
+
+The bundle dataflow does prove the exact older/sync variables object is
+`{conversationUrn, syncToken}`. This exposed a flaw in the earlier dead-end
+experiment: it had sent `{conversationUrn, urn, syncToken}` by appending the
+token and retaining the initial viewer `urn`. Active edits in
+`history-reader.ts` now replace the initial viewer field so the request uses
+only `(conversationUrn,syncToken)` while keeping the observed query ID and all
+other URL bytes. Typecheck and the focused 10-test probe suite pass. The next
+live step is a single bounded GET through the existing export path to determine,
+using aggregate/schema-only diagnostics, whether this yields distinct older
+messages and exposes `prevCursor`/`fullyLoaded`.
+
+The implementation subagent started an additional uncommitted fail-closed
+parser/policy implementation for a possible literal
+`messengerMessagesBySyncToken.<hash>` operation in
+`src/linkedin/probe-request-policy.ts`, but hit its usage limit before supplying
+tests. Review and test that diff before retaining it; it may be unnecessary if
+the corrected same-query-ID call succeeds. Current uncommitted files at this
+checkpoint are `src/linkedin/history-reader.ts`,
+`src/linkedin/probe-request-policy.ts`, and `tests/unit/probe.test.ts`.
+
+## Previous checkpoint (22:26) — direct operation-ID regex was a dead end
 
 Commit `e19760b` added the in-memory-only exact-string capture and passed
 typecheck plus 16 focused tests. A real `probe:read-thread` then completed with
