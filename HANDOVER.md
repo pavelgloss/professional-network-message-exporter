@@ -1,8 +1,43 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 17:13 Europe/Prague
+Last updated: 2026-09-07 17:20 Europe/Prague
 
-## Latest checkpoint (17:13) — final independent review found three required fixes
+## COMPLETE (17:20) — functional project and real export delivered
+
+The task is complete. Final safety fixes are in `b611a61`; independent review is
+recorded in `383fe52` with verdict **GO, Critical 0 / High 0 / Medium 0**. Full
+verification after the fixes: `npm.cmd run check` passed typecheck, build and
+**150/150 tests** across 16 files. `npm.cmd audit --audit-level=high` reports
+0 vulnerabilities. Git tracked worktree is clean.
+
+The real, schema-validated result is at `data/linkedin/messages.json` (ignored by
+Git). Final aggregates: `partial=false`, 100 newest conversations, 193 messages,
+100 histories marked complete from contiguous evidence/proven repeat snapshot,
+0 parser misses, 0 missing timestamps, 0 duplicate conversation IDs, 0 duplicate
+message IDs, and 0 empty-text messages without attachment metadata. Semantic
+SHA-256 is
+`c7581dc1d125ecadd254c73e833f790423be67c2d5903ba5e7ca0415e032b08e`.
+
+The old local `messages.json` was not deleted. Before promotion it was copied to
+`data/linkedin/messages.before-final-backup.json`; candidate and promoted file
+hashes matched exactly. Other `.partial`/diagnostic experiments remain ignored
+and may be retained for troubleshooting. No ordinary Chrome profile/process was
+used or closed: all live work used fresh Playwright contexts loaded from the
+isolated storage state. POST, WebSocket and service workers remain blocked.
+
+Normal future command:
+
+```powershell
+npm.cmd run export -- --limit 100 --with-history-probe
+```
+
+The explicit flag may open at most one currently network-proven read thread.
+Without it, export remains fail-closed/partial and opens no thread. On repeat,
+deduplication uses stable IDs and a prior complete history is reused only for the
+exact conversation with at least one shared stable message ID/URN and zero parser
+misses.
+
+## Previous checkpoint (17:13) — final independent review found three required fixes
 
 The separate reviewer used tracked code/local tests only and reported
 Critical 0, High 2, Medium 1. Do not promote before resolving:
