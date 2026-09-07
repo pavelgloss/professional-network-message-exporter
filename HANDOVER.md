@@ -1,8 +1,31 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 17:05 Europe/Prague
+Last updated: 2026-09-07 17:13 Europe/Prague
 
-## Latest checkpoint (17:05) — repeat run succeeds without duplicates
+## Latest checkpoint (17:13) — final independent review found three required fixes
+
+The separate reviewer used tracked code/local tests only and reported
+Critical 0, High 2, Medium 1. Do not promote before resolving:
+
+1. `freshPreferredProbeConversation` reconstructs `read=true` from a recent
+   local file and bypasses current capture/conflicting-unread validation. Remove
+   it; local IDs may only order candidates that independently have current
+   network `read=true` evidence.
+2. Proven-history recovery lacks a stable message overlap check. A synthetic
+   prior M1..M100 plus fresh M131..M150 gap could be labeled complete. Require at
+   least one shared stable message ID/URN before reuse and test the no-overlap
+   rejection. This still supports the real 55-message refresh, whose first page
+   overlaps the saved history.
+3. Structural diagnostics record exact numeric variable/metadata values,
+   including `deliveredAt`. Replace them with type/presence only (array lengths
+   may remain aggregate structural counts); add/assert a no-value test where
+   practical.
+
+After fixes, rerun focused tests/typecheck and ask the reviewer for a narrow
+re-review of the new commit. The previous live candidate remains ignored,
+complete and unpromoted.
+
+## Previous checkpoint (17:05) — repeat run succeeds without duplicates
 
 Commit `e3fca8f` implements prior-snapshot recovery with an integration test.
 The next live repeat against the same complete candidate succeeded with exit 0.
