@@ -1,8 +1,31 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 16:49 Europe/Prague
+Last updated: 2026-09-07 16:56 Europe/Prague
 
-## Latest checkpoint (16:49) — derived fallback reaches 99/100; prefer short probe target
+## Latest checkpoint (16:56) — UI continuation remains nondeterministic; reuse proven snapshot
+
+Commit `1545642` changed the probe preference to the shortest fresh read thread,
+but LinkedIn again emitted only the initial history request. The run remained
+safe and reproduced 99/100 complete, 200 pages, zero parser misses; the one long
+55-message thread is the only derived-hash failure. The existing complete
+candidate and digest are still unchanged.
+
+Do not spend more runs attempting to coerce the UI. The robust repeat-run rule
+is: when the same output path already contains a schema-valid `partial=false`
+snapshot with `historyComplete=true` for an exact conversation ID, merge the
+current initial-page messages into that proven history if this run has zero
+parser misses but cannot refresh an older page. Strip only this run's invalid
+history evidence before merging; preserve current message/participant updates
+and the prior valid contiguous evidence. Never reuse on a parser miss, for a new
+conversation, or without a prior complete snapshot. Remove fatal
+`THREAD_READ_FAILED*` warnings only if every failed thread was recovered and add
+a nonfatal explicit reuse warning/count. Fresh first runs remain fail-closed.
+
+Add a unit/integration test proving one new current message is added without a
+duplicate while the prior history remains complete. Then repeat against the
+existing complete candidate and require the same 193-message content digest.
+
+## Previous checkpoint (16:49) — derived fallback reaches 99/100; prefer short probe target
 
 Commit `c3b3c27` implements and tests the byte-preserving derived fallback. The
 repeat then reached 99/100 complete, 200 pages and zero parser misses. The sole
