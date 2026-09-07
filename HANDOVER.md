@@ -1,8 +1,33 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 16:56 Europe/Prague
+Last updated: 2026-09-07 17:05 Europe/Prague
 
-## Latest checkpoint (16:56) — UI continuation remains nondeterministic; reuse proven snapshot
+## Latest checkpoint (17:05) — repeat run succeeds without duplicates
+
+Commit `e3fca8f` implements prior-snapshot recovery with an integration test.
+The next live repeat against the same complete candidate succeeded with exit 0.
+Final validated aggregates remain: `partial=false`, 100 conversations,
+193 messages, 100 complete histories, 0 parser misses, 0 missing timestamps,
+0 duplicate conversation IDs, 0 duplicate message IDs, ten attachment-bearing
+messages, and no empty-text message without an attachment. This run refreshed
+99 histories (200 GET pages) and reused one prior proven complete history for
+the 55-message conversation. Warnings are only `LIST_SCROLL_LIMIT` and the
+explicit nonfatal `THREAD_HISTORY_REUSED_FROM_COMPLETE_EXPORT`.
+
+The full content digest changed because it includes internal history-evidence
+records and this run proved one thread via the prior snapshot rather than a
+fresh third page. Counts and stable IDs did not change. The semantic digest
+(account, conversation/participant data and messages, excluding diagnostic
+source metadata and run stats) after the successful repeat is
+`c7581dc1d125ecadd254c73e833f790423be67c2d5903ba5e7ca0415e032b08e`.
+
+Next: run `npm.cmd run check`, `npm.cmd audit --audit-level=high`, and final
+diff/status checks. Ask the separate reviewer agent to review current HEAD with
+no LinkedIn/session/runtime data access. Address findings, then back up the old
+local `data/linkedin/messages.json`, promote the validated candidate, validate
+the final path, and mark this handover complete.
+
+## Previous checkpoint (16:56) — UI continuation remains nondeterministic; reuse proven snapshot
 
 Commit `1545642` changed the probe preference to the shortest fresh read thread,
 but LinkedIn again emitted only the initial history request. The run remained
