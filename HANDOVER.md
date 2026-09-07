@@ -1,8 +1,26 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 12:37 Europe/Prague
+Last updated: 2026-09-07 12:46 Europe/Prague
 
-## Latest checkpoint (12:37) — full run is 99/100; one parser shape remains
+## Latest checkpoint (12:46) — remaining miss is rich/attachment content
+
+Commit `0ab3a21` added values-free element contract diagnostics and the repeated
+full run reproduced exactly the same aggregates: 99/100 complete histories,
+201 pages, 192 messages, one miss in `older-parse`. The diagnostic contains no
+field values. It shows that every event on that page has stable message,
+conversation, sender/actor, timestamp and body fields. The only relevant schema
+variants are `renderContent` arrays (some non-empty) and one auxiliary summary
+array; body text is structurally present but may be empty. This is consistent
+with one attachment/rich-content-only message, which the parser deliberately
+rejected because it did not yet preserve attachments.
+
+Next: add a bounded adapter that extracts only stable attachment fields from
+`attachments`/`renderContent` subtrees (`id`, `name`, `type`, safe URL), accepts
+an empty text only when at least one meaningful attachment was preserved, and
+keeps the existing fail-closed behavior for `{ attachments: [{}] }` or unknown
+content. Add positive and negative parser tests, then run the full candidate.
+
+## Previous checkpoint (12:37) — full run is 99/100; one parser shape remains
 
 Commit `e839897` contains the anchored reader, exact request-policy additions,
 navigation-race fix, mocked three-page reader test, README update, and a broad
