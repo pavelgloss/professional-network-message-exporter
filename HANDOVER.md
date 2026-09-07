@@ -1,8 +1,46 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 11:52 Europe/Prague
+Last updated: 2026-09-07 12:25 Europe/Prague
 
-## Latest checkpoint (11:52) — real older-operation URL captured safely
+## Latest checkpoint (12:25) — anchored history works end to end
+
+The 11:52 sync-token conclusion immediately below is **superseded and wrong**.
+Safe operation-shape diagnostics proved that both observed URLs use the same
+`messengerMessages.<hash>` operation. The second URL is the real older-page
+request with Rest.li fields, in observed order:
+`deliveredAt,conversationUrn,urn,countBefore=20,countAfter=0`.
+`messengerMessagesBySyncToken` is an incremental-sync path, not older-history
+pagination, and its experimental implementation has been removed.
+
+The active implementation preserves every raw URL byte and rebinds only the
+validated target identity plus the unique 13-digit `deliveredAt` anchor. It
+fetches the initial page, anchors each next request to the oldest parsed message,
+requires the anchor to decrease, rejects cycles/foreign identities/parser
+misses, and treats a raw page shorter than `countBefore` as bounded evidence of
+the beginning of history. The cap is 250 pages per conversation. Completion is
+represented by contiguous hashed page evidence; raw URLs, tokens, IDs, names,
+and message text never enter diagnostics.
+
+A fresh isolated-browser `--limit 1 --with-history-probe` run succeeded:
+one selected already-read thread, zero hard safety violations, one anchored
+template, two history pages, one complete conversation, and zero parser misses.
+The only warning was the bounded list-scroll limit. Focused verification passes
+55/55 tests, including all 38 navigation tests and their 30-run teardown race;
+typecheck also passes.
+
+Active uncommitted implementation files are `src/linkedin/history-reader.ts`,
+`src/linkedin/probe-navigation.ts`, `src/linkedin/probe-request-policy.ts`,
+`src/linkedin/probe.ts`, `tests/unit/probe-request-policy.test.ts`, and
+`tests/unit/probe.test.ts`. Ignored local probe outputs are under
+`data/linkedin/`. Do not commit or expose those account-derived files.
+
+Next: commit this documentation checkpoint, add a mocked multi-page anchored
+reader integration test, update the README, commit the implementation, then run
+a fresh full 100-conversation export twice and compare a content-only digest for
+idempotence. Only after schema/completeness validation should the validated
+candidate replace `data/linkedin/messages.json` (keeping a local backup).
+
+## Previous checkpoint (11:52, superseded) — mistaken sync-token inference
 
 The target policy now narrowly proxies only two observed GET-only renderer
 dependencies (`messengerSeenReceipts` and `messengerQuickReplies`) when they
