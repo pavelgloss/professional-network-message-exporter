@@ -3,7 +3,7 @@ import { request as playwrightRequest } from 'playwright';
 import { AppError } from '../errors.js';
 import type { Logger } from '../logger.js';
 import { createManifest, saveContentDiagnostics, saveContentDiagnosticsOnFailure, saveManifest } from '../io/diagnostics.js';
-import { persistExportResult } from '../io/export-store.js';
+import { loadExport, persistExportResult } from '../io/export-store.js';
 import { closeContext, launchContext } from '../browser/context.js';
 import { detectAuthState, assertAuthenticated } from './auth-check.js';
 import { readAccountFromDom, type Account } from './account.js';
@@ -84,6 +84,25 @@ export async function exportMessages(config: AppConfig, logger: Logger): Promise
       try {
         const historyRaw = await readObservedConversationHistories(historyRequest, observedHistory, raw, manifest, logger);
         raw = coalesceRaw([...raw, ...historyRaw]);
+        const failedHistories = Number(manifest.counts.historyConversationsFailed ?? 0);
+        if (failedHistories > 0 && Number(manifest.counts.parserMisses ?? 0) === 0) {
+          const prior = await loadExport(config.outputPath);
+          if (prior && !prior.stats.partial) {
+            // ExportSchema has already validated these records. The cast only
+            // bridges Zod's `optional | undefined` inference to RawConversation's
+            // exact-optional representation; it does not bypass runtime validation.
+            const recovered = reuseProvenHistorySnapshots(raw, prior.conversations as unknown as RawConversation[]);
+            raw = recovered.conversations;
+            if (recovered.reused > 0) {
+              manifest.counts.historyConversationsReused = recovered.reused;
+              manifest.warnings.push('THREAD_HISTORY_REUSED_FROM_COMPLETE_EXPORT');
+            }
+            if (recovered.reused === failedHistories) {
+              manifest.warnings = manifest.warnings.filter((warning) =>
+                !warning.startsWith('THREAD_READ_FAILED') && warning !== 'THREAD_HISTORY_PAGE_BUDGET_EXHAUSTED');
+            }
+          }
+        }
         raw.sort((a, b) => (normalizeTimestamp(b.lastActivityAt) ?? '').localeCompare(normalizeTimestamp(a.lastActivityAt) ?? '') || rawKey(a).localeCompare(rawKey(b)));
         raw = raw.slice(0, config.limit);
       } finally {
@@ -306,6 +325,33 @@ export function coalesceRaw(input: RawConversation[]): RawConversation[] {
     rawConversationAliases(entry.value).forEach((alias) => entry.aliases.add(alias));
   }
   return entries.map((entry) => entry.value);
+}
+
+export function reuseProvenHistorySnapshots(
+  current: RawConversation[],
+  previous: RawConversation[],
+): { conversations: RawConversation[]; reused: number } {
+  const priorById = new Map(previous
+    .filter((conversation) => conversation.id && conversation.sourceMetadata?.historyComplete === true
+      && Number(conversation.sourceMetadata?.parserMisses ?? 0) === 0)
+    .map((conversation) => [conversation.id!, conversation]));
+  let reused = 0;
+  const conversations = current.map((conversation) => {
+    if (!conversation.id || conversation.sourceMetadata?.historyComplete === true) return conversation;
+    const prior = priorById.get(conversation.id);
+    if (!prior) return conversation;
+    const { historyEvidence: _historyEvidence, historyComplete: _historyComplete, parserMisses: _parserMisses, ...freshMetadata } = conversation.sourceMetadata ?? {};
+    const fresh: RawConversation = {
+      ...conversation,
+      ...(Object.keys(freshMetadata).length ? { sourceMetadata: freshMetadata } : {}),
+    };
+    if (!Object.keys(freshMetadata).length) delete fresh.sourceMetadata;
+    const merged = coalesceRaw([prior, fresh])[0];
+    if (!merged || merged.sourceMetadata?.historyComplete !== true) return conversation;
+    reused += 1;
+    return merged;
+  });
+  return { conversations, reused };
 }
 
 function intersectsAliases(left: Set<string>, right: Set<string>): boolean {

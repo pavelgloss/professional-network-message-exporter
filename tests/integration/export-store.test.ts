@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadExport, persistExportResult, saveExport } from '../../src/io/export-store.js';
+import { reuseProvenHistorySnapshots } from '../../src/linkedin/exporter.js';
 
 describe('export store', () => {
   it('round trips a validated export and rejects corruption', async () => {
@@ -28,5 +29,30 @@ describe('export store', () => {
     expect(await readFile(file, 'utf8')).toBe(completeBytes);
     expect(await loadExport(file)).toEqual(complete);
     expect((await loadExport(`${file}.partial`))?.stats.partial).toBe(true);
+  });
+
+  it('adds current messages while reusing only an exact proven history snapshot', () => {
+    const evidence = JSON.stringify([{ resource: 'prior', page: 'page-0', start: 0, count: 1, end: true, valid: true }]);
+    const previous = [{
+      id: 'CONV',
+      participants: [{ id: 'EXT', name: 'External' }],
+      messages: [{ id: 'M1', conversationId: 'CONV', senderId: 'EXT', senderName: 'External', text: 'older' }],
+      sourceMetadata: { historyComplete: true, historyEvidence: evidence },
+    }];
+    const current = [{
+      id: 'CONV',
+      participants: [{ id: 'EXT', name: 'External' }],
+      messages: [
+        { id: 'M1', conversationId: 'CONV', senderId: 'EXT', senderName: 'External', text: 'older' },
+        { id: 'M2', conversationId: 'CONV', senderId: 'EXT', senderName: 'External', text: 'newer' },
+      ],
+      sourceMetadata: { read: true, historyComplete: false, historyEvidence: JSON.stringify([{ resource: 'failed', page: 'page-1', start: 0, count: 2, end: false, valid: false }]), parserMisses: 1 },
+    }];
+
+    const result = reuseProvenHistorySnapshots(current, previous);
+
+    expect(result.reused).toBe(1);
+    expect(result.conversations[0]?.messages?.map((message) => message.id)).toEqual(['M1', 'M2']);
+    expect(result.conversations[0]?.sourceMetadata).toMatchObject({ read: true, historyComplete: true, historyEvidence: evidence });
   });
 });

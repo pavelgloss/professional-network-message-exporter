@@ -59,7 +59,10 @@ než pozorované `countBefore`. Cizí ID, parser miss, cyklus, redirect, nejedno
 jsou v `.gitignore`. Neúplný běh vrátí nenulový exit code `5`, uloží bezpečný kandidát
 do `data/linkedin/messages.json.partial` a poslední úplný export nezmění. Opakovaný
 běh sloučí data podle LinkedIn ID nebo deterministického fallback ID a zachová dříve
-načtenou historii.
+načtenou historii. Pokud LinkedIn při opakovaném běhu nevydá starší stránkovací
+operaci, aktuální první stránka se sloučí s předchozí serverově prokázanou úplnou
+historií stejného conversation ID. To se nepoužije při parser missu ani pro novou
+konverzaci; první export proto zůstává striktně fail-closed.
 
 LinkedIn často načte celou historii až po otevření konkrétního vlákna. Výchozí
 exportní běh vlákna nikdy neotevírá a při nepotvrzené úplnosti skončí jako
