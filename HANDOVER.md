@@ -1,8 +1,30 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 16:31 Europe/Prague
+Last updated: 2026-09-07 16:38 Europe/Prague
 
-## Latest checkpoint (16:31) — complete candidate passes, attachment metadata needs narrowing
+## Latest checkpoint (16:38) — clean full candidate validated
+
+Commit `99eb461` narrows rich renderer metadata: weak renderer types are not
+attachments on ordinary text messages. The clean fresh-path live export now
+passes with exit 0 and these schema-validated aggregates: `partial=false`,
+100 conversations, 193 messages, 100 complete histories, 201 history pages,
+0 parser misses, 0 missing timestamps, 0 duplicate conversation IDs, and
+0 duplicate message IDs. Ten messages have strongly evidenced attachments;
+the only empty-text message has an attachment. The only export warning is the
+expected bounded `LIST_SCROLL_LIMIT`; list coverage still validates for the
+requested 100.
+
+The clean candidate is ignored at
+`data/linkedin/messages-validated-candidate.json`. Its content-only SHA-256
+(account + conversations, excluding `exportedAt`/stats) is
+`f3d0d7f2ba944afe31dc019ead3420fcc6bb69f6e6012a2a3d50f94dbe063d0b`.
+
+Next: rerun the exact command into the same candidate, recompute that digest,
+and require equality. Then run the complete test/build/audit suite, promote the
+validated candidate to `data/linkedin/messages.json` while keeping the prior
+local file as a backup, and request the separate final code-review agent.
+
+## Previous checkpoint (16:31) — complete candidate passes, attachment metadata needs narrowing
 
 Commit `694ed32` added the bounded rich-content adapter and positive/negative
 tests. The fresh live run succeeded with exit 0. Schema-only validation reports:
