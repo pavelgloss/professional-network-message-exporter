@@ -1,8 +1,32 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 00:05 Europe/Prague
+Last updated: 2026-09-07 11:31 Europe/Prague
 
-## Latest checkpoint (00:05) — corrected sync variables; active edits tracked
+## Latest checkpoint (11:31) — sync request stopped locally; encoding fixed
+
+A full 100-conversation diagnostic run and several limit-1 runs all remained
+partial and preserved the existing main export. The 100 run completed 100/100
+ordinary history GETs (100 pages, 0 failures, still 158 messages). The corrected
+sync experiment initially never reached LinkedIn: schema-only diagnostics showed
+`history-sync-contract:instantiate:READ_POLICY_BLOCK_CONVERSATION_IDENTITY`.
+
+The observed variables report as Rest.li fields in this order:
+`conversationUrn,urn`, but their inner separators may be percent-encoded in the
+raw URL. The active `history-reader.ts` edit now decodes the whole raw variables
+value once, extracts the validated two-field initial contract in either safe
+order, rebuilds exactly `(conversationUrn,syncToken)`, encodes that whole value,
+and subjects the result to the existing exact-target GET policy before any
+request. Typecheck and the 10 focused probe tests pass. The next immediate action
+is one limit-1 run; manifest diagnostics record only the stage/error class and
+aggregate counts.
+
+Active uncommitted files now include `src/linkedin/probe.ts` (preserves observed
+field order in schema-only diagnostics), `src/linkedin/history-reader.ts`, the
+subagent's unreviewed optional `src/linkedin/probe-request-policy.ts` support for
+a literal separate operation, and `tests/unit/probe.test.ts`. Do not discard them
+without reviewing this checkpoint.
+
+## Previous checkpoint (00:05) — corrected sync variables; active edits tracked
 
 The literal operation-ID hypothesis is now explicitly **unconfirmed**. Scanning
 both public scripts and the cached target HTML found zero literal
