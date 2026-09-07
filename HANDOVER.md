@@ -1,6 +1,6 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 17:20 Europe/Prague
+Last updated: 2026-09-07 17:32 Europe/Prague
 
 ## COMPLETE (17:20) — functional project and real export delivered
 
@@ -36,6 +36,29 @@ Without it, export remains fail-closed/partial and opens no thread. On repeat,
 deduplication uses stable IDs and a prior complete history is reused only for the
 exact conversation with at least one shared stable message ID/URN and zero parser
 misses.
+
+### Closing context / known limitations
+
+- The live end-to-end validation covered **100** conversations. The CLI supports
+  `--limit 200` (and configuration permits up to 500), but 200 has not been
+  validated against this account, so do not claim that scale as already proven.
+- LinkedIn did not show evidence of actively resisting the runs: no CAPTCHA,
+  rate limit, alternating authorization failure, or deliberate response mutation
+  was observed. Authenticated GET payloads were largely consistent.
+- The nondeterministic part is LinkedIn's UI lazy-loading: it sometimes emits the
+  separate persisted operation used for older pages and sometimes emits only the
+  initial history request. Once the real older-page template is observed, direct
+  GET pagination is reliable. On a completely fresh first run with no prior
+  complete snapshot, failure to observe that operation can still yield exit 5
+  and `.partial`, especially for a conversation longer than the initial page.
+- This behavior is intentional fail-closed safety, not a claim of completeness:
+  `.partial` never replaces the last known complete `messages.json`. Repeat runs
+  may reuse a prior complete history only with the exact conversation ID, a
+  shared stable message ID/URN, and zero parser misses.
+- Most implementation/debug time came from incorrect pagination hypotheses and
+  tightening the read-only proof, not from LinkedIn changing its response schema
+  on every request. One legitimate attachment-only message variant required an
+  additional parser adapter.
 
 ## Previous checkpoint (17:13) — final independent review found three required fixes
 

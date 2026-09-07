@@ -96,6 +96,21 @@ LinkedIn může měnit neveřejné endpointy/DOM. Striktní blokace POST může 
 read-only GraphQL POST, protože jej bez stabilního veřejného kontraktu nelze bezpečně
 odlišit od mutace; v takovém případě export raději skončí neúplný.
 
+## Známá omezení
+
+- Živě byl ověřen úplný export 100 konverzací. `--limit 200` je podporovaný, ale
+  export 200 konverzací zatím nebyl end-to-end ověřen na tomto účtu.
+- LinkedIn během ověřování nevykazoval aktivní blokování (CAPTCHA ani rate limit).
+  Proměnlivé bylo pouze to, zda jeho UI samo odešle interní GET pro starší stránku.
+- Když tento starší operation template při úplně prvním běhu nevznikne a není k
+  dispozici předchozí úplný snapshot, dlouhá historie může skončit jako `.partial`.
+  Nástroj v takovém případě nepřepíše poslední úplný `messages.json`.
+- Opakovaný běh může předchozí úplnou historii použít pouze pro stejné conversation
+  ID, při překryvu alespoň jednoho stabilního message ID/URN a bez parser missu.
+- Neveřejné LinkedIn endpointy nebo DOM se mohou v budoucnu změnit; očekávané
+  chování při nerozpoznané změně je bezpečné selhání a diagnostika, ne tichý
+  neúplný export.
+
 Kontrola projektu:
 
 ```powershell
