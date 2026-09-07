@@ -37,7 +37,7 @@ npm.cmd run export -- --limit 100
 Tento výchozí příkaz neotevře žádné vlákno a při chybějící historii bezpečně
 vytvoří jen `.partial` kandidát. Pro úplný export je nutný samostatný vědomý opt-in,
 který otevře nejvýše jedno serverem potvrzené již přečtené vlákno, zachytí jeho
-read-only GET šablonu a stejným během načte historie:
+read-only GET šablony a stejným během načte historie:
 
 ```powershell
 npm.cmd run export -- --limit 100 --with-history-probe
@@ -45,6 +45,13 @@ npm.cmd run export -- --limit 100 --with-history-probe
 
 Každý export vytvoří fresh ephemeral Chromium context, načte pouze storage state,
 zakáže service workery a nainstaluje HTTP/WebSocket guardy před vytvořením stránky.
+Probe použije jeden již přečtený thread pouze k zachycení počátečního GET a skutečné
+šablony starší stránky. Další historie se čte přes izolovaný request context: vždy
+stejnou pozorovanou operací `messengerMessages`, s kotvou `deliveredAt` nejstarší
+dosud načtené zprávy. Nástroj zachovává ostatní bajty URL, připustí právě jedno ID
+cílové konverzace, vyžaduje klesající kotvu a skončí až na serverové stránce kratší
+než pozorované `countBefore`. Cizí ID, parser miss, cyklus, redirect, nejednoznačná
+šablona nebo limit 250 stránek zneplatní úplnost daného vlákna.
 
 Úplný výsledek je v `data/linkedin/messages.json`; reálný export, session i diagnostika
 jsou v `.gitignore`. Neúplný běh vrátí nenulový exit code `5`, uloží bezpečný kandidát
@@ -77,8 +84,9 @@ držené v paměti; browser proto neposílá druhý document GET. Jakýkoli serv
 client-side redirect, popup či pokus přejít na jiný thread ukončí probe fail-closed.
 
 Limit lze změnit proměnnou `LINKEDIN_LIMIT` v lokálním `.env`.
-Při vlastním `--output` zajistěte, aby cílový JSON, jeho `.partial` kandidát i sousední
-`diagnostics/` byly ignorované vaším Gitem.
+Všechny JSON výstupy přímo v `data/linkedin/`, jejich `.partial` kandidáti i sousední
+`diagnostics/` jsou ignorované Gitem. Při vlastním `--output` mimo tento adresář
+zajistěte totéž ručně.
 LinkedIn může měnit neveřejné endpointy/DOM. Striktní blokace POST může zablokovat i
 read-only GraphQL POST, protože jej bez stabilního veřejného kontraktu nelze bezpečně
 odlišit od mutace; v takovém případě export raději skončí neúplný.

@@ -27,6 +27,7 @@ const semanticStem = /messag|conversation|thread|inbox|mailbox/i;
 const persistedHashSuffix = String.raw`(?:\.[A-Fa-f0-9]{32,128})?`;
 const listOperation = new RegExp(`^messengerConversations${persistedHashSuffix}$`);
 const historyOperation = new RegExp(`^(?:messengerMessages|messengerMessagesByConversation|messengerConversationMessages)${persistedHashSuffix}$`);
+const targetReadDependencyOperation = /^(?:messengerSeenReceipts|messengerQuickReplies)\.[A-Fa-f0-9]{32,128}$/;
 
 function isIdentityLikeKey(key: string): boolean {
   return /(?:id|ids|urn|urns)$/i.test(key);
@@ -160,7 +161,7 @@ function walkJsonReferences(value: unknown, result: ReferenceResult, depth = 0, 
   }
 }
 
-function restLiFields(value: string): Array<{ key: string; value: string }> {
+export function restLiFields(value: string): Array<{ key: string; value: string }> {
   const output: Array<{ key: string; value: string }> = [];
   const keyPattern = /(?:^|[({,])\s*"?([A-Za-z][A-Za-z0-9_-]*)"?\s*[:=]\s*/gu;
   for (const match of value.matchAll(keyPattern)) {
@@ -274,6 +275,13 @@ export function probeMessagingRequestPolicy(phase: ProbeRequestPhase, method: st
     return ordinaryList
       ? { messaging: true, allow: true, kind: 'conversation-list', referencedIds: references.ids }
       : blocked(true, references.ids);
+  }
+  if (phase === 'target' && targetReadDependencyOperation.test(operation) && references.valid
+    && !references.unsafeConversationShape && references.sawKey && references.ids.size === 1
+    && [...references.ids].every((id) => targetIds.has(id))) {
+    // GET-only dependencies needed to render the already-read target scroller;
+    // never expose them as history templates to the caller.
+    return { messaging: true, allow: true, kind: 'non-messaging', referencedIds: references.ids };
   }
   const exactCurrentHistory = /^messengerMessages\.[A-Fa-f0-9]{32,128}$/.test(operation);
   if (phase === 'target' && historyOperation.test(operation) && references.sawKey

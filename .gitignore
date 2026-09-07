@@ -7,8 +7,6 @@ dist/
 playwright-report/
 test-results/
 coverage/
-data/linkedin/messages.json
-data/linkedin/messages.json.*
+data/linkedin/*.json*
 data/linkedin/diagnostics/
 *.log
-

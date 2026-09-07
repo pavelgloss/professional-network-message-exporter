@@ -8,6 +8,16 @@ describe('probe phase-specific messaging request policy', () => {
   const decide = (phase: 'selection' | 'target', url: string, method = 'GET') =>
     probeMessagingRequestPolicy(phase, method, url, origin, target);
 
+  it('allows only exact target-scoped GET renderer dependencies', () => {
+    const query = (operation: string, id = 'READ') => `${dash}?queryId=${operation}.${'a'.repeat(32)}&variables=${encodeURIComponent(JSON.stringify({ conversationUrn: `urn:li:msg_conversation:${id}` }))}`;
+    for (const operation of ['messengerSeenReceipts', 'messengerQuickReplies']) {
+      expect(decide('target', query(operation))).toMatchObject({ allow: true, kind: 'non-messaging' });
+      expect(decide('target', query(operation), 'POST').allow).toBe(false);
+      expect(decide('target', query(operation, 'OTHER')).allow).toBe(false);
+      expect(decide('selection', query(operation)).allow).toBe(false);
+    }
+  });
+
   it('allows only the exact Dash conversation-list GET during selection', () => {
     const hash = 'a'.repeat(32);
     const mailboxUrn = 'urn:li:fsd_profile:SELF';

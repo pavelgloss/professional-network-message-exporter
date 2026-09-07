@@ -436,7 +436,10 @@ export async function installProbeNavigationGate(context: BrowserContext, select
           if (!counts.selectionBlockedRequestShapes.includes(shape)) counts.selectionBlockedRequestShapes.push(shape);
         }
         const targetDocumentAttempt = phase === 'target-used' && request.resourceType() === 'document';
-        await block(route, 'cross-thread', targetDocumentAttempt ? false : blockedMessagingAttemptIsFatal(request), false,
+        const selectionNonThreadDocumentAttempt = phase === 'selection' && request.isNavigationRequest()
+          && !isProbeThreadUrl(request.url(), expectedOrigin);
+        await block(route, 'cross-thread', (targetDocumentAttempt || selectionNonThreadDocumentAttempt)
+          ? false : blockedMessagingAttemptIsFatal(request), false,
           `messaging-policy-${phase}-${request.resourceType()}-${redactedPathShape(canonicalUrlView(request.url())?.pathname ?? '')}`);
         return;
       }

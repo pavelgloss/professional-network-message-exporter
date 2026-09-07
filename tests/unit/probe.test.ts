@@ -4,7 +4,7 @@ import type { RawConversation } from '../../src/domain/schema.js';
 import { assertSafeProbeConversation, navigateOneSafeProbeThread, observedHistoryQueryTemplate, selectSafeProbeConversation } from '../../src/linkedin/probe.js';
 import { parseNetworkPayload } from '../../src/linkedin/network/response-parser.js';
 import { explicitProbeGraphqlConversationIds } from '../../src/linkedin/probe-navigation.js';
-import { instantiateObservedHistoryUrl, instantiateObservedSyncUrl } from '../../src/linkedin/history-reader.js';
+import { instantiateObservedAnchoredHistoryUrl, instantiateObservedHistoryUrl } from '../../src/linkedin/history-reader.js';
 
 describe('one already-read thread probe', () => {
   const readConversation: RawConversation = {
@@ -144,18 +144,18 @@ describe('one already-read thread probe', () => {
     expect(new URL(rebound).searchParams.get('queryId')).toBe(queryId);
   });
 
-  it('adds a sync token only inside the raw Rest.li variables parameter', () => {
+  it('replaces only the validated timestamp in an observed anchored history GET', () => {
     const id = 'READ==';
-    const variables = `(conversationUrn:${encodeURIComponent(`urn:li:msg_conversation:(urn:li:fsd_profile:SELF,${id})`)},urn:${encodeURIComponent('urn:li:fsd_profile:SELF')})`;
     const queryId = `messengerMessages.${'a'.repeat(32)}`;
-    const source = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?variables=${variables}&queryId=${queryId}&includeWebMetadata=true`;
-    const next = instantiateObservedSyncUrl(source, id, 'opaque+/==');
-    const variableSuffix = '&queryId=';
-    const boundary = source.indexOf(variableSuffix);
-    const expected = `${source.slice(0, boundary - 1)},syncToken:<redacted>)${source.slice(boundary)}`;
-    expect(next.replace(/syncToken:[^)]*/, 'syncToken:<redacted>')).toBe(expected);
-    expect(decodeURIComponent(new URL(next).searchParams.get('variables')!)).toContain('syncToken:opaque+/==');
-    expect(new URL(next).searchParams.get('queryId')).toBe(queryId);
-    expect(() => instantiateObservedSyncUrl(next, id, 'another')).toThrow(/Rest.li variable shape/);
+    const conversationUrn = `urn:li:msg_conversation:(urn:li:fsd_profile:SELF,${id})`;
+    const anchoredVariables = `(deliveredAt:1760000000000,conversationUrn:${encodeURIComponent(conversationUrn)},urn:${encodeURIComponent('urn:li:fsd_profile:SELF')},countBefore:20,countAfter:0)`;
+    const anchoredTemplate = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?variables=${anchoredVariables}&queryId=${queryId}&includeWebMetadata=true`;
+    const anchored = instantiateObservedAnchoredHistoryUrl(anchoredTemplate, [id], id, 1750000000000);
+    const anchoredDecoded = decodeURIComponent(new URL(anchored).searchParams.get('variables')!);
+    expect(anchoredDecoded).toContain('deliveredAt:1750000000000');
+    expect(anchoredDecoded).toContain(`conversationUrn:urn:li:msg_conversation:(urn:li:fsd_profile:SELF,${id})`);
+    expect(anchoredDecoded).toContain('countBefore:20,countAfter:0');
+    expect(new URL(anchored).searchParams.get('queryId')).toBe(queryId);
+    expect(anchored.replace('1750000000000', '1760000000000')).toBe(anchoredTemplate);
   });
 });
