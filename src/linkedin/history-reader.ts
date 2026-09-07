@@ -3,7 +3,7 @@ import type { RawConversation, RawMessage } from '../domain/schema.js';
 import { conversationIdFromUrn, sha256Id } from '../domain/stable-id.js';
 import { canonicalUrlView } from '../domain/url-safety.js';
 import { AppError } from '../errors.js';
-import type { DiagnosticsManifest } from '../io/diagnostics.js';
+import { jsonStructuralSignature, type DiagnosticsManifest } from '../io/diagnostics.js';
 import type { Logger } from '../logger.js';
 import type { ObservedHistoryGet } from './probe.js';
 import { probeMessagingRequestPolicy, restLiFields } from './probe-request-policy.js';
@@ -127,6 +127,20 @@ function currentHistoryCollection(payload: unknown): CurrentHistoryCollection | 
   if (collections.length !== 1) return undefined;
   const collection = collections[0]!;
   return { elements: collection.elements as unknown[] };
+}
+
+function recordMissElementContracts(payload: unknown, manifest: DiagnosticsManifest): void {
+  const collection = currentHistoryCollection(payload);
+  if (!collection) return;
+  const shapes = new Set(collection.elements.map((element) => {
+    const signature = jsonStructuralSignature(element, 5, 100, 40);
+    const arrays = signature.arrays.map(({ path, count }) => `${path}(${count})`).join(',');
+    return `history-event-contract:paths=${signature.keyPaths.join(',')};arrays=${arrays};truncated=${signature.truncated}`;
+  }));
+  for (const shape of shapes) {
+    if (manifest.strategies.filter((value) => value.startsWith('history-event-contract:')).length >= 12) break;
+    if (!manifest.strategies.includes(shape)) manifest.strategies.push(shape);
+  }
 }
 
 type AnchoredHistoryContract = { deliveredAt: number; countBefore: number };
@@ -347,6 +361,7 @@ export async function readObservedConversationHistories(
       }
       const parsed = parseNetworkPayload(payload, initial, { observedMethod: 'GET' });
       manifest.counts.parserMisses = (manifest.counts.parserMisses ?? 0) + parsed.misses;
+      if (parsed.misses > 0) recordMissElementContracts(payload, manifest);
       const collection = currentHistoryCollection(payload);
       const matching = parsed.conversations.filter((value) => exactConversationId(value) === targetId);
       const foreignMessages = parsed.conversations.some((value) => exactConversationId(value) !== targetId
@@ -372,6 +387,7 @@ export async function readObservedConversationHistories(
         }
         const olderParsed = parseNetworkPayload(olderPayload, url, { observedMethod: 'GET' });
         manifest.counts.parserMisses = (manifest.counts.parserMisses ?? 0) + olderParsed.misses;
+        if (olderParsed.misses > 0) recordMissElementContracts(olderPayload, manifest);
         const olderCollection = currentHistoryCollection(olderPayload);
         if (!olderCollection) throw new Error('history collection missing');
         const olderMatching = olderParsed.conversations.filter((value) => exactConversationId(value) === targetId);
