@@ -190,6 +190,28 @@ describe('network parser', () => {
     expect(parsed.conversations[0]?.sourceMetadata?.historyComplete).toBe(false);
   });
 
+  it('preserves an attachment-only messengerMessages event with empty text', () => {
+    const conversationUrn = 'urn:li:messagingThread:CONV';
+    const payload = { data: { operationSpecificField: { elements: [{
+      entityUrn: 'urn:li:messagingMessage:ATTACHMENT',
+      backendConversationUrn: conversationUrn,
+      sender: { hostIdentityUrn: 'urn:li:fsd_profile:EXT', name: 'External' },
+      deliveredAt: 1_725_000_000_000,
+      body: { text: '', attributes: [] },
+      renderContent: [{ content: { file: {
+        id: 'FILE-1', name: 'document.pdf', mimeType: 'application/pdf',
+        url: 'https://www.linkedin.com/dms/document/example',
+      } } }],
+    }] } } };
+    const source = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessages.${'a'.repeat(32)}&conversationId=CONV`;
+    const parsed = parseNetworkPayload(payload, source, { observedMethod: 'GET' });
+    expect(parsed.misses).toBe(0);
+    expect(parsed.conversations[0]?.messages).toEqual([expect.objectContaining({
+      id: 'ATTACHMENT',
+      attachments: [{ id: 'FILE-1', name: 'document.pdf', type: 'application/pdf', url: 'https://www.linkedin.com/dms/document/example' }],
+    })]);
+  });
+
   it('fails closed and preserves the main export for a missed top-level REST history event', async () => {
     const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-standalone-parser-miss.json', import.meta.url), 'utf8'));
     const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');

@@ -1,6 +1,6 @@
 import { cleanText } from '../../domain/normalize.js';
 import { conversationIdFromUrn, messageIdFromUrn, normalizeUrn, personIdFromUrn, sha256Id } from '../../domain/stable-id.js';
-import type { RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
+import type { Attachment, RawConversation, RawMessage, RawParticipant } from '../../domain/schema.js';
 import { assertAllowedReadUrl } from './read-client.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -108,15 +108,71 @@ function looksLikeMessageCandidate(obj: JsonRecord): boolean {
   return hasSender && hasConversation && hasTimestamp && hasContentShape;
 }
 
+function firstStringInTree(root: unknown, keys: readonly string[]): string | undefined {
+  const queue: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  const seen = new WeakSet<object>();
+  let remaining = 200;
+  while (queue.length && remaining > 0) {
+    remaining -= 1;
+    const current = queue.shift()!;
+    if (!current.value || typeof current.value !== 'object' || current.depth > 6
+      || seen.has(current.value as object)) continue;
+    seen.add(current.value as object);
+    if (record(current.value)) {
+      for (const key of keys) {
+        const value = current.value[key];
+        if (typeof value === 'string' && cleanText(value)) return cleanText(value);
+      }
+      for (const child of Object.values(current.value)) queue.push({ value: child, depth: current.depth + 1 });
+    } else if (Array.isArray(current.value)) {
+      for (const child of current.value) queue.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+function attachmentFrom(root: unknown): Attachment | undefined {
+  const id = firstStringInTree(root, ['id', 'entityUrn', 'urn', 'mediaUrn', 'assetUrn', 'digitalmediaAssetUrn']);
+  const name = firstStringInTree(root, ['fileName', 'filename', 'name', 'title']);
+  const type = firstStringInTree(root, ['mimeType', 'mediaType', 'contentType', 'type']);
+  const rawUrl = firstStringInTree(root, ['downloadUrl', 'mediaUrl', 'navigationUrl', 'url']);
+  let url: string | undefined;
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl, 'https://www.linkedin.com');
+      if (parsed.protocol === 'https:' && /(^|\.)linkedin\.com$/i.test(parsed.hostname)) url = parsed.toString();
+    } catch { /* malformed attachment URLs are omitted without losing the message */ }
+  }
+  if (!id && !name && !type && !url) return undefined;
+  return { ...(id ? { id } : {}), ...(name ? { name } : {}), ...(type ? { type } : {}), ...(url ? { url } : {}) };
+}
+
+function attachmentsFrom(obj: JsonRecord): Attachment[] {
+  const roots: unknown[] = [];
+  for (const key of ['attachments', 'renderContent']) {
+    const value = obj[key];
+    if (Array.isArray(value)) roots.push(...value);
+    else if (record(value)) roots.push(value);
+  }
+  const unique = new Map<string, Attachment>();
+  for (const root of roots.slice(0, 100)) {
+    const attachment = attachmentFrom(root);
+    if (!attachment) continue;
+    const key = JSON.stringify([attachment.id, attachment.name, attachment.type, attachment.url]);
+    unique.set(key, attachment);
+  }
+  return [...unique.values()];
+}
+
 function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, conversationUrn?: string): RawMessage | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = identityUrnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
+  const attachments = attachmentsFrom(obj);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
-  // Unknown/attachment-only content must not be counted as parsed history. Until an
-  // explicit adapter preserves that shape, fail coverage closed instead of silently
-  // exporting an empty message and claiming completeness.
-  if (!looksLikeMessageCandidate(obj) || !text) return undefined;
+  // Empty text is accepted only when the bounded adapter preserved meaningful
+  // attachment/rich-content metadata. Unknown content still fails coverage closed.
+  if (!looksLikeMessageCandidate(obj) || (!text && !attachments.length)) return undefined;
   const senderValue = ['from', '*from', 'sender', '*sender', 'actor', '*actor'].map((key) => obj[key]).find((value) => record(value) || typeof value === 'string');
   const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? lookupIncluded(index, senderValue) : undefined;
   const senderProfile = senderObj ? profileFrom(senderObj, index) : undefined;
@@ -126,7 +182,7 @@ function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, 
   const conversationId = conversationIdForMessage(obj, conversationUrn);
   const senderId = personIdFromUrn(senderUrn);
   const messageType = cleanText(stringAt(obj, 'subtype', 'eventType', 'type'));
-  return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}), sourceMetadata: { sourcePage } };
+  return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(conversationId ? { conversationId } : {}), ...(senderId ? { senderId } : {}), ...(senderName ? { senderName } : {}), ...(senderProfileUrl ? { senderProfileUrl } : {}), ...(sentAt !== undefined ? { sentAt } : {}), ...(text ? { text } : {}), ...(messageType ? { messageType } : {}), ...(attachments.length ? { attachments } : {}), sourceMetadata: { sourcePage } };
 }
 
 function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
