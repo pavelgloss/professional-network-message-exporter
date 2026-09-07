@@ -1,8 +1,28 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 12:46 Europe/Prague
+Last updated: 2026-09-07 16:31 Europe/Prague
 
-## Latest checkpoint (12:46) — remaining miss is rich/attachment content
+## Latest checkpoint (16:31) — complete candidate passes, attachment metadata needs narrowing
+
+Commit `694ed32` added the bounded rich-content adapter and positive/negative
+tests. The fresh live run succeeded with exit 0. Schema-only validation reports:
+`partial=false`, 100 conversations, 193 messages, 100 complete histories,
+0 missing timestamps, 0 duplicate conversation IDs and 0 duplicate message IDs.
+Content-only SHA-256 is
+`7df9751d5b989ef9a0bb6d907e205a2a81cd52cff069850d15faa07527bfcdd3`.
+
+Do **not** promote this first successful candidate yet. Validation also showed
+88 messages with attachments because the adapter treated a generic
+`renderContent.type` renderer discriminator as an attachment even on ordinary
+text messages. This does not lose messages, but it overstates attachment
+metadata. Narrow it so explicit `attachments` remain accepted, while
+`renderContent` on a text message requires strong file evidence (ID, name, safe
+URL, or MIME-like type). A weak renderer discriminator may be retained only on
+the content-only message whose otherwise empty text caused the original miss.
+Write the corrected result to a fresh path so prior overclassified metadata
+cannot survive idempotent merge.
+
+## Previous checkpoint (12:46) — remaining miss is rich/attachment content
 
 Commit `0ab3a21` added values-free element contract diagnostics and the repeated
 full run reproduced exactly the same aggregates: 99/100 complete histories,
