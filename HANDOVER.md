@@ -1,8 +1,30 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 16:38 Europe/Prague
+Last updated: 2026-09-07 16:43 Europe/Prague
 
-## Latest checkpoint (16:38) — clean full candidate validated
+## Latest checkpoint (16:43) — repeat preserved output; probe omitted continuation URL
+
+The exact repeat run ended partial, and atomic persistence preserved the clean
+complete candidate unchanged with the same content digest
+`f3d0d7f2ba944afe31dc019ead3420fcc6bb69f6e6012a2a3d50f94dbe063d0b`.
+It was not a data/deduplication difference. The probe safely opened one read
+thread with zero hard violations but captured only the initial two-field
+`messengerMessages` GET (`probeHistoryRequestUrls=1`), not an anchored
+continuation. The reader consequently fetched one initial page for each target
+and failed all 100 closed at `anchored history template unavailable`; zero parser
+misses occurred and the partial candidate has zero complete histories.
+
+Root cause: the UI sometimes automatically issues the anchored GET for a short
+thread, but a 20-message target can render without a usable scroll container and
+does not emit it. Next: add a byte-preserving derived fallback from the *current
+run's observed initial GET* using the already live-validated contract. Require an
+exact two-field initial `messengerMessages.<hash>` request, insert raw ASCII
+`deliveredAt` at the beginning and `countBefore=20,countAfter=0` at the end,
+change no other URL byte, then independently validate exact operation, method,
+origin and one target identity before every GET. Add an integration test with no
+captured continuation, rerun full export, and then repeat it.
+
+## Previous checkpoint (16:38) — clean full candidate validated
 
 Commit `99eb461` narrows rich renderer metadata: weak renderer types are not
 attachments on ordinary text messages. The clean fresh-path live export now
