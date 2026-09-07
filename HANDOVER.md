@@ -1,8 +1,35 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 11:39 Europe/Prague
+Last updated: 2026-09-07 11:52 Europe/Prague
 
-## Latest checkpoint (11:39) — separate persisted query ID conclusively required
+## Latest checkpoint (11:52) — real older-operation URL captured safely
+
+The target policy now narrowly proxies only two observed GET-only renderer
+dependencies (`messengerSeenReceipts` and `messengerQuickReplies`) when they
+carry exactly one target-matching conversation reference. POST, WebSocket,
+foreign references, selection-phase use, and every mutation-shaped operation
+remain blocked. Typecheck, 7 policy tests, and all 38 navigation integration
+tests pass.
+
+A real probe then completed with one already-read target, zero hard violations,
+one initial history template shape, and **two distinct validated history request
+URLs** in memory. Static literal-ID count remained zero, as expected. Because
+`observedHistoryQueryTemplate` only accepts requests whose policy kind is
+`conversation-history`, and the only newly accepted such operation is the exact
+`messengerMessagesBySyncToken.<hash>` two-variable contract, the second URL is
+the real older/sync persisted operation emitted by LinkedIn. Its hash/token/URL
+were neither logged nor persisted; `ObservedHistoryGet.continuationUrls` carries
+it only inside the process.
+
+Next: select exactly one continuation URL that independently passes the sync
+operation contract for the probe target. For every exported conversation, fetch
+the ordinary initial page, use its parsed exact `conversationUrn` and
+`newSyncToken` to instantiate the captured continuation template, then follow
+response `prevCursor` until `fullyLoaded === true`. Require identity match,
+zero parser misses, no cursor cycles, and a 250-page cap. Emit contiguous
+history evidence so only proven-complete threads can make the main export.
+
+## Previous checkpoint (11:39) — separate persisted query ID conclusively required
 
 The bounded limit-1 experiment now passed every local URL/origin/method/identity
 guard and issued the corrected `(conversationUrn,syncToken)` GET. LinkedIn
