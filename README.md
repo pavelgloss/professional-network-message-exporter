@@ -45,10 +45,12 @@ npm.cmd run export -- --limit 100 --with-history-probe
 
 Každý export vytvoří fresh ephemeral Chromium context, načte pouze storage state,
 zakáže service workery a nainstaluje HTTP/WebSocket guardy před vytvořením stránky.
-Probe použije jeden již přečtený thread pouze k zachycení počátečního GET a skutečné
-šablony starší stránky. Další historie se čte přes izolovaný request context: vždy
-stejnou pozorovanou operací `messengerMessages`, s kotvou `deliveredAt` nejstarší
-dosud načtené zprávy. Nástroj zachovává ostatní bajty URL, připustí právě jedno ID
+Probe použije jeden již přečtený thread k zachycení aktuálního počátečního GET a,
+pokud ji UI odešle, i šablony starší stránky. Jinak se dříve živě ověřený anchored
+kontrakt odvodí vložením polí do aktuálního počátečního GET bez překódování zbytku.
+Další historie se čte přes izolovaný request context: vždy stejnou pozorovanou
+operací `messengerMessages`, s kotvou `deliveredAt` nejstarší dosud načtené zprávy.
+Nástroj zachovává ostatní bajty URL, připustí právě jedno ID
 cílové konverzace, vyžaduje klesající kotvu a skončí až na serverové stránce kratší
 než pozorované `countBefore`. Cizí ID, parser miss, cyklus, redirect, nejednoznačná
 šablona nebo limit 250 stránek zneplatní úplnost daného vlákna.

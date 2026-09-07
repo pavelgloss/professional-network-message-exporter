@@ -198,6 +198,63 @@ export function instantiateObservedAnchoredHistoryUrl(
   return exactHistoryPage(candidates[0]!, newTargetId);
 }
 
+/**
+ * Derives the already live-validated older-page contract from this run's exact
+ * initial request without rebuilding or re-encoding any existing query bytes.
+ */
+export function deriveObservedAnchoredHistoryUrl(
+  initialUrl: string,
+  targetId: string,
+  deliveredAt: number,
+  countBefore = 20,
+): string {
+  if (!Number.isSafeInteger(deliveredAt) || deliveredAt <= 0
+    || !Number.isInteger(countBefore) || countBefore <= 0 || countBefore > 100) {
+    throw new AppError('READ_POLICY_BLOCK', 'Derived history anchor was malformed', 4);
+  }
+  const initial = exactHistoryPage(initialUrl, targetId);
+  const canonical = canonicalUrlView(initial);
+  const operation = canonical?.query.filter(({ name }) => name === 'queryId').map(({ value }) => value);
+  const variables = canonical?.query.filter(({ name }) => name === 'variables').map(({ value }) => value);
+  if (!canonical || operation?.length !== 1 || !/^messengerMessages\.[A-Fa-f0-9]{32,128}$/.test(operation[0]!)
+    || variables?.length !== 1) {
+    throw new AppError('READ_POLICY_BLOCK', 'Initial history GET could not derive the anchored contract', 4);
+  }
+  const fields = restLiFields(variables[0]!);
+  const conversationFields = fields.filter(({ key }) => key === 'conversationUrn');
+  if (conversationFields.length !== 1 || conversationIdFromUrn(conversationFields[0]?.value) !== targetId
+    || fields.some(({ key }) => ['deliveredAt', 'countBefore', 'countAfter'].includes(key))) {
+    throw new AppError('READ_POLICY_BLOCK', 'Initial history variables were not the exact derivation source', 4);
+  }
+
+  const queryStart = initial.indexOf('?');
+  const fragmentStart = initial.indexOf('#', queryStart);
+  const queryEnd = fragmentStart < 0 ? initial.length : fragmentStart;
+  const segments = initial.slice(queryStart + 1, queryEnd).split('&');
+  let changed = false;
+  const nextSegments = segments.map((segment) => {
+    const equals = segment.indexOf('=');
+    if (equals < 0) return segment;
+    let name: string;
+    try { name = decodeURIComponent(segment.slice(0, equals)); } catch { return segment; }
+    if (name !== 'variables') return segment;
+    if (changed) throw new AppError('READ_POLICY_BLOCK', 'Initial history GET had duplicate variables', 4);
+    const rawVariables = segment.slice(equals + 1);
+    if (!rawVariables.startsWith('(') || !rawVariables.endsWith(')') || rawVariables.length < 3) {
+      throw new AppError('READ_POLICY_BLOCK', 'Initial history variables could not be preserved byte-for-byte', 4);
+    }
+    changed = true;
+    return `${segment.slice(0, equals + 1)}(deliveredAt:${deliveredAt},${rawVariables.slice(1, -1)},countBefore:${countBefore},countAfter:0)`;
+  });
+  if (!changed) throw new AppError('READ_POLICY_BLOCK', 'Initial history GET had no variables', 4);
+  const candidate = `${initial.slice(0, queryStart + 1)}${nextSegments.join('&')}${initial.slice(queryEnd)}`;
+  const contract = anchoredHistoryContract(candidate, targetId);
+  if (contract?.deliveredAt !== deliveredAt || contract.countBefore !== countBefore) {
+    throw new AppError('READ_POLICY_BLOCK', 'Derived anchored history contract failed validation', 4);
+  }
+  return exactHistoryPage(candidate, targetId);
+}
+
 function historyMessageKey(message: RawMessage): string {
   if (message.entityUrn) return `urn:${message.entityUrn}`;
   if (message.id) return `id:${message.id}`;
@@ -313,7 +370,9 @@ export async function readObservedConversationHistories(
     const contract = anchoredHistoryContract(olderTemplate, targetId);
     return contract ? [contract] : [];
   })[0] : undefined;
-  if (olderContract) manifest.counts.historyOlderPageSize = olderContract.countBefore;
+  const olderPageSize = olderContract?.countBefore ?? 20;
+  manifest.counts.historyOlderPageSize = olderPageSize;
+  if (!olderTemplate) manifest.counts.historyDerivedTemplates = 1;
 
   for (const conversation of conversations) {
     const targetId = exactConversationId(conversation);
@@ -369,13 +428,15 @@ export async function readObservedConversationHistories(
       if (!collection || foreignMessages || !matching.length) throw new Error('history response identity mismatch');
       appendParsedPage(matching, collection.elements.length, false, parsed.misses);
       anchor = oldestDeliveryAnchor(matching);
-      if (!anchor || !olderTemplate || !olderContract) throw new Error('anchored history template unavailable');
+      if (!anchor) throw new Error('history delivery anchor unavailable');
 
       while (!reachedBeginning && pageIndex < MAX_HISTORY_PAGES_PER_CONVERSATION) {
         if (visitedAnchors.has(anchor)) throw new Error('history anchor cycle');
         visitedAnchors.add(anchor);
         historyStage = 'anchor-url';
-        const url = instantiateObservedAnchoredHistoryUrl(olderTemplate, observed.targetIds, targetId, anchor);
+        const url = olderTemplate && olderContract
+          ? instantiateObservedAnchoredHistoryUrl(olderTemplate, observed.targetIds, targetId, anchor)
+          : deriveObservedAnchoredHistoryUrl(initial, targetId, anchor, olderPageSize);
         historyStage = 'older-read';
         const olderPayload = await readJson(request, url);
         historyStage = 'older-parse';
@@ -394,7 +455,7 @@ export async function readObservedConversationHistories(
         const foreignOlderMessages = olderParsed.conversations.some((value) => exactConversationId(value) !== targetId
           && (value.messages?.length ?? 0) > 0);
         if (foreignOlderMessages) throw new Error('history response identity mismatch');
-        reachedBeginning = olderCollection.elements.length < olderContract.countBefore;
+        reachedBeginning = olderCollection.elements.length < olderPageSize;
         appendParsedPage(olderMatching, olderCollection.elements.length, reachedBeginning, olderParsed.misses);
         if (reachedBeginning) break;
         const nextAnchor = oldestDeliveryAnchor(olderMatching);
