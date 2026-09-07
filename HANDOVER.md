@@ -1,8 +1,28 @@
 # Handover: LinkedIn messages reader
 
-Last updated: 2026-09-07 12:25 Europe/Prague
+Last updated: 2026-09-07 12:37 Europe/Prague
 
-## Latest checkpoint (12:25) — anchored history works end to end
+## Latest checkpoint (12:37) — full run is 99/100; one parser shape remains
+
+Commit `e839897` contains the anchored reader, exact request-policy additions,
+navigation-race fix, mocked three-page reader test, README update, and a broad
+`data/linkedin/*.json*` ignore rule. Typecheck, the anchored reader test, focused
+probe tests, and all 38 navigation tests pass.
+
+The first fresh full run completed safely as a partial candidate and did not
+replace the existing main export. Aggregates: 100 conversations requested,
+99 histories complete, 1 failed, 201 history pages, 192 parsed messages, and one
+parser miss. The safe failure class is `history-page-failure:older-parse:FAILED`.
+This proves request rebinding/pagination across the set; one older page contains
+a currently unsupported message/event representation. The candidate is ignored
+at `data/linkedin/messages-complete-candidate.json.partial`.
+
+Next: add a diagnostics-only element structural signature (allowlisted/redacted
+key names and primitive types only; never values), rerun once to identify that
+event contract, implement and test its parser adapter, then repeat the full run.
+Do not weaken completion: the one miss must reach zero before promotion.
+
+## Previous checkpoint (12:25) — anchored history works end to end
 
 The 11:52 sync-token conclusion immediately below is **superseded and wrong**.
 Safe operation-shape diagnostics proved that both observed URLs use the same
