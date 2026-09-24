@@ -1,64 +1,62 @@
-# Review zadání
+# Aktuální review projektu a dokumentace
 
-## Interpretace cíle
+Datum: **2026-09-24**
 
-Projekt bude lokální Node.js/TypeScript CLI nad Playwrightem. Z autentizované LinkedIn
-session načte nejnovější konverzace, jejich dostupnou historii a sloučí je do
-`data/linkedin/messages.json`. Primárním limitem bude 100 konverzací; export vždy
-zahrne všechny zprávy, které se pro vybrané konverzace podaří načíst.
+Review baseline: implementace `b611a61` + následné dokumentační změny
 
-## Bezpečnostní hranice
+Verdikt: **PASS — projekt má aktuální předatelnou dokumentaci a jasně oddělenou historii**
 
-- Nástroj je striktně read-only: neodesílá zprávy, nemaže obsah a nemění profil ani
-  nastavení účtu.
-- Automatizace smí provádět jen navigaci, otevření konverzace, scrollování a čtení.
-  Nesmí klikat na odeslání, reakce, archivaci, označení, mazání ani jiné mutační akce.
-- Nepoužije přímé zápisové interní API. Zachycené síťové odpovědi lze pouze číst.
-- Session, cookies, browser profil, diagnostické snímky a reálný export zůstanou mimo
-  Git. Logy nesmí obsahovat celé cookies ani jiné credentials.
-- Samotné otevření konverzace může na LinkedIn změnit serverový stav `read/unread`.
-  Proto implementace nebude otevírat vlákna klikáním, pokud lze data získat z
-  read-only odpovědí webové aplikace. Pokud je otevření nutné, README toto omezení
-  výslovně uvede; žádná bezpečná browser automatizace nemůže garantovat, že LinkedIn
-  při GET/navigaci stav přečtení nezmění.
+## Rozsah review
 
-## Technické rozhodnutí
+Byly porovnány:
 
-Nejspolehlivější cesta je hybridní:
+- původní zadání;
+- všechny root dokumenty a jejich Git historie;
+- současné CLI volby, konfigurace a návratové kódy;
+- autentizace, browser isolation, request policy, exporter, probe, history reader,
+  schema, merge, store a diagnostika;
+- názvy a pokrytí unit/integration testů;
+- lokální ignorovaný export pouze agregátně a přes runtime schema, bez výpisu zpráv.
 
-1. persistentní Chromium profil pro jednorázové ruční přihlášení,
-2. načtení Messaging stránky v Playwrightu,
-3. zachycení autentizovaných read-only network odpovědí a jejich tolerantní parsování,
-4. DOM fallback opřený o více accessibility/stabilních atributů místo jediného CSS
-   selektoru,
-5. normalizace, deterministická náhradní ID a idempotentní merge do JSON.
+## Napravené dokumentační problémy
 
-Interní LinkedIn API není veřejný kontrakt, proto parser i DOM fallback musí selhat
-srozumitelně, ukládat bezpečnou diagnostiku a mít izolované selektory/adaptéry.
+1. Původní plán popisoval persistentní profil a starý `--allow-thread-open`. Byl
+   přesunut do jasně označeného archivu; současný plán odkazuje na as-built návrh.
+2. Chronologický code-review log začínal starým `NO-GO`, přestože končil `GO`. Aktivní
+   `CODE_REVIEW.md` nyní obsahuje pouze platný verdikt a archiv je označen jako historie.
+3. Handover míchal hotový stav se stovkami řádků starých `Next:` kroků. Aktivní
+   handover je současný a pracovní log je archivovaný.
+4. Chyběla výsledná architektura a mapa zdrojů. Byla doplněna v
+   `docs/ARCHITECTURE.md` včetně lazy loadingu, completeness, snapshot recovery,
+   persistence, privacy, návratových kódů a limitací.
+5. Chyběl rozcestník a pravidlo autority dokumentů. Byly doplněny v `docs/README.md`.
+6. Stará informace `npm audit: 0` byla nahrazena současným stavem: produkční audit 0,
+   plný audit 2 moderate v dev-only Vitest řetězci.
 
-## Upřesněná akceptační kritéria
+## Ověření
 
-- Standardní běh nesmí obsahovat žádnou zápisovou operaci vůči LinkedIn.
-- Export je validní a deterministicky seřazený; opakované spuštění neduplikuje
-  konverzace ani zprávy.
-- Každá zpráva má stabilní nebo deterministické ID, conversation ID, text, směr,
-  odesílatele, čas (pokud jej LinkedIn zpřístupní) a pořadí.
-- Externí účastníci mají konzervativní boolean `probablyRecruiter`.
-- Projekt má unit/integration testy pro normalizaci, klasifikaci a idempotentní merge.
-- End-to-end test bez reálné session může ověřit start aplikace a bezpečné zastavení;
-  skutečný obsah inboxu lze potvrdit až v přihlášené session uživatele.
+- `npm.cmd run check`: PASS, 16 souborů / 150 testů, typecheck a build.
+- `npm.cmd audit --omit=dev`: 0 vulnerabilities.
+- `npm.cmd audit`: 2 moderate dev-only findings, major fix dostupný přes Vitest 5.
+- Lokální export: schema validní, `partial=false`, 100 konverzací, 193 zpráv,
+  100 kompletních historií, 0 parser missů a 0 duplicitních ID.
+- Od `b611a61` do začátku tohoto review se změnily jen dokumenty.
 
-## Rizika a realistická omezení
+## Zbytková omezení
 
-- LinkedIn DOM a neveřejné endpointy se mohou změnit a vyžádat aktualizaci adaptéru.
-- CAPTCHA, MFA nebo chybějící session jsou legitimní blokace vyžadující ruční krok.
-- LinkedIn může automatizaci omezovat; běh proto musí být pomalý, bez obcházení
-  bezpečnostních mechanismů a bez vysoké paralelizace.
-- Některá metadata nebo celá starší historie nemusí být webovým klientem dostupná.
-- Použití automatizace se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
+- Review nespustilo nový živý LinkedIn export; poslední live důkaz je z 2026-09-07.
+- Limit 200 je implementačně povolený, nikoli živě ověřený.
+- LinkedIn UI lazy-loading a neveřejné endpointy zůstávají externě proměnlivé.
+- Dokumentace umožní agentovi pochopit systém bez čtení celého kódu, ale před změnou
+  musí agent vždy přečíst dotčený modul a jeho testy.
 
-## Nejasnost vyřešená pro implementaci
+## Dokumentační DoD
 
-Formulaci „100 nejnovějších conversations/messages“ vykládám jako až 100 nejnovějších
-konverzací a všechny dostupné zprávy uvnitř nich. Když účet obsahuje méně konverzací,
-exportuje se vše dostupné a výsledek obsahuje skutečný počet i případná varování.
+Splněno:
+
+- existuje jednoznačné pořadí čtení;
+- aktivní dokumenty neodkazují na staré přepínače jako na současné;
+- architektura odpovídá aktuálnímu source flow;
+- omezení, rizika, audit a live evidence jsou datované;
+- historie, slepé cesty a vývoj review zůstaly dohledatelné;
+- historické `NO-GO` a `Next:` položky jsou zřetelně neaktivní.

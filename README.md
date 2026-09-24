@@ -5,6 +5,17 @@ nemaže, nearchivuje ani nemění profil. V exportním režimu blokuje všechny 
 kromě `GET`, `HEAD` a `OPTIONS`, veškeré WebSockety; service workery jsou vypnuté. Používání automatizace
 se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 
+## Dokumentace a předání projektu
+
+Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent má začít v
+[`HANDOVER.md`](HANDOVER.md), potom přečíst autoritativní
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) a
+[`docs/DECISIONS.md`](docs/DECISIONS.md). Úplný rozcestník včetně jasně oddělených
+historických dokumentů je v [`docs/README.md`](docs/README.md).
+
+Dokumenty v `docs/history/` zachycují vývoj, slepé cesty a staré review. Nejsou
+aktuálními provozními instrukcemi.
+
 ## Instalace
 
 Vyžaduje Node.js 22+:
@@ -105,6 +116,9 @@ odlišit od mutace; v takovém případě export raději skončí neúplný.
 - Když tento starší operation template při úplně prvním běhu nevznikne a není k
   dispozici předchozí úplný snapshot, dlouhá historie může skončit jako `.partial`.
   Nástroj v takovém případě nepřepíše poslední úplný `messages.json`.
+- Pokud je zadaný limit vyšší než skutečný počet dostupných konverzací, konzervativní
+  kontrola nemusí umět z DOM bezpečně dokázat globální úplnost a může rovněž vrátit
+  `.partial`.
 - Opakovaný běh může předchozí úplnou historii použít pouze pro stejné conversation
   ID, při překryvu alespoň jednoho stabilního message ID/URN a bez parser missu.
 - Neveřejné LinkedIn endpointy nebo DOM se mohou v budoucnu změnit; očekávané
