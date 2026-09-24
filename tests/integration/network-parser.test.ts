@@ -58,8 +58,14 @@ describe('network parser', () => {
     expect(() => assertAllowedReadUrl('https://evil.example/voyager/api/messaging')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/feed')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation')).toThrow();
+    expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=messengerStarConversation')).toThrow();
+    expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=messengerUnstarConversation')).toThrow();
+    expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=messengerToggleStar')).toThrow();
+    expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/messaging/conversations?action=star')).toThrow();
     expect(() => assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql/extra?queryId=messengerMessagesByConversation')).toThrow();
     expect(assertAllowedReadUrl('https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation').pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
+    expect(assertAllowedReadUrl(`https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ category: 'STARRED' }))}`).pathname).toBe('/voyager/api/voyagerMessagingGraphQL/graphql');
+    expect(assertAllowedReadUrl('https://www.linkedin.com/voyager/api/graphql?queryId=messengerStarredConversations').pathname).toBe('/voyager/api/graphql');
     for (const url of [
       'https://www.linkedin.com/voyager/api/messaging/%73%65%6e%64Message',
       'https://www.linkedin.com/voyager/api/messaging/%2573%2565%256e%2564Message',
@@ -118,6 +124,41 @@ describe('network parser', () => {
     expect(visited.every((url) => new URL(url).pathname === '/voyager/api/voyagerMessagingGraphQL/graphql')).toBe(true);
   });
 
+  it('preserves trusted starred evidence on explicitly followed GET pages', async () => {
+    const page = (id: string, categories: string[], start: number, hasNextPage: boolean) => ({
+      data: {
+        messengerConversationsByCategoryQuery: {
+          elements: [{ entityUrn: `urn:li:fsd_messengerConversation:${id}`, lastActivityAt: start + 1, categories }],
+          paging: {
+            start,
+            count: 1,
+            total: 2,
+            hasNextPage,
+            links: hasNextPage ? [{ href: '?queryId=messengerConversations&start=1&count=1' }] : [],
+          },
+        },
+      },
+    });
+    const fakeRequest = {
+      get: async (url: string) => ({
+        status: () => 200,
+        ok: () => true,
+        headers: () => ({}),
+        body: async () => Buffer.from(JSON.stringify(new URL(url).searchParams.get('start') === '1'
+          ? page('STARRED-PAGE', ['STARRED'], 1, false)
+          : page('FIRST-PAGE', ['INBOX'], 0, true))),
+      }),
+    } as unknown as APIRequestContext;
+    const conversations = await followObservedPagination(fakeRequest, [
+      'https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&start=0&count=1',
+    ], createManifest());
+
+    expect(conversations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'FIRST-PAGE', isStarred: false }),
+      expect.objectContaining({ id: 'STARRED-PAGE', isStarred: true }),
+    ]));
+  });
+
   it('resolves GraphQL reference arrays, composite URNs, and observed cursors', async () => {
     const fixture = JSON.parse(await readFile(new URL('../fixtures/network/graphql-composite.json', import.meta.url), 'utf8'));
     const source = `https://www.linkedin.com/voyager/api/graphql?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ cursor: 'cursor-old', count: 20 }))}`;
@@ -148,6 +189,26 @@ describe('network parser', () => {
     ]);
     expect(parsed.conversations[0]?.sourceMetadata).toMatchObject({ historyComplete: false, parserMisses: 1 });
     expect(parsed.misses).toBe(1);
+  });
+
+  it('reads STARRED only from well-formed trusted conversation-list categories', async () => {
+    const payload = JSON.parse(await readFile(new URL('../fixtures/network/starred-conversations.json', import.meta.url), 'utf8'));
+    const source = `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations.${'a'.repeat(32)}`;
+    const parsed = parseNetworkPayload(payload, source, { observedMethod: 'GET' });
+    const byId = new Map(parsed.conversations.map((value) => [value.id, value]));
+
+    expect(byId.get('TRUE')?.isStarred).toBe(true);
+    expect(byId.get('FALSE')?.isStarred).toBe(false);
+    expect(byId.get('MISSING')?.isStarred).toBeUndefined();
+    expect(byId.get('MALFORMED-SCALAR')?.isStarred).toBeUndefined();
+    expect(byId.get('MALFORMED-MIXED')?.isStarred).toBeUndefined();
+    expect(byId.get('NOT-EXACT')?.isStarred).toBe(false);
+    expect(byId.get('MESSAGE-HOST')?.isStarred).toBe(false);
+    expect(byId.get('UNTRUSTED')?.isStarred).toBeUndefined();
+    expect(byId.get('MESSAGE-HOST')?.messages?.[0]).not.toHaveProperty('isStarred');
+
+    const unobserved = parseNetworkPayload(payload, source).conversations;
+    expect(unobserved.every((value) => value.isStarred === undefined)).toBe(true);
   });
 
   it('follows relative history links across multiple anonymous pages', async () => {

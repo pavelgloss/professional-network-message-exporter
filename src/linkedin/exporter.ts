@@ -416,6 +416,8 @@ function mergeRawParticipants(left: RawParticipant[], right: RawParticipant[]): 
 function mergeRawConversation(old: RawConversation, next: RawConversation): RawConversation {
   return {
     ...definedMerge(old, next),
+    ...(next.isStarred !== undefined ? { isStarred: next.isStarred }
+      : old.isStarred !== undefined ? { isStarred: old.isStarred } : {}),
     participants: mergeRawParticipants(old.participants ?? [], next.participants ?? []),
     messages: mergeRawMessages(old.messages ?? [], next.messages ?? []),
     ...mergeHistoryMetadata(old.sourceMetadata, next.sourceMetadata),

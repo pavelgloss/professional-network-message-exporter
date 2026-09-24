@@ -2,9 +2,10 @@
 
 Datum: **2026-09-24**
 
-Review baseline: implementace `b611a61` + následné dokumentační změny
+Review baseline: implementace `b611a61` + dokumentace + aktuální rozšíření
+conversation-level `isStarred`
 
-Verdikt: **PASS — projekt má aktuální předatelnou dokumentaci a jasně oddělenou historii**
+Verdikt dokumentace i změny `isStarred`: **PASS / GO**.
 
 ## Rozsah review
 
@@ -35,7 +36,7 @@ Byly porovnány:
 
 ## Ověření
 
-- `npm.cmd run check`: PASS, 16 souborů / 150 testů, typecheck a build.
+- `npm.cmd run check`: PASS, 16 souborů / 157 testů, typecheck a build.
 - `npm.cmd audit --omit=dev`: 0 vulnerabilities.
 - `npm.cmd audit`: 2 moderate dev-only findings, major fix dostupný přes Vitest 5.
 - Lokální export: schema validní, `partial=false`, 100 konverzací, 193 zpráv,
@@ -44,11 +45,18 @@ Byly porovnány:
 
 ## Zbytková omezení
 
-- Review nespustilo nový živý LinkedIn export; poslední live důkaz je z 2026-09-07.
+- Dva nové izolované read-only LinkedIn běhy 2026-09-24 daly shodně 100 konverzací,
+  8 `isStarred: true`, 92 `false`, 0 unknown/invalid, 0 duplicitních conversation ID
+  a 0 parser missů. Oba bezpečně skončily jako `.partial` kvůli neověřené úplnosti
+  historie a nezměnily hlavní export.
 - Limit 200 je implementačně povolený, nikoli živě ověřený.
 - LinkedIn UI lazy-loading a neveřejné endpointy zůstávají externě proměnlivé.
 - Dokumentace umožní agentovi pochopit systém bez čtení celého kódu, ale před změnou
   musí agent vždy přečíst dotčený modul a jeho testy.
+- `isStarred` je vlastnost konverzace, ne zprávy. Bere se jen z validního
+  `categories[]` trusted list objektu; missing/malformed znamená neznámý stav.
+- Všech 157 automatických testů včetně nové hodnoty prošlo a živé ověření agregátů
+  proběhlo bez výpisu zpráv nebo osobních identifikátorů.
 
 ## Dokumentační DoD
 

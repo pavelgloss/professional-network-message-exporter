@@ -19,7 +19,10 @@ export async function followObservedPagination(request: APIRequestContext, seedU
     state.visited.add(url);
     try {
       const payload = await readJson(request, url, csrfToken);
-      const parsed = parseNetworkPayload(payload, url);
+      // readJson reached this payload through an explicit guarded GET. Preserve
+      // that method evidence so direct conversation-list elements may expose
+      // trusted read/isStarred metadata just like passively captured GETs.
+      const parsed = parseNetworkPayload(payload, url, { observedMethod: 'GET' });
       conversations.push(...parsed.conversations);
       manifest.counts.parserMisses = (manifest.counts.parserMisses ?? 0) + parsed.misses;
       for (const next of parsed.paginationUrls) if (!state.visited.has(next)) queue.push(next);

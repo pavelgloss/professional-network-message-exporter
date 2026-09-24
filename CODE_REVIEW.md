@@ -1,6 +1,8 @@
 # Aktuální stav code review
 
-Platný verdikt: **GO — Critical 0 / High 0 / Medium 0**
+Předchozí baseline: **GO — Critical 0 / High 0 / Medium 0**
+
+Aktuální změna `isStarred`: **GO — Critical 0 / High 0 / Medium 0**
 
 Reviewovaný code baseline: **`b611a61` (2026-09-07)**
 
@@ -28,17 +30,37 @@ bezpečnostní re-review tohoto code baseline zůstává platné.
 
 ## Současná automatická evidence
 
-`npm.cmd run check` dne 2026-09-24 prošel:
+`npm.cmd run check` dne 2026-09-24 po změně `isStarred` prošel:
 
 - TypeScript typecheck;
 - 16 testovacích souborů;
-- 150/150 unit a integration testů;
+- 157/157 unit a integration testů;
 - build.
 
 `npm.cmd audit --omit=dev` hlásí 0 vulnerabilities. Plný audit nově hlásí 2 moderate
 zranitelnosti ve vývojové závislosti `vitest`/`@vitest/mocker`; nejde o změnu
 aplikačního code-review verdiktu, ale je evidována jako volitelný maintenance úkol v
 `PLAN.md`.
+
+### Rozšíření `isStarred` (2026-09-24)
+
+- Optional boolean je na `Conversation`, nikoli na `Message`; schemaVersion zůstává 1
+  a staré exporty bez pole jsou validní.
+- Parser přijímá exact case-normalized `STARRED` jen z `categories[]` přímého
+  trusted conversation-list objektu. Missing/malformed/untrusted/message objekty
+  hodnotu nevytvářejí.
+- Raw i persistent merge používá čerstvé explicitní `true`/`false`; `undefined`
+  zachovává starší explicitní stav. Hodnota se nepodílí na identitě.
+- Sdílený mutation-like guard blokuje star/unstar/toggle-star GET operace, ale
+  povoluje conversation-list query s read kategorií `STARRED`.
+- První nezávislé review našlo High mezeru ve star-action GET guardu a Medium ztrátu
+  trusted evidence na explicitně následované pagination stránce. Obojí bylo opraveno
+  s regresními testy; následné nezávislé re-review dalo technické GO bez nálezů.
+- Cílené testy parseru, pagination, domain merge a obou guard vrstev prošly; celý
+  suite má 157/157 testů, typecheck i build jsou zelené.
+- Dva izolované read-only live běhy daly shodně 8 starred a 92 unstarred konverzací,
+  žádné unknown/invalid hodnoty, duplicitní ID ani parser miss. Výstupy zůstaly
+  `.partial` jen kvůli neprokázané úplnosti historie zpráv; hlavní export se nezměnil.
 
 ## Reziduální rizika mimo verdikt
 

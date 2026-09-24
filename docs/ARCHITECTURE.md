@@ -4,9 +4,8 @@ Stav: **aktuální**
 
 Ověřeno: **2026-09-24**
 
-Poslední commit měnící implementaci: **`b611a61`**
-
-Pozdější commity do tohoto dokumentačního review měnily pouze dokumentaci.
+Poslední stabilní baseline před rozšířením `isStarred`: **`b611a61`**. Implementace
+popsaná níže zahrnuje dokončené conversation-level `isStarred`.
 
 Tento dokument popisuje skutečně implementovaný systém, nikoli původní plán. Původní
 návrh je zachován v `docs/history/IMPLEMENTATION_PLAN_ORIGINAL.md`.
@@ -122,6 +121,8 @@ storage, nikoli persistentní browser profil nebo service worker.
 
 - blokuje jiné HTTP metody než `GET`, `HEAD` a `OPTIONS`;
 - blokuje známé mutační cesty a mutation-like názvy bez ohledu na metodu;
+- mezi blokované mutace patří i star/unstar/toggle-star operace; samotný read-only
+  list filtr nebo response kategorie `STARRED` blokovaná není;
 - blokuje WebSocket upgrade před přenosem frame;
 - ukládá jen redigovaný tvar rozhodnutí, nikdy credentials nebo query hodnoty.
 
@@ -156,6 +157,12 @@ zdroj jména/preview. Viditelný text se nepoužívá k vymyšlení conversation
 nesmí ukazovat více nevyřešených řádků. Když účet obsahuje méně konverzací než zadaný
 limit, současná implementace neumí z pouhého konce DOM bezpečně dokázat globální
 úplnost a výsledek proto může zůstat `.partial`.
+
+Na stejných důvěryhodných přímých elementech pozorované Dash conversation-list GET
+odpovědi parser čte i `categories[]`. Pouze dobře utvořené pole stringů dává
+conversation-level `isStarred`: přesný token `STARRED` po normalizaci velikosti písmen
+znamená `true`, validní pole bez něj `false`. Chybějící, malformed, vnořený tracking
+nebo message-level objekt neposkytuje evidence a pole se vynechá.
 
 ### 3.5 Lazy loading a historie zpráv
 
@@ -199,7 +206,8 @@ Runtime schema je v `src/domain/schema.ts` a má verzi `schemaVersion: 1`.
 Export obsahuje:
 
 - `exportedAt`, identitu `account` a `stats` s limitem, počty, `partial` a warnings;
-- konverzace s ID/URN/URL, aktivitou, účastníky, zprávami a audit metadata;
+- konverzace s ID/URN/URL, aktivitou, volitelným `isStarred`, účastníky, zprávami a
+  audit metadata;
 - účastníky s identitou, self flagem, `probablyRecruiter` a vysvětlujícími signals;
 - zprávy se stabilním ID, senderem, volitelným časem, direction, pořadím, textem,
   typem a volitelnými přílohami.
@@ -212,6 +220,11 @@ reference a nesoulad `direction` se self identitou.
 u fallback zpráv jen přes jednoznačný fingerprint. Starou historii zachovává,
 neduplikuje opakovaný běh a odmítá merge mezi rozdílnými účty. Recruiter klasifikace
 je konzervativní heuristika, nikoli jisté profesní označení.
+
+`isStarred` se nepoužívá pro identitu. Nová explicitní hodnota `true` i `false`
+přepíše předchozí stav; `undefined` znamená nedostatek současné evidence a zachová
+poslední explicitní hodnotu. Pole zůstává optional ve `schemaVersion: 1`, takže starší
+exporty jsou zpětně kompatibilní.
 
 ## 5. Persistence a ochrana před ztrátou dat
 
@@ -285,11 +298,11 @@ více příčin.
 
 ## 9. Testovací strategie
 
-`npm.cmd run check` spouští typecheck, všech 150 testů a build. Testy pokrývají mimo
+`npm.cmd run check` spouští typecheck, všechny testy a build. Testy pokrývají mimo
 jiné HTTP/WebSocket guard, service-worker isolation, redirect/navigation races,
 one-target omezení, Unicode URL safety, parser a pagination, anchored historii,
 virtualizovaný DOM, stabilní identity, merge, snapshot recovery, atomický store,
-redakci diagnostiky a unauthenticated CLI.
+redakci diagnostiky, unauthenticated CLI a trusted-boundary/merge chování `isStarred`.
 
 Integrační testy používají lokální servery a anonymizované fixtures. Nevyžadují
 LinkedIn session a nemají sahat na reálná data.
@@ -308,8 +321,12 @@ LinkedIn session a nemají sahat na reálná data.
 - Přísná blokace POST záměrně odmítne i případný read-only GraphQL POST, protože jej
   nelze spolehlivě odlišit od mutace.
 - Recruiter flag je konzervativní heuristika.
-- Živé ověření proběhlo 2026-09-07. Dnešní review validovalo lokální výsledek a testy,
-  ale nespouštělo nový LinkedIn export.
+- `isStarred` zůstává neznámé, pokud trusted list response neobsahuje validní
+  `categories[]`; není odvozováno z CSS ani z textu. Dva izolované browserové běhy
+  2026-09-24 ověřily jeho živý export na 100 konverzacích (8 true, 92 false,
+  0 unknown/invalid), ale ne globální úplnost historie zpráv.
+- Úplný hlavní export byl naposledy živě ověřen 2026-09-07. Dva bezpečné validační
+  exporty `isStarred` proběhly 2026-09-24 a zůstaly oddělenými `.partial` výstupy.
 
 ## 11. Bezpečný postup změny
 

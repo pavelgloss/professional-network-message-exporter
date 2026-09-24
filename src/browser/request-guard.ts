@@ -7,7 +7,12 @@ import { redactedPathShape, safeDiagnosticOrigin } from '../domain/url-redaction
 export type PolicyDecision = { allow: boolean; reason: string; origin?: string; pathname?: string };
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const forbiddenAccountPath = /\/(?:logout|checkpoint\/logout|settings\/.*(?:delete|close))(?:\/|$)/i;
-const forbiddenAction = /(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction|typing)/i;
+const forbiddenAction = /(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction|typing|(?:unstar|star)(?:message|conversation|thread)|(?:message|conversation|thread)(?:unstar|star)|(?:set|toggle|update|mark(?:as)?)(?:is)?star(?:red)?)/i;
+const explicitStarAction = /(?:^|[?&{,(])\s*["']?(?:action|operation)["']?\s*[:=]\s*["']?(?:unstar|star)(?:red)?(?=$|[\s"'&,)}])/i;
+
+export function isMutationLikeRequestText(value: string): boolean {
+  return forbiddenAction.test(value) || explicitStarAction.test(value);
+}
 
 export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   let url: URL;
@@ -21,7 +26,7 @@ export function requestPolicy(method: string, rawUrl: string): PolicyDecision {
   const linkedin = /(^|\.)linkedin\.com$/i.test(url.hostname);
   const actionScope = /^\/(?:voyager\/api|messaging)(?:\/|$)/i.test(canonical.pathname);
   const canonicalQuery = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');
-  if (linkedin && (forbiddenAccountPath.test(canonical.pathname) || (actionScope && forbiddenAction.test(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)))) {
+  if (linkedin && (forbiddenAccountPath.test(canonical.pathname) || (actionScope && isMutationLikeRequestText(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)))) {
     return { allow: false, reason: 'known-mutating-path', origin: safeDiagnosticOrigin(url), pathname: canonical.pathname };
   }
   return { allow: true, reason: 'read-only-request', ...details };

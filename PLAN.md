@@ -1,7 +1,7 @@
 # Aktuální plán a maintenance backlog
 
-Stav k 2026-09-24: **původní zadání je implementované a není zde žádná rozpracovaná
-blokující změna**.
+Stav k 2026-09-24: **původní zadání i conversation-level `isStarred` jsou
+implementované, zrevidované, automaticky testované a živě browserově ověřené**.
 
 Výsledná architektura je v `docs/ARCHITECTURE.md`, současné předání v `HANDOVER.md` a
 důvody rozhodnutí v `docs/DECISIONS.md`. Původní předimplementační plán je zachován v
@@ -10,12 +10,25 @@ architektury.
 
 ## Volitelná budoucí práce
 
+### 0. Uzavřená změna `isStarred`
+
+Parser čte `categories[]` pouze z trusted Dash conversation-list elementů. Schema,
+normalizace a oba merge stupně zachovávají optional boolean; explicitní nová hodnota
+přepisuje a chybějící evidence zachovává předchozí hodnotu. Star/unstar operace guard
+blokuje. Automatické anonymní testy pokrývají true/false/missing/malformed,
+untrusted/message izolaci, toggles, idempotenci a legacy schema.
+
+Živé ověření po explicitním souhlasu proběhlo dvakrát přes izolovaný projektový
+Chromium context do ignorovaného alternativního výstupu. Agregáty byly v obou bězích
+shodné: 100 konverzací, 8 `true`, 92 `false`, 0 unknown/invalid, bez duplicit a parser
+missů. Výstup zůstal `partial` kvůli historii zpráv; hlavní export nebyl změněn.
+
 ### 1. Upgrade Vitest
 
 Plný `npm audit` 2026-09-24 hlásí dvě moderate položky ve vývojové závislosti
 `vitest`/`@vitest/mocker`; produkční audit je čistý. Oprava vyžaduje major upgrade na
 Vitest 5. Provést jako samostatnou změnu, zkontrolovat migration notes, lockfile a
-spustit všech 150 testů. Nepoužívat automaticky `npm audit fix --force` bez review.
+spustit celý test suite. Nepoužívat automaticky `npm audit fix --force` bez review.
 
 ### 2. Ověření limitu 200
 

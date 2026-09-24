@@ -43,6 +43,7 @@ export const ConversationSchema = z.object({
   entityUrn: nonEmpty.optional(),
   url: z.string().url().optional(),
   lastActivityAt: isoDate.optional(),
+  isStarred: z.boolean().optional(),
   participants: z.array(ParticipantSchema),
   messages: z.array(MessageSchema),
   sourceMetadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
@@ -118,6 +119,7 @@ export type RawConversation = {
   entityUrn?: string;
   url?: string;
   lastActivityAt?: string | number;
+  isStarred?: boolean;
   participants?: RawParticipant[];
   messages?: RawMessage[];
   sourceMetadata?: Record<string, string | number | boolean>;

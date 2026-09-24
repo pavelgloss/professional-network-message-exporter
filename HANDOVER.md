@@ -2,9 +2,10 @@
 
 Poslední review: **2026-09-24 Europe/Prague**
 
-Stav: **funkční projekt dokončen; žádný blokující implementační úkol**
+Stav: **funkční projekt; conversation-level `isStarred` je implementováno,
+nezávisle zrevidováno a živě ověřeno v izolovaném browseru**
 
-Poslední code baseline: **`b611a61`**
+Poslední stabilní code baseline před změnou `isStarred`: **`b611a61`**
 
 Tento soubor obsahuje pouze současný stav. Staré checkpointy, slepé cesty a jejich
 dočasné `Next:` kroky jsou v `docs/history/HANDOVER_CHECKPOINTS.md` a nejsou aktivní.
@@ -27,23 +28,32 @@ architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
 
 K 2026-09-24:
 
-- `npm.cmd run check`: **PASS** — typecheck, build, 16 test files, 150/150 testů;
+- `npm.cmd run check`: **PASS** — typecheck, build, 16 test files, 157/157 testů
+  včetně změny `isStarred`;
 - `npm.cmd audit --omit=dev`: **0 vulnerabilities**;
 - plný `npm.cmd audit`: **2 moderate** ve vývojovém řetězci
   `vitest`/`@vitest/mocker`; automatická oprava vyžaduje breaking upgrade na Vitest 5;
 - Git byl před dokumentační úpravou čistý;
-- od `b611a61` nebyla změněna implementace, pouze dokumentace;
+- změna `isStarred` rozšiřuje parser, schema, normalizaci, merge a star/unstar guard;
 - lokální ignorovaný `data/linkedin/messages.json` byl znovu schema-validován bez
   čtení nebo výpisu osobního obsahu.
 
-Poslední živý LinkedIn export proběhl 2026-09-07, nikoli během tohoto review. Jeho
-stále přítomný lokální výsledek má:
+Poslední úplný hlavní LinkedIn export proběhl 2026-09-07. Jeho stále přítomný lokální
+výsledek má:
 
 - `partial=false`;
 - 100 nejnovějších konverzací a 193 zpráv;
 - 100/100 historií označených kompletních;
 - 0 parser missů;
 - 0 duplicitních conversation ID a message ID.
+
+Tento starší hlavní export vznikl před přidáním `isStarred`. Nová implementace byla
+2026-09-24 dvakrát ověřena samostatným ignorovaným výstupem
+`messages.starred-validation.json.partial` v izolovaném ephemeral Chromium contextu:
+oba běhy daly 100 konverzací, 8 `true`, 92 `false`, 0 unknown/invalid hodnot,
+0 duplicitních ID a 0 parser missů. Běhy skončily `partial` kvůli již známým limitům
+úplnosti historie; to nepopírá conversation-list evidenci hvězdiček. Druhý běh
+zablokoval 133 POST requestů před odesláním a hlavní export nezměnil.
 
 Před finální promocí byl tehdejší hlavní export zachován jako lokální ignorovaný
 `data/linkedin/messages.before-final-backup.json`. Reálná data, session i diagnostics
@@ -95,12 +105,15 @@ proklikáváním všech vláken.
   konzervativní důkaz úplnosti seznamu může rovněž skončit `.partial`.
 - Neveřejný LinkedIn endpoint nebo DOM se může změnit; očekávané chování je fail-closed.
 - Recruiter klasifikace je heuristika.
+- `isStarred` je volitelné conversation-level pole. `true`/`false` vzniká jen z
+  dobře utvořeného `categories[]` na důvěryhodném list objektu; chybějící či
+  malformed evidence nechá hodnotu neznámou a merge zachová starší explicitní stav.
 - Otevření i již přečteného threadu má malé neodstranitelné server-side read-state
   riziko, proto je explicitní.
 
 ## Otevřené položky
 
-Nic není blokující pro současné použití. Pouze volitelné budoucí práce:
+Změna `isStarred` je uzavřená. Ostatní položky jsou volitelné:
 
 1. Upgrade Vitest 3 na 5 v samostatné změně, poté celý test suite. Dnešní dvě moderate
    audit položky jsou pouze v dev dependency; produkční audit je čistý.

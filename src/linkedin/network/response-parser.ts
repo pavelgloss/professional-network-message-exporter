@@ -198,7 +198,18 @@ function childrenFrom(obj: JsonRecord, ...keys: string[]): unknown[] {
   return [];
 }
 
-function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, wrappedMessageObjects?: WeakSet<object>, allowReadEvidence = false): RawConversation | undefined {
+function starredFromTrustedCategories(obj: JsonRecord): boolean | undefined {
+  if (!('categories' in obj)) return undefined;
+  const categories = obj.categories;
+  // The field is authoritative only on a trusted conversation-list object and
+  // only when its complete observed shape is the expected string array. An
+  // unknown/mixed future shape must not silently turn a starred conversation
+  // into `false`.
+  if (!Array.isArray(categories) || categories.some((category) => typeof category !== 'string')) return undefined;
+  return categories.some((category) => category.toLocaleUpperCase('en-US') === 'STARRED');
+}
+
+function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, wrappedMessageObjects?: WeakSet<object>, allowTrustedListEvidence = false): RawConversation | undefined {
   const entityUrn = urnAt(obj, 'entityUrn', 'conversationUrn', 'backendUrn');
   const participantValues = childrenFrom(obj, 'participants', '*participants', 'conversationParticipants', 'members');
   const messageValues = childrenFrom(obj, 'events', '*events', 'messages', '*messages', 'conversationEvents');
@@ -234,18 +245,20 @@ function conversationFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: str
   // Current Dash list responses expose unreadCount rather than a separate read
   // boolean. Zero is direct server evidence that opening this conversation
   // cannot newly transition it from unread to read.
-  const explicitRead = allowReadEvidence
+  const explicitRead = allowTrustedListEvidence
     ? typeof obj.read === 'boolean' ? obj.read
       : typeof obj.unreadCount === 'number' && Number.isInteger(obj.unreadCount) && obj.unreadCount >= 0
         ? obj.unreadCount === 0
         : undefined
     : undefined;
+  const isStarred = allowTrustedListEvidence ? starredFromTrustedCategories(obj) : undefined;
   const hasSourceMetadata = explicitRead !== undefined || historyComplete || parserMisses > 0;
   return {
     ...(id ? { id } : {}),
     ...(entityUrn ? { entityUrn } : {}),
     ...(url ? { url } : {}),
     ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
+    ...(isStarred !== undefined ? { isStarred } : {}),
     participants,
     messages,
     ...(hasSourceMetadata ? { sourceMetadata: { ...(explicitRead !== undefined ? { read: explicitRead, readEvidence: 'network-explicit' } : {}), ...((historyComplete || parserMisses > 0) ? { historyComplete } : {}), ...(parserMisses ? { parserMisses } : {}), ...(evidence ? { historyEvidence: evidence } : {}) } } : {}),
@@ -294,8 +307,8 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: N
   walk(payload, (obj) => objects.push(obj));
   const index = buildIncludedIndex(payload);
   const wrappedMessageObjects = new WeakSet<object>();
-  const readEvidenceObjects = trustedObservedConversationObjects(payload, sourceUrl, options);
-  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage, wrappedMessageObjects, readEvidenceObjects.has(obj))).filter((c): c is RawConversation => Boolean(c));
+  const trustedConversationListObjects = trustedObservedConversationObjects(payload, sourceUrl, options);
+  const conversations = objects.map((obj) => conversationFrom(obj, index, sourcePage, wrappedMessageObjects, trustedConversationListObjects.has(obj))).filter((c): c is RawConversation => Boolean(c));
   const wrappedMisses = conversations.reduce((sum, conversation) => sum + Number(conversation.sourceMetadata?.parserMisses ?? 0), 0);
   const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value, sourceOrder) => {
     const resolution = resolveIncludedReference(value, index);

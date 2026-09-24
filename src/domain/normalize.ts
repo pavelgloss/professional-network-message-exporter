@@ -68,6 +68,7 @@ export function normalizeConversation(raw: RawConversation, selfId?: string): Co
     ...(entityUrn ? { entityUrn } : {}),
     ...(url ? { url } : {}),
     ...(lastActivityAt ? { lastActivityAt } : {}),
+    ...(raw.isStarred !== undefined ? { isStarred: raw.isStarred } : {}),
     participants,
     messages,
     ...(raw.sourceMetadata ? { sourceMetadata: raw.sourceMetadata } : {}),

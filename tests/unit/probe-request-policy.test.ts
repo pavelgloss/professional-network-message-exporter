@@ -25,6 +25,7 @@ describe('probe phase-specific messaging request policy', () => {
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(`(mailboxUrn:${mailboxUrn},count:20)`)}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(JSON.stringify({ mailboxUrn, count: 20 }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
+    expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(JSON.stringify({ mailboxUrn, category: 'STARRED', count: 20 }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&mailboxUrn=${encodeURIComponent(mailboxUrn)}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.not-a-hash`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ cursor: 'next' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
@@ -32,6 +33,8 @@ describe('probe phase-specific messaging request policy', () => {
     expect(decide('target', `${dash}?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'UNREAD' }))}`)).toMatchObject({ allow: true, kind: 'conversation-list' });
     expect(decide('selection', `${dash}?queryId=messengerMessagesByConversation&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations&conversationId=READ`)).toMatchObject({ allow: false, kind: 'blocked' });
+    expect(decide('selection', `${dash}?queryId=messengerStarConversation.${hash}&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ' }))}`)).toMatchObject({ allow: false, kind: 'blocked' });
+    expect(decide('selection', `${dash}?queryId=messengerUnstarConversation.${hash}&variables=${encodeURIComponent(JSON.stringify({ conversationId: 'READ' }))}`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(`(mailboxUrn:urn:li:messagingThread:UNREAD,count:20)`)}`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(JSON.stringify({ mailboxUrn: 'urn:li:unknownEntity:SELF' }))}`)).toMatchObject({ allow: false, kind: 'blocked' });
     expect(decide('selection', `${dash}?queryId=messengerConversations.${hash}&variables=${encodeURIComponent(JSON.stringify({ MailboxUrn: mailboxUrn }))}`)).toMatchObject({ allow: false, kind: 'blocked' });

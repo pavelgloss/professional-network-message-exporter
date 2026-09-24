@@ -1,6 +1,6 @@
 import type { APIRequestContext } from 'playwright';
 import { AppError } from '../../errors.js';
-import { requestPolicy } from '../../browser/request-guard.js';
+import { isMutationLikeRequestText, requestPolicy } from '../../browser/request-guard.js';
 import { canonicalUrlView } from '../../domain/url-safety.js';
 import { redactedPathShape, safeDiagnosticOrigin } from '../../domain/url-redaction.js';
 import { isAllowedLinkedInReadPath } from './read-policy.js';
@@ -13,7 +13,7 @@ export function assertAllowedReadUrl(rawUrl: string): URL {
   const safeLocation = `${safeDiagnosticOrigin(url)}${redactedPathShape(canonical.pathname)}`;
   if (!policy.allow || url.origin !== 'https://www.linkedin.com' || url.username || url.password || !isAllowedLinkedInReadPath(canonical.pathname)) throw new AppError('READ_POLICY_BLOCK', `Read URL was blocked: ${safeLocation}`);
   const canonicalQuery = canonical.query.map(({ name, value }) => `${name}=${value}`).join('&');
-  if (/(?:mutation|sendMessage|delete|archive|markRead|markUnread|reaction|typing)/i.test(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)) throw new AppError('READ_POLICY_BLOCK', `Ambiguous GraphQL/read URL was blocked: ${safeLocation}`);
+  if (isMutationLikeRequestText(`${canonical.pathname}?${canonical.search}&${canonicalQuery}`)) throw new AppError('READ_POLICY_BLOCK', `Ambiguous GraphQL/read URL was blocked: ${safeLocation}`);
   url.hash = '';
   return url;
 }

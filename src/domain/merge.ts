@@ -135,6 +135,7 @@ function mergeConversation(old: Conversation | undefined, next: Conversation): C
     ...(present(next.entityUrn, old?.entityUrn) ? { entityUrn: present(next.entityUrn, old?.entityUrn)! } : {}),
     ...(present(next.url, old?.url) ? { url: present(next.url, old?.url)! } : {}),
     ...(latest(next.lastActivityAt, latestMessage, old?.lastActivityAt) ? { lastActivityAt: latest(next.lastActivityAt, latestMessage, old?.lastActivityAt)! } : {}),
+    ...(present(next.isStarred, old?.isStarred) !== undefined ? { isStarred: present(next.isStarred, old?.isStarred)! } : {}),
     participants,
     messages,
     ...(present(next.sourceMetadata, old?.sourceMetadata) ? { sourceMetadata: present(next.sourceMetadata, old?.sourceMetadata)! } : {}),

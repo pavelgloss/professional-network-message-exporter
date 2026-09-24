@@ -1,5 +1,6 @@
 import { conversationIdFromUrn, isConversationEntityType, parseLinkedInUrn } from '../domain/stable-id.js';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
+import { isMutationLikeRequestText } from '../browser/request-guard.js';
 
 export type ProbeRequestPhase = 'selection' | 'target';
 export type ProbeMessagingDecision = {
@@ -264,7 +265,7 @@ export function probeMessagingRequestPolicy(phase: ProbeRequestPhase, method: st
   const operations = canonical.query.filter(({ name }) => name === 'queryId').map(({ value }) => value);
   if (operations.length !== 1) return blocked();
   const operation = operations[0]!;
-  if (/mutation|send|delete|archive|markRead|markUnread|reaction|typing/i.test(operation)) return blocked();
+  if (isMutationLikeRequestText(operation) || /send/i.test(operation)) return blocked();
   if (listOperation.test(operation)) {
     // Once one already-read target has been selected, the persisted list
     // operation remains a read-only collection query regardless of its UI

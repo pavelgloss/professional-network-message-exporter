@@ -110,3 +110,26 @@ odkazují na archiv jen pro vysvětlení vývoje.
 
 **Proč:** Historické omyly a slepé cesty jsou užitečné při regresi, ale v aktivním
 handoveru mátly nové agenty starými `Next:` kroky a překonanými `NO-GO` verdikty.
+
+## D11 — Hvězdička je volitelný stav konverzace z trusted list response
+
+**Rozhodnutí:** Export ukládá optional `Conversation.isStarred`. Hodnota vzniká jen z
+`categories[]` přímého elementu důvěryhodné pozorované Dash conversation-list GET
+odpovědi. Exact case-normalized token `STARRED` znamená `true`, validní pole bez něj
+`false`; chybějící nebo malformed pole znamená neznámý stav.
+
+**Proč:** LinkedIn hvězdičku modeluje na konverzaci, nikoli na jednotlivé zprávě.
+Recursive hledání `STARRED` by mohlo zaměnit tracking, message metadata nebo budoucí
+nesouvisející objekt za stav konverzace. CSS/DOM indikace není autoritativní.
+
+**Merge a kompatibilita:** Nová explicitní hodnota přepisuje starou, `undefined`
+zachová poslední explicitní stav. Flag není součást identity. Zůstává optional v
+`schemaVersion: 1`, takže existující exporty bez pole jsou validní. Pokud během
+jednoho běhu přijde pro stejnou identitu více explicitních hodnot, vyhraje poslední
+pozorovaná: může jít o legitimní změnu stavu mimo nástroj a pořadí capture je jediná
+dostupná časová evidence. Malformed nebo nedůvěryhodný údaj naproti tomu stav vůbec
+nepřepisuje.
+
+**Bezpečnost:** Implementace žádnou hvězdičku nemění. Star/unstar/toggle-star
+operation-like GET se nově explicitně blokují, zatímco list query nebo kategorie
+`STARRED` zůstává povoleným čtecím údajem.

@@ -1,0 +1,36 @@
+{
+  "data": {
+    "messengerConversationsByCategoryQuery": {
+      "elements": [
+        { "entityUrn": "urn:li:messagingThread:TRUE", "participants": [{ "id": "P-TRUE" }], "events": [], "categories": ["INBOX", "starred"] },
+        { "entityUrn": "urn:li:messagingThread:FALSE", "participants": [{ "id": "P-FALSE" }], "events": [], "categories": ["INBOX"] },
+        { "entityUrn": "urn:li:messagingThread:MISSING", "participants": [{ "id": "P-MISSING" }], "events": [] },
+        { "entityUrn": "urn:li:messagingThread:MALFORMED-SCALAR", "participants": [{ "id": "P-MALFORMED-SCALAR" }], "events": [], "categories": "STARRED" },
+        { "entityUrn": "urn:li:messagingThread:MALFORMED-MIXED", "participants": [{ "id": "P-MALFORMED-MIXED" }], "events": [], "categories": ["INBOX", 1, "STARRED"] },
+        { "entityUrn": "urn:li:messagingThread:NOT-EXACT", "participants": [{ "id": "P-NOT-EXACT" }], "events": [], "categories": [" STARRED "] },
+        {
+          "entityUrn": "urn:li:messagingThread:MESSAGE-HOST",
+          "participants": [{ "id": "P-MESSAGE-HOST" }],
+          "events": [],
+          "categories": [],
+          "messages": {
+            "elements": [{
+              "entityUrn": "urn:li:messagingMessage:MESSAGE",
+              "backendConversationUrn": "urn:li:messagingThread:MESSAGE-HOST",
+              "sender": { "hostIdentityUrn": "urn:li:fsd_profile:P-MESSAGE-HOST", "name": "Sender" },
+              "deliveredAt": 1725000000000,
+              "body": { "text": "fixture message" },
+              "categories": ["STARRED"]
+            }]
+          }
+        }
+      ]
+    }
+  },
+  "tracking": {
+    "entityUrn": "urn:li:messagingThread:UNTRUSTED",
+    "participants": [{ "id": "P-UNTRUSTED" }],
+    "events": [],
+    "categories": ["STARRED"]
+  }
+}

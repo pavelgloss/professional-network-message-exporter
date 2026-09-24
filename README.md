@@ -75,6 +75,14 @@ operaci, aktuální první stránka se sloučí s předchozí serverově prokáz
 historií stejného conversation ID. To se nepoužije při parser missu ani pro novou
 konverzaci; první export proto zůstává striktně fail-closed.
 
+Každá konverzace může mít volitelné top-level pole `isStarred`. `true` znamená, že
+důvěryhodná aktuální conversation-list GET odpověď obsahovala v `categories[]` přesný
+token `STARRED` (bez ohledu na velikost písmen); `false` znamená validní pole kategorií
+bez tohoto tokenu. Chybějící nebo nerozpoznaný údaj se vynechá, aby nebyl zaměněn za
+`false`. Při merge nová explicitní hodnota přepíše starou, zatímco chybějící hodnota
+zachová poslední explicitní stav. Jde o vlastnost celé konverzace, nikoli jednotlivé
+zprávy. Export hvězdičku pouze čte; star/unstar requesty zůstávají blokované.
+
 LinkedIn často načte celou historii až po otevření konkrétního vlákna. Výchozí
 exportní běh vlákna nikdy neotevírá a při nepotvrzené úplnosti skončí jako
 `partial`; pouze varianta s `--with-history-probe` má popsaný one-thread opt-in.
@@ -124,6 +132,8 @@ odlišit od mutace; v takovém případě export raději skončí neúplný.
 - Neveřejné LinkedIn endpointy nebo DOM se mohou v budoucnu změnit; očekávané
   chování při nerozpoznané změně je bezpečné selhání a diagnostika, ne tichý
   neúplný export.
+- `isStarred` je dostupné jen tehdy, když LinkedIn vrátí dobře utvořené `categories`
+  v důvěryhodné list odpovědi. Absence pole znamená „neznámé“, ne automaticky `false`.
 
 Kontrola projektu:
 

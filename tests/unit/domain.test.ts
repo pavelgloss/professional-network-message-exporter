@@ -40,6 +40,13 @@ describe('normalization and stable IDs', () => {
     expect(conversation.sourceMetadata).toEqual({ historyComplete: true, historyEvidence: '[]' });
   });
 
+  it('normalizes the optional conversation-level starred state without changing identity', () => {
+    const base = { id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [] };
+    expect(normalizeConversation({ ...base, isStarred: true }, 'me')).toMatchObject({ id: 'c', isStarred: true });
+    expect(normalizeConversation({ ...base, isStarred: false }, 'me')).toMatchObject({ id: 'c', isStarred: false });
+    expect(normalizeConversation(base, 'me')).not.toHaveProperty('isStarred');
+  });
+
   it('keeps deterministic ordinal IDs for identical fallback messages', () => {
     const raw = { id: 'c', participants: [{ id: 'me', name: 'Me', isSelf: true }], messages: [0, 1].map(() => ({ senderId: 'me', senderName: 'Me', sentAt: '2026-01-01T00:00:00Z', text: 'same' })) };
     const messages = normalizeConversation(raw, 'me').messages;
@@ -111,6 +118,43 @@ describe('merge', () => {
     const first = make(['one']);
     expect(mergeExports(first, first).conversations[0]?.messages).toHaveLength(1);
     expect(mergeExports(first, make(['one', 'two'])).conversations[0]?.messages.map((m) => m.text)).toEqual(['one', 'two']);
+  });
+
+  it('uses fresh explicit starred state and preserves it when a later run has no evidence', () => {
+    const old = make(['one']);
+    old.conversations[0]!.isStarred = false;
+    const starred = make(['one']);
+    starred.conversations[0]!.isStarred = true;
+    const toggled = mergeExports(old, starred);
+    expect(toggled.conversations[0]?.isStarred).toBe(true);
+
+    const noEvidence = make(['one']);
+    delete noEvidence.conversations[0]!.isStarred;
+    expect(mergeExports(toggled, noEvidence).conversations[0]?.isStarred).toBe(true);
+    expect(mergeExports(toggled, toggled)).toEqual(toggled);
+
+    const unstarred = make(['one']);
+    unstarred.conversations[0]!.isStarred = false;
+    expect(mergeExports(toggled, unstarred).conversations[0]?.isStarred).toBe(false);
+  });
+
+  it('coalesces raw starred toggles without using the flag as identity', () => {
+    const base = { id: 'c', participants: [], messages: [] };
+    expect(coalesceRaw([{ ...base, isStarred: false }, { ...base, isStarred: true }])).toEqual([
+      expect.objectContaining({ id: 'c', isStarred: true }),
+    ]);
+    expect(coalesceRaw([{ ...base, isStarred: true }, base])).toEqual([
+      expect.objectContaining({ id: 'c', isStarred: true }),
+    ]);
+    expect(coalesceRaw([{ ...base, isStarred: true }, { ...base, isStarred: false }])).toEqual([
+      expect.objectContaining({ id: 'c', isStarred: false }),
+    ]);
+  });
+
+  it('accepts legacy schemaVersion 1 exports without isStarred', () => {
+    const legacy = make(['one']);
+    delete legacy.conversations[0]!.isStarred;
+    expect(ExportSchema.parse(legacy).conversations[0]).not.toHaveProperty('isStarred');
   });
 
   it('merges conversation URN, plain ID, and route aliases without duplication', () => {

@@ -10,6 +10,14 @@ describe('request guard policy', () => {
     expect(requestPolicy('GET', 'https://www.linkedin.com/logout').allow).toBe(false);
     expect(requestPolicy('GET', 'https://www.linkedin.com/voyager/api/graphql?queryId=sendMessageMutation').allow).toBe(false);
   });
+  it('blocks star/unstar actions without blocking STARRED list filters', () => {
+    for (const queryId of ['messengerStarConversation', 'messengerUnstarMessage', 'messengerToggleIsStarred', 'messengerToggleStar']) {
+      expect(requestPolicy('GET', `https://www.linkedin.com/voyager/api/graphql?queryId=${queryId}`).allow).toBe(false);
+    }
+    expect(requestPolicy('GET', 'https://www.linkedin.com/voyager/api/messaging/conversations?action=star').allow).toBe(false);
+    expect(requestPolicy('GET', `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations&variables=${encodeURIComponent(JSON.stringify({ category: 'STARRED' }))}`).allow).toBe(true);
+    expect(requestPolicy('GET', 'https://www.linkedin.com/voyager/api/graphql?queryId=messengerStarredConversations').allow).toBe(true);
+  });
   it.each([
     'https://www.linkedin.com/messaging/%73%65%6e%64Message',
     'https://www.linkedin.com/messaging/%2573%2565%256e%2564Message',
