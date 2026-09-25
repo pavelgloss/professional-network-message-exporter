@@ -1,4 +1,4 @@
-# FAQ — Professional Network Message Exporter
+# FAQ — Message Exporter for LinkedIn®
 
 Stručné odpovědi k aktuálnímu stavu projektu k **2026-09-25**. Implementované chování
 je níže důsledně oddělené od změn, které jsou zatím pouze v [`BACKLOG.md`](BACKLOG.md).

@@ -2,7 +2,7 @@
 
 ## Independent project
 
-Professional Network Message Exporter is an independent, unofficial project. It is
+Message Exporter for LinkedIn® is an independent, unofficial project. It is
 not affiliated with, sponsored by, approved by, or endorsed by LinkedIn Corporation
 or its affiliates.
 

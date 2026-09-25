@@ -1,4 +1,4 @@
-# Professional Network Message Exporter
+# Message Exporter for LinkedIn®
 
 > [!IMPORTANT]
 > This is an independent, unofficial project for exporting messages from LinkedIn®
