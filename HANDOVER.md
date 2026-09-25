@@ -1,11 +1,11 @@
 # Aktuální handover
 
-Poslední review: **2026-09-24 Europe/Prague**
+Poslední review dokumentace: **2026-09-25 Europe/Prague**
 
 Stav: **funkční projekt; conversation-level `isStarred` je implementováno,
 nezávisle zrevidováno a živě ověřeno v izolovaném browseru**
 
-Poslední stabilní code baseline před změnou `isStarred`: **`b611a61`**
+Aktuální implementační baseline: **`bcfa8b5`**
 
 Tento soubor obsahuje pouze současný stav. Staré checkpointy, slepé cesty a jejich
 dočasné `Next:` kroky jsou v `docs/history/HANDOVER_CHECKPOINTS.md` a nejsou aktivní.
@@ -19,7 +19,8 @@ Nový agent má číst v tomto pořadí:
 3. `README.md` pro provoz;
 4. `docs/ARCHITECTURE.md` pro výslednou implementaci;
 5. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
-6. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
+6. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
+7. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
 
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
@@ -59,6 +60,21 @@ Před finální promocí byl tehdejší hlavní export zachován jako lokální 
 `data/linkedin/messages.before-final-backup.json`. Reálná data, session i diagnostics
 zůstávají mimo Git.
 
+### Provozní exporty od 1. 5. 2026
+
+Po explicitně autorizovaných bězích vznikly dva ignorované odvozené soubory:
+
+- `messages-since-2026-05-01.json`: 126 konverzací a 235 zpráv;
+- `messages-since-2026-05-01-updated.json`: 133 konverzací a 253 zpráv.
+
+Nejde o nativní CLI `--since` — taková volba neexistuje. Soubory vytvořila lokální
+`jq` filtrace a incremental merge a používají vlastní
+`exportType: "linkedin-message-date-range"`. Aktualizace zachovala všechna dřívější
+message ID a přidala 7 konverzací a 18 zpráv. Čerstvý běh 2026-09-25 požadoval limit
+150, LinkedIn lazy-loading skončil na 120 a raw kandidát proto zůstal `.partial`;
+samotný exportní proces trval 3:57.842 a transformace 0.562 s. Přesný význam
+`range.complete`, hashes a anonymní důkazy jsou v `docs/OPERATIONS.md`.
+
 ## Běžné použití
 
 Pokud session expiruje:
@@ -66,6 +82,10 @@ Pokud session expiruje:
 ```powershell
 npm.cmd run login
 ```
+
+Storage state je samostatná Playwright session a export jej na disku neobnovuje.
+Běžné odhlášení pouze v Chrome ji obvykle neukončí; globální odhlášení, změna hesla
+nebo bezpečnostní revokace ano.
 
 Bezpečný výchozí export bez otevření threadu:
 
@@ -88,6 +108,8 @@ proklikáváním všech vláken.
 - Nespouštět automatizaci nad běžným Chrome profilem a nezavírat uživatelův Chrome.
 - Nepovolovat POST, WebSocket, service worker ani mutační/nejednoznačný endpoint jen
   kvůli úplnosti.
+- Guardy jsou defense-in-depth, nikoli stealth; LinkedIn může skript poznat z GET
+  provozu a část blokovaných POSTů je pravděpodobně pouze telemetrie.
 - Neotvírat unread nebo neověřený thread; starý lokální export není důkaz read stavu.
 - `.partial` nikdy nepovýšit na hlavní export bez schema a completeness validace.
 - Necommitovat ani nevypisovat `.auth`, `.env`, reálné JSON exporty, screenshots,
@@ -110,6 +132,11 @@ proklikáváním všech vláken.
   malformed evidence nechá hodnotu neznámou a merge zachová starší explicitní stav.
 - Otevření i již přečteného threadu má malé neodstranitelné server-side read-state
   riziko, proto je explicitní.
+- CLI nemá `--since`; date-range JSON je nyní pouze odvozený, strict
+  `ExportSchema`-nekompatibilní artefakt popsaný v `docs/OPERATIONS.md`.
+- `messages-since-2026-05-01-updated.json` používá incremental baseline, protože
+  čerstvý list 2026-09-25 nepřekročil hranici 1. 5. Jeho `range.complete` není totéž
+  co nativní globální `partial=false`.
 
 ## Otevřené položky
 
@@ -119,6 +146,8 @@ Změna `isStarred` je uzavřená. Ostatní položky jsou volitelné:
    audit položky jsou pouze v dev dependency; produkční audit je čistý.
 2. End-to-end ověření `--limit 200` jen po výslovném souhlasu uživatele.
 3. Adaptace parseru/policy, pokud LinkedIn změní neveřejný kontrakt.
+4. Pouze pokud bude date-range export opakovaná funkce: navrhnout nativní `--since`
+   nebo verzovaný transformační nástroj se schematem a testy.
 
 ## Bezpečný start další práce
 

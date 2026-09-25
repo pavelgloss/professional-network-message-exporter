@@ -1,6 +1,6 @@
 # Architektonická rozhodnutí a jejich vývoj
 
-Stav: **aktuální k 2026-09-24**. Tento soubor shrnuje výsledná rozhodnutí. Podrobný
+Stav: **aktuální k 2026-09-25**. Tento soubor shrnuje výsledná rozhodnutí. Podrobný
 chronologický důkaz je v `docs/history/HANDOVER_CHECKPOINTS.md` a
 `docs/history/CODE_REVIEW_LOG.md`.
 
@@ -17,7 +17,9 @@ uložený service worker představuje obtížně dokazatelný kanál mimo původ
 návrh byl nahrazen storage-state izolací.
 
 **Důsledek:** Staré zmínky o persistentním profilu jsou historické. Běžný Chrome se
-nesmí používat ani zavírat.
+nesmí používat ani zavírat. Export storage state na disku neobnovuje; po expiraci či
+revokaci je nutný nový explicitní login. Relace běžného Chrome a Playwright jsou
+samostatné, ale globální bezpečnostní revokace může ukončit obě.
 
 ## D2 — Fail-closed síťová politika
 
@@ -30,6 +32,10 @@ prioritu než bezpečnost účtu.
 
 **Důsledek:** I legitimní read-only POST může být zablokován. Nejasnost vede k chybě
 nebo `.partial`, nikoli k rozšíření oprávnění.
+
+**Co rozhodnutí neřeší:** Guard není anti-detection mechanismus. Část blokovaných
+POSTů je pravděpodobně telemetrie a LinkedIn může automatizaci rozpoznat ze vzoru
+povolených GETů. Cílem je kontrola vedlejších efektů, nikoli neviditelnost.
 
 ## D3 — Network identity je autoritativní, DOM je doplněk
 
@@ -133,3 +139,16 @@ nepřepisuje.
 **Bezpečnost:** Implementace žádnou hvězdičku nemění. Star/unstar/toggle-star
 operation-like GET se nově explicitně blokují, zatímco list query nebo kategorie
 `STARRED` zůstává povoleným čtecím údajem.
+
+## D12 — Date-range JSON je odvozený artefakt, nikoli skrytá CLI funkce
+
+**Rozhodnutí:** Současné CLI zůstává limit-based a nemá `--since`. Lokální soubory s
+`exportType: "linkedin-message-date-range"` z běhů 2026-09-24/25 jsou explicitně
+označený postprocessing pomocí `jq`, ne nativní `ExportSchema` výstup.
+
+**Proč:** Zpětně vydávat jednorázovou transformaci za implementovanou funkci by mátlo
+uživatele i další agenty. Strict schema navíc jiný top-level kontrakt právem odmítne.
+
+**Důsledek:** Tyto soubory se nesmějí použít jako vstup `export-store.ts` a jejich
+`range.complete` má užší, v `docs/OPERATIONS.md` popsaný význam. Opakovaně podporovaný
+date-range workflow vyžaduje samostatnou implementaci, testy a verzované schema.

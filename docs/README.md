@@ -1,6 +1,6 @@
 # Rozcestník dokumentace
 
-Stav dokumentace byl naposledy ověřen 2026-09-24 proti aktuálnímu pracovnímu stromu.
+Stav dokumentace byl naposledy ověřen 2026-09-25 proti aktuálnímu pracovnímu stromu.
 Tento soubor určuje, co je současný zdroj pravdy a co je pouze historický záznam.
 
 ## Doporučené pořadí pro nového agenta
@@ -13,7 +13,9 @@ Tento soubor určuje, co je současný zdroj pravdy a co je pouze historický z�
    datový tok, bezpečnostní invariants, persistence a návratové kódy.
 5. [`DECISIONS.md`](DECISIONS.md) — proč byla zvolena současná řešení a které starší
    návrhy byla opuštěny.
-6. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
+6. [`OPERATIONS.md`](OPERATIONS.md) — aktuální živé běhy, date-range postprocessing,
+   časování a session lifecycle.
+7. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
    současný stručný stav code review a celkového review projektu.
 
 Po přečtení těchto souborů má agent dost kontextu k nalezení relevantního modulu;
@@ -29,6 +31,7 @@ celý repozitář.
 | `HANDOVER.md` | Stav předání, evidence a otevřené položky | Aktuální |
 | `docs/ARCHITECTURE.md` | Výsledná technická architektura | Aktuální |
 | `docs/DECISIONS.md` | Rozhodnutí a jejich vývoj | Aktuální |
+| `docs/OPERATIONS.md` | Živé běhy a odvozené lokální výstupy | Aktuální |
 | `PLAN.md` | Současný maintenance plán; žádná skrytá rozpracovaná implementace | Aktuální |
 | `REVIEW.md` | Poslední celkové review | Aktuální |
 | `CODE_REVIEW.md` | Platný stručný výsledek code review | Aktuální |

@@ -2,10 +2,10 @@
 
 Stav: **aktuální**
 
-Ověřeno: **2026-09-24**
+Ověřeno: **2026-09-25**
 
-Poslední stabilní baseline před rozšířením `isStarred`: **`b611a61`**. Implementace
-popsaná níže zahrnuje dokončené conversation-level `isStarred`.
+Aktuální implementační baseline: **`bcfa8b5`**. Implementace popsaná níže zahrnuje
+dokončené conversation-level `isStarred`.
 
 Tento dokument popisuje skutečně implementovaný systém, nikoli původní plán. Původní
 návrh je zachován v `docs/history/IMPLEMENTATION_PLAN_ORIGINAL.md`.
@@ -115,6 +115,13 @@ exportní stránkou instaluje request guard.
 Login i každý export používají nový context. Storage state přenáší cookies a local
 storage, nikoli persistentní browser profil nebo service worker.
 
+Export zapisuje storage state pouze při explicitním `login`. Cookies případně
+obnovené během exportu používá v daném in-memory contextu, ale neukládá je zpět do
+`.auth/linkedin-storage-state.json`. Snapshot může expirovat nebo být serverem
+revokován; očekávaný výsledek je `AUTH_REQUIRED` a nový ruční login. Relace je
+oddělená od běžného Chrome, ale globální odhlášení nebo bezpečnostní revokace mohou
+ukončit obě.
+
 ### 3.2 Bezpečnost síťového provozu
 
 `src/browser/request-guard.ts` v exportním contextu:
@@ -135,6 +142,12 @@ Probe má užší phase-specific politiku v `probe-request-policy.ts` a navigati
 jedním exact GET preflightem bez redirectu; jeho in-memory kopie se zobrazí browseru,
 aby browser neposílal druhý document GET. Popup, History API escape, location změna,
 cizí thread reference nebo další target navigation ukončí probe fail-closed.
+
+Tato politika je defense-in-depth, ne stealth. Browserové UI se může pokusit o mnoho
+POSTů, z nichž část je pouze telemetrie; guard je přesto abortuje před sítí, protože
+jejich význam není spolehlivě známý. LinkedIn může automatizaci nadále rozpoznat ze
+vzoru, rychlosti a objemu povolených GET requestů. WebSocket/service-worker blokace
+zajišťují kontrolovatelný datový tok, nikoli neviditelnost.
 
 ### 3.3 Identita účtu
 
@@ -240,6 +253,15 @@ Vlastní `--output` změní cestu hlavního souboru; diagnostics vzniknou v sous
 adresáři `diagnostics/`. U cesty mimo `data/linkedin/` musí uživatel sám zajistit, že
 nebude commitnuta.
 
+### 5.1 Odvozené date-range soubory nejsou nativní export
+
+CLI nemá `--since`. Lokální soubory s
+`exportType: "linkedin-message-date-range"` vznikly externí `jq` transformací a mají
+jiný top-level kontrakt. Neprocházejí strict `ExportSchema`, nejsou podporovaným
+vstupem `export-store.ts` a jejich `range.complete` nelze zaměňovat za nativní
+`stats.partial=false`. Algoritmus, anonymní výsledky a důkazní hranice jsou v
+`docs/OPERATIONS.md`.
+
 ## 6. Diagnostika a soukromí
 
 Výchozí manifest obsahuje run ID, časy, status, počty, použité strategie, warnings a
@@ -320,6 +342,11 @@ LinkedIn session a nemají sahat na reálná data.
   výsledku, ale může vyžadovat úpravu parseru/politiky.
 - Přísná blokace POST záměrně odmítne i případný read-only GraphQL POST, protože jej
   nelze spolehlivě odlišit od mutace.
+- Blokování POST/WebSocket/service workerů neskrývá automatizaci před LinkedIn.
+- Storage state je statický snapshot z posledního loginu; export jej na disku
+  neobnovuje.
+- CLI nemá nativní date-range režim. Dosavadní soubory od 1. 5. 2026 jsou odvozené
+  postprocessingem a mají vlastní, nativně nevalidované top-level schema.
 - Recruiter flag je konzervativní heuristika.
 - `isStarred` zůstává neznámé, pokud trusted list response neobsahuje validní
   `categories[]`; není odvozováno z CSS ani z textu. Dva izolované browserové běhy
@@ -327,6 +354,8 @@ LinkedIn session a nemají sahat na reálná data.
   0 unknown/invalid), ale ne globální úplnost historie zpráv.
 - Úplný hlavní export byl naposledy živě ověřen 2026-09-07. Dva bezpečné validační
   exporty `isStarred` proběhly 2026-09-24 a zůstaly oddělenými `.partial` výstupy.
+- Provozní běh 2026-09-25 požadoval 150, lazy-loading načetl 120 konverzací a raw
+  výstup zůstal `.partial`; podrobnosti a přesné časování jsou v `docs/OPERATIONS.md`.
 
 ## 11. Bezpečný postup změny
 

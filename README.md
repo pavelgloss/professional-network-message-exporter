@@ -10,8 +10,9 @@ se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent má začít v
 [`HANDOVER.md`](HANDOVER.md), potom přečíst autoritativní
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) a
-[`docs/DECISIONS.md`](docs/DECISIONS.md). Úplný rozcestník včetně jasně oddělených
-historických dokumentů je v [`docs/README.md`](docs/README.md).
+[`docs/DECISIONS.md`](docs/DECISIONS.md). Poslední živé běhy a odvozené lokální
+výstupy jsou v [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Úplný rozcestník včetně
+jasně oddělených historických dokumentů je v [`docs/README.md`](docs/README.md).
 
 Dokumenty v `docs/history/` zachycují vývoj, slepé cesty a staré review. Nejsou
 aktuálními provozními instrukcemi.
@@ -35,7 +36,9 @@ Dokončete login, MFA nebo CAPTCHA ručně pouze v otevřeném Chromium. Aplikac
 nečte. Login používá nový dočasný browser context se zakázanými service workery a
 atomicky uloží pouze cookies/local storage do tajného, ignorovaného souboru
 `.auth/linkedin-storage-state.json`. Staré persistentní browser profily aplikace
-nepoužívá.
+nepoužívá. Jde o samostatnou LinkedIn session, nikoli kopii session z běžného Chrome.
+Export případné serverem obnovené cookies neukládá zpět do tohoto souboru; pokud
+snapshot expiruje nebo je serverem revokován, spusťte login znovu.
 
 ## Export
 
@@ -115,6 +118,23 @@ LinkedIn může měnit neveřejné endpointy/DOM. Striktní blokace POST může 
 read-only GraphQL POST, protože jej bez stabilního veřejného kontraktu nelze bezpečně
 odlišit od mutace; v takovém případě export raději skončí neúplný.
 
+Guard zachytí zakázaný request před odesláním na síť. Ne každý blokovaný POST je
+mutace; mnoho z nich je pravděpodobně telemetrie. Blokace je bezpečnostní pojistka,
+nikoli ochrana před detekcí automatizace. LinkedIn může způsob použití poznat i ze
+vzoru povolených GET požadavků.
+
+## Export od konkrétního data
+
+CLI aktuálně nemá přepínač `--since`. Soubory s
+`exportType: "linkedin-message-date-range"` vytvořené během živých běhů 2026-09-24 a
+2026-09-25 jsou následně filtrované a slučované lokální `jq` výstupy, nikoli nativní
+výstup `ExportSchema`. Nesmějí se použít jako vstup pro `export-store.ts`.
+
+Přesná provenience, anonymní počty, časování a omezení tvrzení o úplnosti jsou v
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md). Pokud má být date-range export běžnou
+funkcí, musí vzniknout samostatný otestovaný `--since` nebo verzovaný transformační
+nástroj; současná CLI dokumentace takovou funkci neslibuje.
+
 ## Známá omezení
 
 - Živě byl ověřen úplný export 100 konverzací. `--limit 200` je podporovaný, ale
@@ -134,6 +154,8 @@ odlišit od mutace; v takovém případě export raději skončí neúplný.
   neúplný export.
 - `isStarred` je dostupné jen tehdy, když LinkedIn vrátí dobře utvořené `categories`
   v důvěryhodné list odpovědi. Absence pole znamená „neznámé“, ne automaticky `false`.
+- Storage state se při exportu neobnovuje na disku a může vypršet; očekávaná náprava
+  je nový ruční `npm.cmd run login` v izolovaném Chromium.
 
 Kontrola projektu:
 
