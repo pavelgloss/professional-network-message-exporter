@@ -20,7 +20,8 @@ Nový agent má číst v tomto pořadí:
 4. `docs/ARCHITECTURE.md` pro výslednou implementaci;
 5. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
 6. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
-7. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
+7. `BACKLOG.md` pro explicitně požadované budoucí změny;
+8. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
 
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
@@ -148,6 +149,9 @@ Změna `isStarred` je uzavřená. Ostatní položky jsou volitelné:
 3. Adaptace parseru/policy, pokud LinkedIn změní neveřejný kontrakt.
 4. Pouze pokud bude date-range export opakovaná funkce: navrhnout nativní `--since`
    nebo verzovaný transformační nástroj se schematem a testy.
+
+Uživatelem požadovaná budoucí změna `BL-001` je popsaná v `BACKLOG.md`: získávat
+ověřená LinkedIn display names místo `Unknown participant`. Není zatím implementovaná.
 
 ## Bezpečný start další práce
 
