@@ -5,6 +5,11 @@ nemaže, nearchivuje ani nemění profil. V exportním režimu blokuje všechny 
 kromě `GET`, `HEAD` a `OPTIONS`, veškeré WebSockety; service workery jsou vypnuté. Používání automatizace
 se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 
+> **Aktuální kritický blocker:** Parser může u InMail eventů uložit top-level
+> `subject` místo skutečného textu zprávy. Existující reálné JSON exporty proto nejsou
+> důvěryhodné pro práci s obsahem, dokud nebude opraven a ověřen
+> [BL-006](BACKLOG.md#bl-006--kritické-inmail-subject-se-chybně-exportuje-jako-text-zprávy).
+
 ## Dokumentace a předání projektu
 
 Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent má začít v
@@ -41,6 +46,9 @@ Export případné serverem obnovené cookies neukládá zpět do tohoto souboru
 snapshot expiruje nebo je serverem revokován, spusťte login znovu.
 
 ## Export
+
+Do opravy BL-006 slouží následující část jako popis současného CLI, ne jako potvrzení,
+že jeho reálný výstup má správný text všech zpráv.
 
 Bezpečný network-first režim:
 
@@ -137,6 +145,8 @@ nástroj; současná CLI dokumentace takovou funkci neslibuje.
 
 ## Známá omezení
 
+- Kritický BL-006: u InMail zpráv může být `subject` zaměněn za `Message.text`; schema,
+  unikátní ID ani `partial=false` tuto sémantickou chybu neodhalí.
 - Živě byl ověřen úplný export 100 konverzací. `--limit 200` je podporovaný, ale
   export 200 konverzací zatím nebyl end-to-end ověřen na tomto účtu.
 - LinkedIn během ověřování nevykazoval aktivní blokování (CAPTCHA ani rate limit).

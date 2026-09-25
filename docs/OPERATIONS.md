@@ -7,6 +7,11 @@ architekturu ani o veřejná testovací data. Uvedené JSON soubory jsou ignorov
 Gitem, obsahují soukromé zprávy a nesmějí se commitovat, sdílet ani vkládat do AI
 kontextu. Níže jsou pouze anonymní agregáty.
 
+> **Později zjištěná obsahová vada (BL-006):** Network parser může u InMail eventů
+> vybrat top-level `subject` místo skutečného message body. Oba níže popsané
+> date-range soubory jsou proto historické diagnostické artefakty a nesmějí se použít
+> pro obsahovou analýzu; jejich strukturální kontroly tuto sémantickou chybu nekryly.
+
 ## 1. Co umí nativní CLI
 
 Nativní podporovaný export je:
@@ -20,6 +25,9 @@ nativní date-range schema. Jeho autoritativní výstup validuje `ExportSchema` 
 `src/domain/schema.ts`; úplnost celého zvoleného rozsahu vyjadřuje `stats.partial`.
 
 ## 2. Odvozené exporty od 1. 5. 2026
+
+**Stav těchto výstupů: obsahově vadné, po opravě BL-006 vytvořit znovu nezávislým
+exportem; neopravovat incremental mergem.**
 
 Soubory
 
@@ -58,6 +66,11 @@ Aktualizace 2026-09-25 použila incremental postup:
 Aktualizovaný výsledek má 133 konverzací, 253 zpráv, validní boolean `isStarred` u
 všech 133 konverzací a SHA-256
 `e211ad71dac33e7eb8c53fd69c41477edca638d250201b97598965a19f8672fe`.
+
+Následná anonymní kontrola našla v aktualizovaném souboru nejméně 107 z 253 zpráv ve
+28 konverzacích se silně podezřelým opakováním stejného pracovního subjectu přes
+různá message ID, časy a směry. Duplicitní message ID nebyla nalezena; vada byla už
+ve `.source.json.partial`, a nevznikla tedy až následným date-range mergem.
 
 ### Důležitá hranice tvrzení o úplnosti
 

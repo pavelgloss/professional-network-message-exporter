@@ -331,6 +331,9 @@ LinkedIn session a nemají sahat na reálná data.
 
 ## 10. Známá omezení
 
+- **Aktuální kritická vada BL-006:** `textFrom()` může vybrat top-level InMail
+  `subject` dříve než skutečný nested message body. Existující reálné exporty nejsou
+  obsahově důvěryhodné; schema ani unikátní ID tuto sémantickou záměnu neodhalí.
 - End-to-end byl živě ověřen limit 100; limit 200 je podporovaný, ale na tomto účtu
   nebyl živě ověřen. Maximální povolená konfigurace je 500.
 - Lazy-loading older-page operace je na straně LinkedIn UI nondeterministický. Na

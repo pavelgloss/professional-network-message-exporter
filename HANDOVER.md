@@ -2,10 +2,11 @@
 
 Poslední review dokumentace: **2026-09-25 Europe/Prague**
 
-Stav: **funkční projekt; conversation-level `isStarred` je implementováno,
-nezávisle zrevidováno a živě ověřeno v izolovaném browseru**
+Stav: **implementace existuje, ale důvěryhodný obsahový export blokuje kritická chyba
+BL-006; conversation-level `isStarred` je samostatně implementováno a ověřeno**
 
-Aktuální implementační baseline: **`bcfa8b5`**
+Poslední commit měnící runtime implementaci: **`bcfa8b5`**; novější commity před tímto
+handoverem byly dokumentační.
 
 Tento soubor obsahuje pouze současný stav. Staré checkpointy, slepé cesty a jejich
 dočasné `Next:` kroky jsou v `docs/history/HANDOVER_CHECKPOINTS.md` a nejsou aktivní.
@@ -26,6 +27,27 @@ Nový agent má číst v tomto pořadí:
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
 
+## Kritický blocker — začít zde
+
+`BL-006` v `BACKLOG.md` blokuje důvěryhodný export textů zpráv. Funkce `textFrom()` v
+`src/linkedin/network/response-parser.ts` přijímá top-level InMail `subject` dříve,
+než projde skutečné body obálky; v date-range výstupu se proto u různých message ID,
+časů a směrů opakuje například pracovní titulek `AI Architect @ČEPS` místo obsahu.
+
+Anonymní kontrola `messages-since-2026-05-01-updated.json` našla nejméně 107 takto
+silně podezřelých zpráv z 253 ve 28 konverzacích. Message ID duplicitní nejsou; vadný
+text je už ve zdrojovém `.source.json.partial`, tedy před následným date-range merge.
+Skutečný počet zasažených zpráv může být vyšší, protože jednoduchá kontrola odhalila
+jen text opakovaný alespoň dvakrát v jednom threadu.
+
+Dokud nebude BL-006 opraven, zrevidován a ověřen novým nezávislým živým exportem:
+
+- nepoužívat existující reálné JSONy pro obsahovou analýzu zpráv;
+- neoznačovat žádný dosavadní export za obsahově validní jen podle schema, ID nebo
+  `partial=false`;
+- neopravovat vadná data mergem se starším exportem;
+- nezačínat nižší prioritní feature práci před opravou parseru a regresní fixture.
+
 ## Ověřený stav
 
 K 2026-09-24:
@@ -39,6 +61,10 @@ K 2026-09-24:
 - změna `isStarred` rozšiřuje parser, schema, normalizaci, merge a star/unstar guard;
 - lokální ignorovaný `data/linkedin/messages.json` byl znovu schema-validován bez
   čtení nebo výpisu osobního obsahu.
+
+Tyto testy a strukturální kontroly **neověřovaly sémantickou správnost InMail textu**
+a BL-006 jimi nebyl pokryt. Údaje níže jsou historické provozní agregáty, nikoli
+aktuální potvrzení správného message contentu.
 
 Poslední úplný hlavní LinkedIn export proběhl 2026-09-07. Jeho stále přítomný lokální
 výsledek má:
@@ -57,6 +83,10 @@ oba běhy daly 100 konverzací, 8 `true`, 92 `false`, 0 unknown/invalid hodnot,
 úplnosti historie; to nepopírá conversation-list evidenci hvězdiček. Druhý běh
 zablokoval 133 POST requestů před odesláním a hlavní export nezměnil.
 
+Ani starší hlavní export, ani `isStarred` validační export nebyl zpětně obsahově
+prověřen proti BL-006. Ověření hvězdiček zůstává relevantní pouze pro conversation
+metadata a nedokazuje správnost textů zpráv.
+
 Před finální promocí byl tehdejší hlavní export zachován jako lokální ignorovaný
 `data/linkedin/messages.before-final-backup.json`. Reálná data, session i diagnostics
 zůstávají mimo Git.
@@ -68,6 +98,11 @@ Po explicitně autorizovaných bězích vznikly dva ignorované odvozené soubor
 - `messages-since-2026-05-01.json`: 126 konverzací a 235 zpráv;
 - `messages-since-2026-05-01-updated.json`: 133 konverzací a 253 zpráv.
 
+**Oba soubory jsou nyní označené jako obsahově vadné/nevhodné k použití**, protože
+BL-006 kontaminoval texty zpráv ještě před jejich datumovou filtrací. Počty, ID,
+časování a provenience zůstávají diagnostickým historickým záznamem, nikoli důkazem
+správného obsahu.
+
 Nejde o nativní CLI `--since` — taková volba neexistuje. Soubory vytvořila lokální
 `jq` filtrace a incremental merge a používají vlastní
 `exportType: "linkedin-message-date-range"`. Aktualizace zachovala všechna dřívější
@@ -77,6 +112,9 @@ samotný exportní proces trval 3:57.842 a transformace 0.562 s. Přesný význa
 `range.complete`, hashes a anonymní důkazy jsou v `docs/OPERATIONS.md`.
 
 ## Běžné použití
+
+Následující příkazy popisují aktuálně implementované CLI, ale do opravy BL-006 nemá
+být jejich výstup použit jako důvěryhodný export zpráv.
 
 Pokud session expiruje:
 
@@ -138,20 +176,33 @@ proklikáváním všech vláken.
 - `messages-since-2026-05-01-updated.json` používá incremental baseline, protože
   čerstvý list 2026-09-25 nepřekročil hranici 1. 5. Jeho `range.complete` není totéž
   co nativní globální `partial=false`.
+- Parser aktuálně může zaměnit InMail `subject` za `Message.text`; viz kritický BL-006.
+- Běžný opakovaný export do stejného `--output` dnes implicitně merguje předchozí
+  výsledek a může použít snapshot recovery. Uživatel požaduje opačný default: každý
+  běh jako nový izolovaný bundle, merge pouze explicitně; viz kritický BL-003.
+- History probe je dnes opt-in `--with-history-probe`; požadovaný budoucí default je
+  jeden fresh probe na každý export s explicitním opt-outem; viz BL-005.
+- Přílohy se dnes lokálně nestahují, ukládají se jen metadata a URL; požadavek na
+  defaultní download do adresáře konkrétního bundle je v BL-002.
+- Archivované konverzace nejsou cíleně podporované ani ověřené; BL-004 je pouze
+  volitelný research task.
 
-## Otevřené položky
+## Otevřené položky a priorita
 
-Změna `isStarred` je uzavřená. Ostatní položky jsou volitelné:
+Autoritativní detaily jsou v `BACKLOG.md`; pořadí pro nový agent je:
 
-1. Upgrade Vitest 3 na 5 v samostatné změně, poté celý test suite. Dnešní dvě moderate
-   audit položky jsou pouze v dev dependency; produkční audit je čistý.
-2. End-to-end ověření `--limit 200` jen po výslovném souhlasu uživatele.
-3. Adaptace parseru/policy, pokud LinkedIn změní neveřejný kontrakt.
-4. Pouze pokud bude date-range export opakovaná funkce: navrhnout nativní `--since`
-   nebo verzovaný transformační nástroj se schematem a testy.
+1. **BL-006 (kritická):** opravit záměnu InMail subject/body, přidat regresní testy,
+   review a teprve potom provést nový živý export s explicitním souhlasem.
+2. **BL-003 (kritická změna produktu):** každý běžný export jako nový nezávislý
+   snapshot/bundle; starší export použít pouze v explicitním incremental režimu.
+3. **BL-005:** history probe zapnout pro nový export defaultně a nabídnout opt-out.
+4. **BL-001:** doplnit ověřená jména místo `Unknown participant`.
+5. **BL-002:** volitelný attachment flag, defaultní lokální download a izolace v
+   adresáři konkrétního exportu.
+6. **BL-004:** pouze research archivovaných konverzací; implementace není rozhodnutá.
 
-Uživatelem požadovaná budoucí změna `BL-001` je popsaná v `BACKLOG.md`: získávat
-ověřená LinkedIn display names místo `Unknown participant`. Není zatím implementovaná.
+Mimo backlog zůstává volitelný upgrade Vitest 3 na 5 (dvě moderate dev-only audit
+položky), živé ověření `--limit 200` a případný nativní `--since`.
 
 ## Bezpečný start další práce
 
@@ -161,6 +212,10 @@ npm.cmd run check
 npm.cmd audit --omit=dev
 npm.cmd audit
 ```
+
+Očekávaný stav po tomto dokumentačním commitu je čistý worktree. První implementační
+úkol nové session je BL-006; existence 157 procházejících testů není důvod tento
+blocker přeskočit, protože chybí reálnému InMail tvaru odpovídající fixture.
 
 Při změně architektury, CLI, bezpečnostní politiky nebo persistence aktualizovat ve
 stejném commitu `README.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` a relevantní
