@@ -18,6 +18,7 @@ Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent
 [`docs/DECISIONS.md`](docs/DECISIONS.md). Poslední živé běhy a odvozené lokální
 výstupy jsou v [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Úplný rozcestník včetně
 jasně oddělených historických dokumentů je v [`docs/README.md`](docs/README.md).
+Konsolidované odpovědi na praktické otázky jsou v [`FAQs.md`](FAQs.md).
 
 Dokumenty v `docs/history/` zachycují vývoj, slepé cesty a staré review. Nejsou
 aktuálními provozními instrukcemi.

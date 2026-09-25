@@ -9,15 +9,17 @@ Tento soubor určuje, co je současný zdroj pravdy a co je pouze historický z�
 2. [`../HANDOVER.md`](../HANDOVER.md) — současný stav, ověřené výsledky, limity a
    bezpečný další krok.
 3. [`../README.md`](../README.md) — instalace a provozní příkazy.
-4. [`ARCHITECTURE.md`](ARCHITECTURE.md) — autoritativní as-built architektura,
+4. [`../FAQs.md`](../FAQs.md) — konsolidované praktické otázky, aktuální odpovědi a
+   opravy dřívějších nepřesností.
+5. [`ARCHITECTURE.md`](ARCHITECTURE.md) — autoritativní as-built architektura,
    datový tok, bezpečnostní invariants, persistence a návratové kódy.
-5. [`DECISIONS.md`](DECISIONS.md) — proč byla zvolena současná řešení a které starší
+6. [`DECISIONS.md`](DECISIONS.md) — proč byla zvolena současná řešení a které starší
    návrhy byla opuštěny.
-6. [`OPERATIONS.md`](OPERATIONS.md) — aktuální živé běhy, date-range postprocessing,
+7. [`OPERATIONS.md`](OPERATIONS.md) — aktuální živé běhy, date-range postprocessing,
    časování a session lifecycle.
-7. [`../BACKLOG.md`](../BACKLOG.md) — explicitně požadované, dosud neimplementované
+8. [`../BACKLOG.md`](../BACKLOG.md) — explicitně požadované, dosud neimplementované
    změny.
-8. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
+9. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
    současný stručný stav code review a celkového review projektu.
 
 Po přečtení těchto souborů má agent dost kontextu k nalezení relevantního modulu;
@@ -31,6 +33,7 @@ celý repozitář.
 | `AGENTS.md` | Automatické instrukce a bezpečnostní hranice pro AI | Aktuální |
 | `README.md` | Uživatelský návod a bezpečné spuštění | Aktuální |
 | `HANDOVER.md` | Stav předání, evidence a otevřené položky | Aktuální |
+| `FAQs.md` | Konsolidované otázky a aktuální praktické odpovědi | Aktuální |
 | `docs/ARCHITECTURE.md` | Výsledná technická architektura | Aktuální |
 | `docs/DECISIONS.md` | Rozhodnutí a jejich vývoj | Aktuální |
 | `docs/OPERATIONS.md` | Živé běhy a odvozené lokální výstupy | Aktuální |

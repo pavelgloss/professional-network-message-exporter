@@ -18,11 +18,12 @@ Nový agent má číst v tomto pořadí:
 1. kořenový `AGENTS.md` s bezpečnostními pravidly;
 2. tento handover;
 3. `README.md` pro provoz;
-4. `docs/ARCHITECTURE.md` pro výslednou implementaci;
-5. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
-6. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
-7. `BACKLOG.md` pro explicitně požadované budoucí změny;
-8. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
+4. `FAQs.md` pro konsolidované praktické otázky a opravu dřívějších nepřesností;
+5. `docs/ARCHITECTURE.md` pro výslednou implementaci;
+6. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
+7. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
+8. `BACKLOG.md` pro explicitně požadované budoucí změny;
+9. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
 
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
