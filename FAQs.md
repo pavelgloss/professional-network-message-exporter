@@ -40,7 +40,8 @@ místo skutečného textu zprávy; v jednom exportu je takto podezřelých nejm�
 
 Spustí vlastní izolovaný Playwright Chromium, zachytí JSON z LinkedIn GET odpovědí a
 při `--with-history-probe` otevře jeden potvrzeně přečtený thread, odpozoruje aktuální
-history GET kontrakt a ostatní historie stránkuje přímými autentizovanými GETy.
+history GET kontrakt a ostatní historie stránkuje přímými autentizovanými GETy. Tento
+probe se teď nemá živě spouštět, dokud BL-007 neuzavře intermittent teardown race.
 
 ## 8. Používá exporter můj běžný Chrome nebo jeho přihlášení?
 
@@ -87,6 +88,6 @@ service workerů a nejasných endpointů neslouží ke skrytí, ale k fail-close
 
 ## 15. Co má nový agent udělat jako první a kde získá kontext?
 
-Má začít v `HANDOVER.md`, poté přečíst README, toto FAQ, architekturu a backlog a jako
-první opravit a zrevidovat BL-006; následovat mají nezávislé snapshoty BL-003 a
-defaultní one-thread history probe BL-005, nikoli další feature nad vadným exportem.
+Má začít v `HANDOVER.md` a `BACKLOG_PROGRESS.md`, poté přečíst backlog, README, toto
+FAQ a architekturu a pokračovat první nesplněnou checkpoint akcí; výchozí pořadí je
+BL-007, BL-006, BL-003, BL-005, BL-001, BL-002 a research-only BL-004.

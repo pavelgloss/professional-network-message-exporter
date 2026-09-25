@@ -331,6 +331,10 @@ LinkedIn session a nemají sahat na reálná data.
 
 ## 10. Známá omezení
 
+- **Aktuální kritická vada BL-007:** selection-page teardown před fresh target page
+  není prokázaně deterministická síťová bariéra. Stress test 2026-09-25 jednou
+  propustil cizí messaging GET bez guard counteru; do opravy se živý history probe
+  nesmí spouštět.
 - **Aktuální kritická vada BL-006:** `textFrom()` může vybrat top-level InMail
   `subject` dříve než skutečný nested message body. Existující reálné exporty nejsou
   obsahově důvěryhodné; schema ani unikátní ID tuto sémantickou záměnu neodhalí.

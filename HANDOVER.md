@@ -2,8 +2,9 @@
 
 Poslední review dokumentace: **2026-09-25 Europe/Prague**
 
-Stav: **implementace existuje, ale důvěryhodný obsahový export blokuje kritická chyba
-BL-006; conversation-level `isStarred` je samostatně implementováno a ověřeno**
+Stav: **implementace existuje, ale živý probe blokuje znovu potvrzený race BL-007 a
+důvěryhodný obsahový export blokuje chyba BL-006; conversation-level `isStarred` je
+samostatně implementováno a ověřeno**
 
 Poslední commit měnící runtime implementaci: **`bcfa8b5`**; novější commity před tímto
 handoverem byly dokumentační.
@@ -17,18 +18,27 @@ Nový agent má číst v tomto pořadí:
 
 1. kořenový `AGENTS.md` s bezpečnostními pravidly;
 2. tento handover;
-3. `README.md` pro provoz;
-4. `FAQs.md` pro konsolidované praktické otázky a opravu dřívějších nepřesností;
-5. `docs/ARCHITECTURE.md` pro výslednou implementaci;
-6. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
-7. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
-8. `BACKLOG.md` pro explicitně požadované budoucí změny;
-9. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
+3. `BACKLOG_PROGRESS.md` pro poslední commitnutý checkpoint a přesnou další akci;
+4. `BACKLOG.md` pro schválené požadavky a akceptační kritéria;
+5. `README.md` pro provoz;
+6. `FAQs.md` pro konsolidované praktické otázky a opravu dřívějších nepřesností;
+7. `docs/ARCHITECTURE.md` pro výslednou implementaci;
+8. `docs/DECISIONS.md` pro důvody a vývoj rozhodnutí;
+9. `docs/OPERATIONS.md` pro poslední živé běhy a odvozené date-range soubory;
+10. `docs/README.md` pro rozlišení aktuálních a historických zdrojů.
 
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
 
-## Kritický blocker — začít zde
+## Kritický bezpečnostní blocker — začít zde
+
+`BL-007` znovu otevírá historický High nález `ZR-01`: plný integrační běh 2026-09-25
+jednou propustil request staré selection stránky na cizí messaging endpoint, aniž by
+jej zaznamenaly guard countery. Tři cílená opakování potom prošla, což je typický
+intermittent race, ne důkaz bezpečnosti. Začít syntetickou opravou a opakovaným
+server-hit-0 stress testem; do uzavření BL-007 nespouštět živý history probe.
+
+## Kritický blocker integrity obsahu
 
 `BL-006` v `BACKLOG.md` blokuje důvěryhodný export textů zpráv. Funkce `textFrom()` v
 `src/linkedin/network/response-parser.ts` přijímá top-level InMail `subject` dříve,
@@ -51,10 +61,12 @@ Dokud nebude BL-006 opraven, zrevidován a ověřen novým nezávislým živým 
 
 ## Ověřený stav
 
-K 2026-09-24:
+Poslední ověření runtime:
 
-- `npm.cmd run check`: **PASS** — typecheck, build, 16 test files, 157/157 testů
-  včetně změny `isStarred`;
+- baseline 2026-09-24: `npm.cmd run check` PASS — 157/157 testů včetně `isStarred`;
+- běh 2026-09-25: typecheck/build PASS, ale jeden z 157 testů selhal na BL-007;
+  tři bezprostřední cílené reruny a následný celý rerun 157/157 prošly, což
+  intermittent bezpečnostní nález neuzavírá;
 - `npm.cmd audit --omit=dev`: **0 vulnerabilities**;
 - plný `npm.cmd audit`: **2 moderate** ve vývojovém řetězci
   `vitest`/`@vitest/mocker`; automatická oprava vyžaduje breaking upgrade na Vitest 5;
@@ -192,15 +204,21 @@ proklikáváním všech vláken.
 
 Autoritativní detaily jsou v `BACKLOG.md`; pořadí pro nový agent je:
 
-1. **BL-006 (kritická):** opravit záměnu InMail subject/body, přidat regresní testy,
+1. **BL-007 (kritická):** deterministicky uzavřít selection-page network race a
+   opakovaně prokázat nula cizích server hitů; do té doby žádný živý probe.
+2. **BL-006 (kritická):** opravit záměnu InMail subject/body, přidat regresní testy,
    review a teprve potom provést nový živý export s explicitním souhlasem.
-2. **BL-003 (kritická změna produktu):** každý běžný export jako nový nezávislý
+3. **BL-003 (kritická změna produktu):** každý běžný export jako nový nezávislý
    snapshot/bundle; starší export použít pouze v explicitním incremental režimu.
-3. **BL-005:** history probe zapnout pro nový export defaultně a nabídnout opt-out.
-4. **BL-001:** doplnit ověřená jména místo `Unknown participant`.
-5. **BL-002:** volitelný attachment flag, defaultní lokální download a izolace v
+4. **BL-005:** history probe zapnout pro nový export defaultně a nabídnout opt-out.
+5. **BL-001:** doplnit ověřená jména místo `Unknown participant`.
+6. **BL-002:** volitelný attachment flag, defaultní lokální download a izolace v
    adresáři konkrétního exportu.
-6. **BL-004:** pouze research archivovaných konverzací; implementace není rozhodnutá.
+7. **BL-004:** pouze research archivovaných konverzací; implementace není rozhodnutá.
+
+Průběžná fáze, hotové commity, testy a první další akce se udržují v
+`BACKLOG_PROGRESS.md`; nový chat nesmí již dokončené fáze opakovat jen proto, že nemá
+kontext předchozí konverzace.
 
 Mimo backlog zůstává volitelný upgrade Vitest 3 na 5 (dvě moderate dev-only audit
 položky), živé ověření `--limit 200` a případný nativní `--since`.
@@ -215,8 +233,9 @@ npm.cmd audit
 ```
 
 Očekávaný stav po tomto dokumentačním commitu je čistý worktree. První implementační
-úkol nové session je BL-006; existence 157 procházejících testů není důvod tento
-blocker přeskočit, protože chybí reálnému InMail tvaru odpovídající fixture.
+úkol nové session je BL-007; až po jeho uzavření následuje BL-006. Historický zelený
+baseline 157 testů není důvod intermittent race ani chybějící InMail fixture
+přeskočit.
 
 Při změně architektury, CLI, bezpečnostní politiky nebo persistence aktualizovat ve
 stejném commitu `README.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` a relevantní

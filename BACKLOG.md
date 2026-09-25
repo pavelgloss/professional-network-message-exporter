@@ -264,3 +264,36 @@ nikoli až při normalizaci nebo merge.
   původní odvozené exporty označit za obsahově vadné, nikoli je opravit mergováním.
 - Aktualizovat `README.md`, `HANDOVER.md`, `docs/ARCHITECTURE.md` a
   `docs/OPERATIONS.md` včetně rozsahu dopadu a anonymizovaného důkazu opravy.
+
+## BL-007 — KRITICKÉ: deterministicky uzavřít síť selection stránky před history probe
+
+- **Stav:** TODO / znovu otevřený bezpečnostní nález
+- **Priorita:** kritická; blokuje živý probe a BL-005
+- **Dopad:** Integrační stress test 2026-09-25 znovu jednou propustil GET staré
+  selection stránky na cizí `/voyager/api/messagingV2/conversations/UNREAD/events`.
+  Únik neaktivoval žádný guard counter ani hard-failure stav. Tři bezprostřední
+  cílená opakování prošla, což odpovídá dříve zdokumentovanému nedeterministickému
+  nálezu `ZR-01` v `docs/history/CODE_REVIEW_LOG.md`, nikoli důkazu jeho uzavření.
+
+### Požadované řešení a akceptační kritéria
+
+- Najít přesné pořadí browser/CDP/network událostí, které dovolí již naplánovanému
+  requestu selection dokumentu překonat současný teardown v
+  `src/linkedin/probe-navigation.ts`.
+- Zavést deterministickou bariéru ještě před vytvořením fresh target page: po jejím
+  dokončení nesmí stará selection page, její frame, worker, timer ani pending request
+  zasáhnout síť nebo se přenést do target fáze.
+- Cizí nebo neznámý messaging request musí mít skutečný server count `0`; pokud nelze
+  bezpečnost prokázat, probe musí skončit fail-closed s auditovatelným hard stavem.
+- Regresní test musí stresovat relevantní 0–10ms timingy a různé zdroje requestu.
+  Cílený race test spustit opakovaně v oddělených procesech, ne pouze jednou uvnitř
+  jednoho Vitest běhu; každé opakování musí mít nula cizích server hitů.
+- Po opravě opakovaně spustit celý `npm.cmd run check`, produkční i plný audit a
+  nezávislé code review zaměřené na browser lifecycle, fail-closed stav a skutečné
+  síťové počty.
+- Do uzavření BL-007 nespouštět živý LinkedIn history probe. Syntetická reprodukce a
+  oprava na lokálním HTTP serveru živou session nepotřebují; pozdější živá validace
+  navíc vyžaduje explicitní souhlas uživatele v aktuálním promptu.
+- Aktualizovat `README.md`, `HANDOVER.md`, `docs/ARCHITECTURE.md` a bezpečnostní
+  rozhodnutí tak, aby žádný dokument neprezentoval probe jako ověřeně race-free před
+  splněním těchto kritérií.

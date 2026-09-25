@@ -1,77 +1,72 @@
 # Aktuální stav code review
 
-Předchozí baseline: **GO — Critical 0 / High 0 / Medium 0**
+Aktualizováno: **2026-09-25 Europe/Prague**
 
-Aktuální změna `isStarred`: **GO — Critical 0 / High 0 / Medium 0**
+Poslední runtime commit: **`bcfa8b5`**
 
-Reviewovaný code baseline: **`b611a61` (2026-09-07)**
+Verdikt:
 
-Stav znovu ověřen: **2026-09-24**
+- **NO-GO pro živý history probe** do uzavření BL-007;
+- **NO-GO pro důvěryhodný obsahový export** do uzavření BL-006;
+- conversation-level `isStarred` zůstává samostatně **GO**.
 
-Od `b611a61` do tohoto dokumentačního review nedošlo ke změně implementace. Následné
-commity upravovaly pouze `README.md`, handover a review dokumentaci. Proto finální
-bezpečnostní re-review tohoto code baseline zůstává platné.
+## Otevřené blokující nálezy
 
-## Co finální review uzavřelo
+### BL-007 — intermittent selection teardown network race
 
-- Export používá fresh context ze storage state; nepřenáší persistentní service
-  worker a nesahá na běžný Chrome.
-- POST, WebSocket a service worker cesty jsou zablokované a testované.
-- One-thread probe vybírá target pouze z aktuální network evidence `read=true`,
-  kontroluje konflikt `read=false` a připustí jedinou target navigaci.
-- Probe selection a target fáze jsou izolované proti redirectům, popupům, History API,
-  location změnám, cizím thread referencím a race podmínkám.
-- History GET je omezený na přesný target/kontrakt; pagination selhává uzavřeně.
-- Snapshot recovery vyžaduje stejnou konverzaci a stabilní překryv message ID/URN.
-- Strukturální diagnostika neukládá citlivé hodnoty ani numeric/boolean hodnoty
-  kontraktu, ze kterých by šel rekonstruovat obsah.
-- Parser miss, neúplná historie nebo nedokázaná list coverage nemohou vytvořit tichý
-  úplný export.
+Plný `npm.cmd run check` 2026-09-25 jednou selhal v integračním testu `keeps 30
+zero-to-ten-millisecond selection races disjoint from the fresh target page`. V
+iteraci 25 s delay 3 ms zasáhl lokální server jeden GET na cizí
+`/voyager/api/messagingV2/conversations/UNREAD/events`; guard snapshot přitom hlásil
+nula violations a target navigace se neprovedla.
 
-## Současná automatická evidence
+Tři bezprostřední cílená opakování prošla. To odpovídá historickému High nálezu
+`ZR-01` v `docs/history/CODE_REVIEW_LOG.md`, který měl stejný endpoint, nulové
+countery a následné zelené reruny. Nález je proto znovu otevřen, ne označen za flaky.
 
-`npm.cmd run check` dne 2026-09-24 po změně `isStarred` prošel:
+### BL-006 — InMail subject místo message body
 
-- TypeScript typecheck;
-- 16 testovacích souborů;
-- 157/157 unit a integration testů;
-- build.
+Parser může vybrat top-level `subject` dříve než skutečný nested body. Unikátní ID,
+schema validita ani `partial=false` tuto sémantickou záměnu neodhalí. Známý
+date-range výstup proto není obsahově důvěryhodný; přesný dopad a akceptace jsou v
+`BACKLOG.md`.
 
-`npm.cmd audit --omit=dev` hlásí 0 vulnerabilities. Plný audit nově hlásí 2 moderate
-zranitelnosti ve vývojové závislosti `vitest`/`@vitest/mocker`; nejde o změnu
-aplikačního code-review verdiktu, ale je evidována jako volitelný maintenance úkol v
-`PLAN.md`.
+## Co z předchozího review zůstává platné
 
-### Rozšíření `isStarred` (2026-09-24)
+- Export používá fresh Playwright context ze storage state a nesahá na běžný Chrome.
+- POST, WebSocket a service worker cesty jsou blokované a testované.
+- One-thread target vyžaduje aktuální network evidence `read=true` bez konfliktu.
+- History GET a pagination jsou omezené na rozpoznaný target/kontrakt a při
+  nejasnosti mají selhat uzavřeně.
+- Parser miss nebo nedokázaná list/history completeness nemají vytvořit tichý úplný
+  export.
+- `isStarred` je optional boolean konverzace, čtený pouze z trusted `categories[]`;
+  star/unstar operace zůstávají blokované. Dva izolované běhy 2026-09-24 shodně
+  získaly 8 starred a 92 unstarred konverzací bez unknown hodnot.
 
-- Optional boolean je na `Conversation`, nikoli na `Message`; schemaVersion zůstává 1
-  a staré exporty bez pole jsou validní.
-- Parser přijímá exact case-normalized `STARRED` jen z `categories[]` přímého
-  trusted conversation-list objektu. Missing/malformed/untrusted/message objekty
-  hodnotu nevytvářejí.
-- Raw i persistent merge používá čerstvé explicitní `true`/`false`; `undefined`
-  zachovává starší explicitní stav. Hodnota se nepodílí na identitě.
-- Sdílený mutation-like guard blokuje star/unstar/toggle-star GET operace, ale
-  povoluje conversation-list query s read kategorií `STARRED`.
-- První nezávislé review našlo High mezeru ve star-action GET guardu a Medium ztrátu
-  trusted evidence na explicitně následované pagination stránce. Obojí bylo opraveno
-  s regresními testy; následné nezávislé re-review dalo technické GO bez nálezů.
-- Cílené testy parseru, pagination, domain merge a obou guard vrstev prošly; celý
-  suite má 157/157 testů, typecheck i build jsou zelené.
-- Dva izolované read-only live běhy daly shodně 8 starred a 92 unstarred konverzací,
-  žádné unknown/invalid hodnoty, duplicitní ID ani parser miss. Výstupy zůstaly
-  `.partial` jen kvůli neprokázané úplnosti historie zpráv; hlavní export se nezměnil.
+Tato tvrzení neruší BL-007 ani BL-006: první ukazuje timingovou mezeru před target
+fází, druhý chybějící sémantickou validaci message body.
 
-## Reziduální rizika mimo verdikt
+## Automatická evidence
 
-- LinkedIn endpointy a DOM nejsou veřejný stabilní kontrakt.
-- Otevření i read threadu může mít server-side read-state efekt; proto je opt-in.
-- Live scale 200 nebyla ověřena.
-- Automated suite nemůže dokázat budoucí chování LinkedIn serveru; implementace proto
-  při nejasnosti selhává uzavřeně.
+- Baseline 2026-09-24: `npm.cmd run check` PASS, 16 souborů a 157/157 testů.
+- Běh 2026-09-25: typecheck a build PASS, 1/157 testů FAIL na BL-007.
+- Tři následné cílené reruny race testu: PASS; nedeterministický nález tím není
+  uzavřen.
+- Následný celý rerun: PASS, 16 souborů a 157/157 testů; ani jeden zelený full run
+  dříve reprodukovaný timingový únik neuzavírá.
+- `npm.cmd audit --omit=dev`: 0 vulnerabilities.
+- Plný `npm.cmd audit`: 2 moderate ve vývojovém řetězci Vitest; oprava vyžaduje
+  breaking upgrade a není součástí aktuálních blockerů.
 
-## Úplná historická stopa
+## Pořadí nápravy
 
-Všechny původní nálezy, dočasné `NO-GO` verdikty, opravy a re-review jsou zachované v
-`docs/history/CODE_REVIEW_LOG.md`. Tento archiv čtěte při hledání původu konkrétního
-guardu nebo regresního testu. Jeho starší verdikty nejsou současný stav projektu.
+Pokračovat z `BACKLOG_PROGRESS.md`: BL-007, BL-006, BL-003, BL-005, BL-001, BL-002 a
+research-only BL-004. Každá položka vyžaduje oddělený plán, implementaci, nezávislé
+review, testy, dokumentaci a commitnutý checkpoint podle `AGENTS.md`.
+
+## Historická stopa
+
+Původní nálezy, dočasné verdikty, opravy a re-review jsou zachované v
+`docs/history/CODE_REVIEW_LOG.md`. Je to historický zdroj pro cílené pátrání, ne
+aktuální pracovní návod.

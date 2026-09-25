@@ -53,6 +53,11 @@ konzervativní.
 **Rozhodnutí:** Výchozí export thread neotevírá. Explicitní `--with-history-probe`
 smí otevřít jeden target s aktuálním network `read=true` a bez konfliktu.
 
+**Aktuální omezení (2026-09-25):** BL-007 znovu otevřel intermittent race při
+ukončení selection stránky; do jeho deterministického uzavření se živý history probe
+nesmí spouštět. BL-005 později mění opt-in na default, ale až po BL-007 a bez oslabení
+one-thread/read-evidence hranice.
+
 **Proč:** Otevření unread vlákna by mohlo změnit serverový stav. Postupné DOM
 proklikávání všech threadů by zvětšilo riziko i počet navigací.
 

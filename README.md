@@ -9,6 +9,11 @@ se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 > `subject` místo skutečného textu zprávy. Existující reálné JSON exporty proto nejsou
 > důvěryhodné pro práci s obsahem, dokud nebude opraven a ověřen
 > [BL-006](BACKLOG.md#bl-006--kritické-inmail-subject-se-chybně-exportuje-jako-text-zprávy).
+>
+> **Aktuální bezpečnostní blocker:** Intermittent selection-page teardown race může
+> před history probe propustit cizí messaging GET bez záznamu guardu. Do opravy
+> [BL-007](BACKLOG.md#bl-007--kritické-deterministicky-uzavřít-síť-selection-stránky-před-history-probe)
+> nespouštějte živý history probe.
 
 ## Dokumentace a předání projektu
 
@@ -19,6 +24,8 @@ Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent
 výstupy jsou v [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Úplný rozcestník včetně
 jasně oddělených historických dokumentů je v [`docs/README.md`](docs/README.md).
 Konsolidované odpovědi na praktické otázky jsou v [`FAQs.md`](FAQs.md).
+Restartovatelný stav implementace backlogu a přesná další akce jsou v
+[`BACKLOG_PROGRESS.md`](BACKLOG_PROGRESS.md).
 
 Dokumenty v `docs/history/` zachycují vývoj, slepé cesty a staré review. Nejsou
 aktuálními provozními instrukcemi.
@@ -146,6 +153,8 @@ nástroj; současná CLI dokumentace takovou funkci neslibuje.
 
 ## Známá omezení
 
+- Kritický BL-007: stress test jednou reprodukoval síťový únik requestu staré
+  selection stránky bez hard-failure counteru; živý probe je do opravy blokovaný.
 - Kritický BL-006: u InMail zpráv může být `subject` zaměněn za `Message.text`; schema,
   unikátní ID ani `partial=false` tuto sémantickou chybu neodhalí.
 - Živě byl ověřen úplný export 100 konverzací. `--limit 200` je podporovaný, ale

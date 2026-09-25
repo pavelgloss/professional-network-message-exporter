@@ -1,70 +1,52 @@
 # Aktuální review projektu a dokumentace
 
-Datum: **2026-09-24**
+Aktualizováno: **2026-09-25 Europe/Prague**
 
-Review baseline: implementace `b611a61` + dokumentace + aktuální rozšíření
-conversation-level `isStarred`
+Dokumentační handover: **PASS**. Runtime připravenost: **NO-GO pro živý probe
+(BL-007) a obsahově důvěryhodný export (BL-006)**.
 
-Verdikt dokumentace i změny `isStarred`: **PASS / GO**.
+## Zdroj pravdy
 
-## Rozsah review
+Nový vývojář nebo agent má číst `AGENTS.md`, `HANDOVER.md`,
+`BACKLOG_PROGRESS.md`, `BACKLOG.md`, `README.md`, `FAQs.md` a potom relevantní části
+`docs/`. `docs/README.md` vysvětluje autoritu dokumentů; `docs/history/` je pouze
+archiv vývoje a slepých cest.
 
-Byly porovnány:
+## Současný ověřený stav
 
-- původní zadání;
-- všechny root dokumenty a jejich Git historie;
-- současné CLI volby, konfigurace a návratové kódy;
-- autentizace, browser isolation, request policy, exporter, probe, history reader,
-  schema, merge, store a diagnostika;
-- názvy a pokrytí unit/integration testů;
-- lokální ignorovaný export pouze agregátně a přes runtime schema, bez výpisu zpráv.
-
-## Napravené dokumentační problémy
-
-1. Původní plán popisoval persistentní profil a starý `--allow-thread-open`. Byl
-   přesunut do jasně označeného archivu; současný plán odkazuje na as-built návrh.
-2. Chronologický code-review log začínal starým `NO-GO`, přestože končil `GO`. Aktivní
-   `CODE_REVIEW.md` nyní obsahuje pouze platný verdikt a archiv je označen jako historie.
-3. Handover míchal hotový stav se stovkami řádků starých `Next:` kroků. Aktivní
-   handover je současný a pracovní log je archivovaný.
-4. Chyběla výsledná architektura a mapa zdrojů. Byla doplněna v
-   `docs/ARCHITECTURE.md` včetně lazy loadingu, completeness, snapshot recovery,
-   persistence, privacy, návratových kódů a limitací.
-5. Chyběl rozcestník a pravidlo autority dokumentů. Byly doplněny v `docs/README.md`.
-6. Stará informace `npm audit: 0` byla nahrazena současným stavem: produkční audit 0,
-   plný audit 2 moderate v dev-only Vitest řetězci.
-
-## Ověření
-
-- `npm.cmd run check`: PASS, 16 souborů / 157 testů, typecheck a build.
-- `npm.cmd audit --omit=dev`: 0 vulnerabilities.
-- `npm.cmd audit`: 2 moderate dev-only findings, major fix dostupný přes Vitest 5.
-- Lokální export: schema validní, `partial=false`, 100 konverzací, 193 zpráv,
-  100 kompletních historií, 0 parser missů a 0 duplicitních ID.
-- Od `b611a61` do začátku tohoto review se změnily jen dokumenty.
-
-## Zbytková omezení
-
-- Dva nové izolované read-only LinkedIn běhy 2026-09-24 daly shodně 100 konverzací,
-  8 `isStarred: true`, 92 `false`, 0 unknown/invalid, 0 duplicitních conversation ID
-  a 0 parser missů. Oba bezpečně skončily jako `.partial` kvůli neověřené úplnosti
-  historie a nezměnily hlavní export.
-- Limit 200 je implementačně povolený, nikoli živě ověřený.
-- LinkedIn UI lazy-loading a neveřejné endpointy zůstávají externě proměnlivé.
-- Dokumentace umožní agentovi pochopit systém bez čtení celého kódu, ale před změnou
-  musí agent vždy přečíst dotčený modul a jeho testy.
-- `isStarred` je vlastnost konverzace, ne zprávy. Bere se jen z validního
-  `categories[]` trusted list objektu; missing/malformed znamená neznámý stav.
-- Všech 157 automatických testů včetně nové hodnoty prošlo a živé ověření agregátů
-  proběhlo bez výpisu zpráv nebo osobních identifikátorů.
+- Poslední runtime commit je `bcfa8b5`; novější změny před tímto review byly
+  dokumentační.
+- Baseline 2026-09-24 prošel `npm.cmd run check` se 157/157 testy.
+- Nový plný běh 2026-09-25 jednou reprodukoval selection teardown race BL-007:
+  cizí messaging GET dosáhl lokálního serveru bez guard violation. Tři cílené reruny
+  a následný celý rerun 157/157 prošly, a proto je nález evidovaný jako intermittent,
+  nikoli uzavřený.
+- BL-006 potvrzuje, že dosavadní schema-validní export může mít u InMail zpráv
+  `subject` místo skutečného body. Reálné exporty se nesmějí používat k obsahové
+  analýze, dokud nevznikne opravený a nově ověřený snapshot.
+- Produkční audit má 0 vulnerabilities; plný audit má dvě známé moderate dev-only
+  položky ve Vitest řetězci.
+- Conversation-level `isStarred` je implementované a živě agregátně ověřené: dva
+  izolované běhy daly 8 `true`, 92 `false` a 0 unknown hodnot. To nepotvrzuje
+  správnost textů ani úplnost historie.
 
 ## Dokumentační DoD
 
 Splněno:
 
-- existuje jednoznačné pořadí čtení;
-- aktivní dokumenty neodkazují na staré přepínače jako na současné;
-- architektura odpovídá aktuálnímu source flow;
-- omezení, rizika, audit a live evidence jsou datované;
-- historie, slepé cesty a vývoj review zůstaly dohledatelné;
-- historické `NO-GO` a `Next:` položky jsou zřetelně neaktivní.
+- existuje jednoznačné pořadí čtení a stručné aktuální FAQ;
+- `BACKLOG_PROGRESS.md` ukládá restartovatelnou fázi, výsledky testů a přesnou další
+  akci pro případ usage limitu nebo nového chatu;
+- `AGENTS.md` definuje planner → implementation → independent review workflow,
+  sekvenční writers, malé Git checkpointy a pravidla obnovy dirty worktree;
+- as-built architektura je oddělena od budoucího cíle v backlogu;
+- kritické vady, limity, živá evidence a audit jsou datované;
+- historie a nahrazená rozhodnutí zůstávají dohledatelné, ale nejsou prezentované
+  jako aktivní instrukce.
+
+## Přesná další práce
+
+Začít BL-007 podle checkpointu, poté BL-006, BL-003, BL-005, BL-001, BL-002 a
+research-only BL-004. Živý history probe je do opravy BL-007 zakázaný; jakýkoli
+pozdější živý LinkedIn test navíc vyžaduje explicitní souhlas uživatele v aktuálním
+promptu.
