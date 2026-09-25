@@ -1,4 +1,14 @@
-# LinkedIn messages reader
+# Professional Network Message Exporter
+
+> [!IMPORTANT]
+> This is an independent, unofficial project for exporting messages from LinkedIn®
+> to local, validated JSON. It is not affiliated with, sponsored by, or endorsed by
+> LinkedIn Corporation or its affiliates.
+>
+> LinkedIn's current User Agreement restricts automated access and copying. Review
+> the current terms and obtain any permission required before using this software.
+> The Apache-2.0 license covers only this project's code; it grants neither access to
+> LinkedIn services nor rights to LinkedIn trademarks. See [`LEGAL.md`](LEGAL.md).
 
 Lokální read-only export LinkedIn zpráv do validovaného JSON. Nástroj nic neodesílá,
 nemaže, nearchivuje ani nemění profil. V exportním režimu blokuje všechny HTTP metody
@@ -26,6 +36,10 @@ jasně oddělených historických dokumentů je v [`docs/README.md`](docs/README
 Konsolidované odpovědi na praktické otázky jsou v [`FAQs.md`](FAQs.md).
 Restartovatelný stav implementace backlogu a přesná další akce jsou v
 [`BACKLOG_PROGRESS.md`](BACKLOG_PROGRESS.md).
+
+Bezpečnostní hlášení a pravidla pro zacházení s citlivými daty jsou v
+[`SECURITY.md`](SECURITY.md). Projekt je licencovaný pod Apache License 2.0; úplný
+text a povinná upozornění jsou v [`LICENSE`](LICENSE) a [`NOTICE`](NOTICE).
 
 Dokumenty v `docs/history/` zachycují vývoj, slepé cesty a staré review. Nejsou
 aktuálními provozními instrukcemi.

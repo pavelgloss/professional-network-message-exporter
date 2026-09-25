@@ -12,15 +12,19 @@ Tento soubor určuje, co je současný zdroj pravdy a co je pouze historický z�
    poslední ověřený stav a přesná další akce.
 4. [`../BACKLOG.md`](../BACKLOG.md) — schválené požadavky a akceptační kritéria.
 5. [`../README.md`](../README.md) — instalace a provozní příkazy.
-6. [`../FAQs.md`](../FAQs.md) — konsolidované praktické otázky, aktuální odpovědi a
+6. [`../LEGAL.md`](../LEGAL.md) — nezávislost projektu, ochranné známky, licence a
+   hranice oprávnění k použití platformy.
+7. [`../SECURITY.md`](../SECURITY.md) — soukromé hlášení zranitelností a zákaz
+   zveřejňování autentizace, exportů a osobních dat.
+8. [`../FAQs.md`](../FAQs.md) — konsolidované praktické otázky, aktuální odpovědi a
    opravy dřívějších nepřesností.
-7. [`ARCHITECTURE.md`](ARCHITECTURE.md) — autoritativní as-built architektura,
+9. [`ARCHITECTURE.md`](ARCHITECTURE.md) — autoritativní as-built architektura,
    datový tok, bezpečnostní invariants, persistence a návratové kódy.
-8. [`DECISIONS.md`](DECISIONS.md) — proč byla zvolena současná řešení a které starší
+10. [`DECISIONS.md`](DECISIONS.md) — proč byla zvolena současná řešení a které starší
    návrhy byla opuštěny.
-9. [`OPERATIONS.md`](OPERATIONS.md) — aktuální živé běhy, date-range postprocessing,
+11. [`OPERATIONS.md`](OPERATIONS.md) — aktuální živé běhy, date-range postprocessing,
    časování a session lifecycle.
-10. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
+12. [`../CODE_REVIEW.md`](../CODE_REVIEW.md) a [`../REVIEW.md`](../REVIEW.md) —
    současný stručný stav code review a celkového review projektu.
 
 Po přečtení těchto souborů má agent dost kontextu k nalezení relevantního modulu;
@@ -34,6 +38,10 @@ celý repozitář.
 | `AGENTS.md` | Automatické instrukce a bezpečnostní hranice pro AI | Aktuální |
 | `CLAUDE.md` | Tenký odkaz Claude Code na jednotná pravidla v `AGENTS.md` | Aktuální |
 | `README.md` | Uživatelský návod a bezpečné spuštění | Aktuální |
+| `LEGAL.md` | Nezávislost, ochranné známky a hranice licence/oprávnění | Aktuální |
+| `LICENSE` | Apache License 2.0 pro původní kód projektu | Aktuální |
+| `NOTICE` | Copyright a povinné trademark upozornění | Aktuální |
+| `SECURITY.md` | Soukromé security reporty a pravidla citlivých dat | Aktuální |
 | `HANDOVER.md` | Stav předání, evidence a otevřené položky | Aktuální |
 | `BACKLOG_PROGRESS.md` | Restartovatelný stav implementace a další akce | Aktuální |
 | `BACKLOG.md` | Schválený cílový stav a akceptační kritéria | Aktuální |

@@ -1,7 +1,17 @@
 {
-  "name": "linkedin-messages-reader",
+  "name": "professional-network-message-exporter",
   "version": "1.0.0",
+  "description": "A local tool for exporting messages from LinkedIn to validated JSON.",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pavelgloss/professional-network-message-exporter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pavelgloss/professional-network-message-exporter/issues"
+  },
+  "homepage": "https://github.com/pavelgloss/professional-network-message-exporter#readme",
   "type": "module",
   "engines": {
     "node": ">=22"
