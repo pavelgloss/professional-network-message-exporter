@@ -12,7 +12,7 @@ akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
 - **Aktivní položka:** BL-007
 - **Poslední ověřený commit:** `f90cbdb`; při obnovení čistý worktree
 - **Očekávaný worktree po commitu tohoto checkpointu:** čistý
-- **Aktivní subagenti:** předání read-only plánování BL-007; nová session předpokládá žádné
+- **Aktivní subagenti:** planner dokončen; následuje jediný implementer BL-007
 - **Živá LinkedIn validace:** uživatel v promptu této session výslovně povolil nezbytné
   read-only běhy v izolovaném Chromium; history probe až po uzavření BL-007.
 
@@ -49,6 +49,35 @@ Obnovení 2026-09-25: přečteny povinné aktivní dokumenty a relevantní navig
 modul/stress test; Git potvrzuje čistý baseline `f90cbdb`, runtime stále `bcfa8b5`.
 Testy v této session zatím neběžely. Následuje read-only plánovací subagent BL-007,
 pak revize a commit schváleného plánu před jediným implementerem. Ostatní BL čekají.
+
+### Schválený plán BL-007 (po read-only plánování)
+
+- Doložená cesta v instalovaném Playwright `coreBundle.js`: zaniklý frame vede
+  přímo k `Fetch.continueRequest` před aplikačním Route; page.close také přeskakuje
+  handlery. Přesné CDP pořadí původního incidentu není zachyceno. Page-scoped fence
+  a drain aplikačních routes proto neprokazují izolaci.
+- Přidat lifetime loopback deny proxy pouze pro probe context, instalovanou před
+  první page; HTTP/CONNECT nikdy neforwarduje. Gate odmítne nechráněný context.
+  Ověřit v testu i Chromium loopback bypass a úmyslný route bypass.
+- Povolené dokumenty/API/assets zobrazovat pouze přes izolované GET/HEAD brokery,
+  maxRedirects=0, omezené originy/resource typy, bezpečné hlavičky a omezené timeouty.
+  Žádné nové POST/WS/SW, žádný přímý browserový fallback.
+- Closing synchronně revokuje selection generation, broker kontroluje generation
+  před sítí, drain dokončí pending operace; teprve pak zavřít selection a vytvořit
+  target. Ownership frames/workers se nesmí přenést do target politiky.
+- Každý zásah deny proxy je redigovaný hard stav; na skutečném cizím serveru stále 0.
+- Zachovat původní 30× race regresi a přidat 0–10ms matrix fetch/keepalive/assets,
+  iframe/worker a pending GET; happy path ověří skutečný script i history GET.
+- Validace: nejméně 5 oddělených stress procesů a 2 plné check běhy, oba audity,
+  nezávislé review; živý probe až po uzavření BL-007.
+- Soubory: nový src/browser/probe-transport.ts, context.ts, probe.ts,
+  probe-navigation.ts, integrační testy; README/HANDOVER/FAQs/ARCHITECTURE/
+  DECISIONS/OPERATIONS. Bez migrace dat nebo CLI. Riziko: omezené assets mohou
+  způsobit fail-closed živý probe; politika se kvůli úplnosti nesmí uvolnit.
+- Baseline validace v této session: npm.cmd run check PASS 157/157 + build/typecheck;
+  audit --omit=dev 0; plný audit 2 známé moderate dev-only (exit 1).
+- Přesný další krok: jediný implementer provede tento plán, neoznačí BL DONE ani
+  nespustí živý LinkedIn; potom orchestrátor diff/test/implementation checkpoint.
 
 1. Ověřit `git status --short` a poslední commity.
 2. Spustit read-only plánovacího subagenta pouze pro BL-007.
