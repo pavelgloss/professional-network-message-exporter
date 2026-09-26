@@ -158,6 +158,9 @@ Lokální syntetické testy mají `/assets/` pouze na přesném loopback originu
 Asset broker nepřenáší cookies či request hlavičky; do browseru se nikdy nevrací
 Set-Cookie. Neznámé resources nemají fallback na browserovou síť. Všechny brokery
 povolují pouze GET/HEAD, ověřují response type/size a mají 5s request timeout.
+Dokumenty mají limit 8 MiB; API a nescriptové assets 16 MiB. Allowlisted resource
+typu script má samostatný limit 32 MiB pro Content-Length i rozbalené response.body().
+Playwright může před kontrolou odpověď bufferovat; nejde o tvrdý RAM limit.
 
 Každý browser request zachytí generation a owning page. Worker bez frame ownership
 nedostane oprávnění selection ani target page. Před každým brokerovým síťovým
@@ -307,6 +310,8 @@ Probe asset broker ukládá `assetProxyFailures` jako uzavřený resource typ a 
 enum (`status-NNN`, `redirect`, `content-type`, `declared-size`, `body-size`,
 `generation-retired`, `timeout`, `request-error`). Manifest používá pouze
 `probe-asset-proxy-failure:<resource>:<reason>`; žádné raw URL/header/error/body.
+Size failure může připojit pouze bezpečné nezáporné celé `declaredBytes` nebo
+`actualBytes` a `limitBytes`; deduplikace zůstává podle resource a důvodu.
 Hard-failure a síťová politika se diagnostikou nemění.
 
 Výchozí manifest obsahuje run ID, časy, status, počty, použité strategie, warnings a

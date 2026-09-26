@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installProbeNavigationGate, type ProbeNavigationGate } from '../../src/linkedin/probe-navigation.js';
@@ -18,6 +19,7 @@ describe('probe navigation gate against local redirects', () => {
   let redirectConversationList = false;
   let slowConversationList = false;
   let listFinished = false;
+  let oversizedApi = false;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -79,6 +81,22 @@ describe('probe navigation gate against local redirects', () => {
         response.end('globalThis.assetLoaded=true;');
         return;
       }
+      if (request.url?.startsWith('/assets/size-')) {
+        const sizeMiB = request.url.includes('-17') ? 17 : 33;
+        const body = Buffer.alloc(sizeMiB * 1024 * 1024, 32);
+        body.write('globalThis.largeScriptExecuted=true;/*body-private-canary');
+        body.write('*/', body.length - 2);
+        const compressed = request.url.includes('-gzip-');
+        const wireBody = compressed ? gzipSync(body) : body;
+        response.writeHead(200, {
+          'content-type': request.url.includes('-css-') ? 'text/css' : 'text/javascript',
+          'content-length': String(wireBody.byteLength),
+          ...(compressed ? { 'content-encoding': 'gzip' } : {}),
+          'x-private-canary': 'header-canary',
+        });
+        response.end(wireBody);
+        return;
+      }
       if (request.url === '/assets/redirect.js') {
         response.writeHead(302, { location: '/voyager/api/messagingV2/conversations/UNREAD/events' });
         response.end();
@@ -101,6 +119,13 @@ describe('probe navigation gate against local redirects', () => {
         return;
       }
       if (request.url?.startsWith('/voyager/api/')) {
+        if (oversizedApi) {
+          const body = Buffer.alloc(17 * 1024 * 1024, 32);
+          body.write('{}');
+          response.writeHead(200, { 'content-type': 'application/json', 'content-length': String(body.byteLength) });
+          response.end(body);
+          return;
+        }
         if (slowConversationList && request.url.includes('queryId=messengerConversations')) {
           setTimeout(() => {
             listFinished = true;
@@ -157,6 +182,7 @@ describe('probe navigation gate against local redirects', () => {
     redirectConversationList = false;
     slowConversationList = false;
     listFinished = false;
+    oversizedApi = false;
     context = await createProbeContext(browser);
     page = await context.newPage();
     gate = undefined;
@@ -288,6 +314,59 @@ describe('probe navigation gate against local redirects', () => {
     await context.close();
     const snapshot = gate!.snapshot();
     expect(snapshot.targetPreflightGets).toBe(0);
+    expect(snapshot.targetNavigationsAllowed).toBe(0);
+    expect(snapshot.transportRequestsDenied).toBe(0);
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.size).toBe(0);
+    expect(JSON.stringify(snapshot)).not.toMatch(/canary|secret|127\.0\.0\.1|https?:|\/assets\//);
+  }, 10_000);
+
+  it('executes an allowlisted 17 MiB script while retaining the 16 MiB API limit', async () => {
+    await reset();
+    await loadSafeSelection();
+    await page.evaluate(() => new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/assets/size-script-17.js';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Synthetic script failed'));
+      document.body.append(script);
+    }));
+    expect(await page.evaluate(() => (globalThis as typeof globalThis & { largeScriptExecuted?: boolean }).largeScriptExecuted)).toBe(true);
+    await gate!.assertSelectionSafe();
+    expect(gate!.snapshot().assetProxyFailures).toEqual([]);
+    oversizedApi = true;
+    await page.evaluate(() => fetch('/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations').catch(() => undefined));
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().apiProxyFailures).toContain('declared-size');
+    await gate!.dispose().catch(() => undefined);
+    await context.close();
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.size).toBe(0);
+    expect(gate!.snapshot().transportRequestsDenied).toBe(0);
+  });
+
+  it.each([
+    ['script', '33', 'declared-size', 33, 32],
+    ['script', 'gzip-33', 'body-size', 33, 32],
+    ['stylesheet', 'css-17', 'declared-size', 17, 16],
+  ] as const)('rejects oversized %s %s with numeric-only diagnostics', async (resourceType, suffix, reason, sizeMiB, limitMiB) => {
+    await reset();
+    await loadSafeSelection();
+    await page.evaluate(({ resourceType, suffix }) => {
+      const element = resourceType === 'script' ? document.createElement('script') : document.createElement('link');
+      const url = `/assets/size-${suffix}.js?secret=query-canary`;
+      if (element instanceof HTMLScriptElement) element.src = url;
+      else { element.rel = 'stylesheet'; element.href = url; }
+      document.body.append(element);
+    }, { resourceType, suffix });
+    await expect.poll(() => gate!.snapshot().assetProxyFailures, { timeout: 7_000 }).toEqual([{
+      resourceType, reason, limitBytes: limitMiB * 1024 * 1024,
+      ...(reason === 'body-size' ? { actualBytes: sizeMiB * 1024 * 1024 } : { declaredBytes: sizeMiB * 1024 * 1024 }),
+    }]);
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    await gate!.dispose().catch(() => undefined);
+    await context.close();
+    const snapshot = gate!.snapshot();
     expect(snapshot.targetNavigationsAllowed).toBe(0);
     expect(snapshot.transportRequestsDenied).toBe(0);
     expect(unreadRequests).toBe(0);

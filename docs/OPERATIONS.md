@@ -132,6 +132,11 @@ Selection preflight/navigation 1, target preflight/thread navigation 0,
 transport denied 0, hard failure 1, list rows/conversations 0. Obsahový důkaz
 nevznikl. Doplněná redigovaná asset diagnostika prošla full check 188/188; další
 pokus smí následovat po nezávislém review, bez oslabení endpoint/redirect politiky.
+Po review další pokus 16:38:14Z–16:38:27Z bezpečně odmítl `script:body-size`;
+target navigace i transport denied zůstaly 0. Rozbalený script překročil tehdejší
+16 MiB limit. Implementovaný follow-up povoluje pouze scriptům 32 MiB a přidává
+číselné size důkazy; další živý důkaz dosud nevznikl. Syntetický 17 MiB script se
+provede, 17 MiB API/stylesheet a 33 MiB script včetně gzip expandu jsou odmítnuty.
 
 ### 2026-09-24
 

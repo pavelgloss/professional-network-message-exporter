@@ -165,6 +165,11 @@ Provozní follow-up 2026-09-26 přidává pouze uzavřené asset failure důvody
 redigované diagnostiky. První BL-006 live pokus bezpečně skončil před targetem;
 samotný důvod asset-broker neprokazuje login ani transport escape. Konkrétní
 status/timeout/type evidence musí předcházet případné opravě, policy se neuvolňuje.
+Další živý pokus izoloval důvod script:body-size při nulových target navigacích
+a transport hits. Script proto dostává samostatný 32 MiB acceptance cap místo
+sdílených 16 MiB; API/ostatní assets zůstávají 16 MiB a dokument 8 MiB. Kontrolujeme
+deklarovanou i rozbalenou velikost, neměníme originy, MIME, redirect ani GET/HEAD
+hranice. Nejde o tvrdou RAM mez, protože Playwright odpověď nejprve bufferuje.
 
 **Rozhodnutí:** Probe má od vytvoření contextu neforwardující loopback proxy.
 Povolené resources se načítají izolovanými GET/HEAD brokery bez redirectů. Selection

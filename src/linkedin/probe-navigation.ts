@@ -26,7 +26,7 @@ export type ProbeNavigationSnapshot = {
   selectionBlockedRequestShapes: string[];
   hardViolationReasons: string[];
   apiProxyFailures: string[];
-  assetProxyFailures: { resourceType: AssetResourceType; reason: BrokerFailure }[];
+  assetProxyFailures: ({ resourceType: AssetResourceType; reason: BrokerFailure } & BrokerSizeDetails)[];
   transportRequestsDenied: number;
 };
 
@@ -43,8 +43,10 @@ type CachedDocument = { status: 200; headers: Record<string, string>; body: Buff
 type AssetResourceType = 'script' | 'stylesheet' | 'image' | 'font';
 type BrokerFailure = `status-${number}` | 'redirect' | 'content-type' | 'declared-size' | 'body-size'
   | 'generation-retired' | 'timeout' | 'request-error';
+type BrokerSizeDetails = { actualBytes?: number; declaredBytes?: number; limitBytes?: number };
 const MAX_PROBE_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const MAX_PROBE_API_BYTES = 16 * 1024 * 1024;
+const MAX_PROBE_SCRIPT_BYTES = 32 * 1024 * 1024;
 const BROKER_TIMEOUT_MS = 5_000;
 
 function exactCanonicalLocation(rawUrl: string): string | undefined {
@@ -135,7 +137,7 @@ async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, e
   }
 }
 
-async function isolatedApiResponse(context: BrowserContext, browserRequest: Request, active: () => boolean, asset = false): Promise<{ document?: CachedDocument; failure?: BrokerFailure }> {
+async function isolatedApiResponse(context: BrowserContext, browserRequest: Request, active: () => boolean, asset = false): Promise<{ document?: CachedDocument; failure?: BrokerFailure; size?: BrokerSizeDetails }> {
   const storageState = await context.storageState();
   const originalHeaders = await browserRequest.allHeaders();
   const headers = Object.fromEntries(Object.entries(originalHeaders).filter(([name]) =>
@@ -155,9 +157,15 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
       ? /^(?:text\/(?:css|javascript)|application\/(?:javascript|x-javascript|font-woff|vnd.ms-fontobject)|image\/(?:png|jpeg|gif|webp|svg\+xml|x-icon)|font\/(?:woff2?|ttf|otf))(?:;|$)/i.test(contentType)
       : /(?:json|graphql)/i.test(contentType);
     if (!permittedType) return { failure: 'content-type' };
-    if (Number.isFinite(declaredSize) && declaredSize > MAX_PROBE_API_BYTES) return { failure: 'declared-size' };
+    // Playwright buffers/decompresses first: these are acceptance limits, not
+    // hard memory bounds. Only an allowlisted script gets the larger budget.
+    const limitBytes = asset && browserRequest.resourceType() === 'script' ? MAX_PROBE_SCRIPT_BYTES : MAX_PROBE_API_BYTES;
+    if (Number.isFinite(declaredSize) && declaredSize > limitBytes) return {
+      failure: 'declared-size', size: { limitBytes,
+        ...(Number.isSafeInteger(declaredSize) ? { declaredBytes: declaredSize } : {}) },
+    };
     const body = await response.body();
-    if (body.byteLength > MAX_PROBE_API_BYTES) return { failure: 'body-size' };
+    if (body.byteLength > limitBytes) return { failure: 'body-size', size: { actualBytes: body.byteLength, limitBytes } };
     return { document: { status: 200, headers: { 'content-type': contentType }, body } };
   } catch (error) {
     return { failure: error instanceof errors.TimeoutError ? 'timeout' : 'request-error' };
@@ -534,7 +542,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
         const resourceType = request.resourceType() as AssetResourceType;
         const reason = proxied.failure ?? 'generation-retired';
         if (!counts.assetProxyFailures.some(failure => failure.resourceType === resourceType && failure.reason === reason)) {
-          counts.assetProxyFailures.push({ resourceType, reason });
+          counts.assetProxyFailures.push({ resourceType, reason, ...proxied.size });
         }
         await block(route, 'subrequest', active(), true, 'asset-broker');
       }

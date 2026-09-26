@@ -63,6 +63,13 @@ Testy17MiB script execute,17MiB API deny,script>32 deny včetně gzip/decompress
 limitu a canary redakce. Playwright stále bufferuje; cap je limit přijetí, nikoli
 tvrdý RAM limit. 32MiB nemusí živý zdroj pokrýt; další změna jen podle evidence.
 
+Fixer nad `7f2cba1` dokončil script-only 32MiB cap, numeric size diagnostics,
+manifest a aktivní docs. Typecheck PASS; čtyři nové integrační testy PASS:17MiB
+script execute +17MiB API deny,33MiB declared/gzip script deny,17MiB stylesheet deny.
+Canary absence a post-cleanup foreign hits0 ověřeny. Worktree dirty pouze tato
+koherentní změna; žádný live/fullcheck/commit/DONE fixer neprovedl. Následuje main
+diff/implementation commit, nezávislé review a full check; fixer již neběží.
+
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
 Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými

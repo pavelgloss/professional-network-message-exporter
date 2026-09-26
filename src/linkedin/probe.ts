@@ -383,7 +383,11 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
         .map((shape) => `probe-selection-blocked:${shape}`));
       manifest.strategies.push(...snapshot.hardViolationReasons.map((reason) => `probe-hard-reason:${reason}`));
       manifest.strategies.push(...snapshot.apiProxyFailures.map((reason) => `probe-api-proxy-failure:${reason}`));
-      manifest.strategies.push(...snapshot.assetProxyFailures.map(({ resourceType, reason }) => `probe-asset-proxy-failure:${resourceType}:${reason}`));
+      manifest.strategies.push(...snapshot.assetProxyFailures.map(({ resourceType, reason, actualBytes, declaredBytes, limitBytes }) =>
+        `probe-asset-proxy-failure:${resourceType}:${reason}`
+        + (actualBytes === undefined ? '' : `:actualBytes=${actualBytes}`)
+        + (declaredBytes === undefined ? '' : `:declaredBytes=${declaredBytes}`)
+        + (limitBytes === undefined ? '' : `:limitBytes=${limitBytes}`)));
       if (snapshot.hardSafetyViolations > 0) {
         result = undefined;
         manifest.status = 'READ_POLICY_BLOCK';

@@ -46,6 +46,8 @@ BL-007 je od 2026-09-26 uzavřen po opakovaných lokálních testech a review.
 Jeho nová transportní izolace blokuje browserový HTTP/CONNECT provoz deny proxy;
 povolená data předává přes samostatné read-only brokery. Neznámý resource nebo
 redirect proto není důvodem povolit přímý browserový fallback.
+Script může mít nejvýše 32 MiB deklarovaných nebo rozbalených bajtů; API a ostatní
+assets nadále 16 MiB, dokument 8 MiB. Jde o limit přijetí, ne spotřeby RAM.
 
 ## 8. Používá exporter můj běžný Chrome nebo jeho přihlášení?
 

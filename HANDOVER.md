@@ -37,6 +37,10 @@ Tři plné check běhy prošly 165/165; pět samostatných finálních stress pr
 ověřilo po 85 timing iteracích včetně cleanupu a úmyslného route bypassu: cizí
 server hity vždy 0. Produkční audit 0, plný audit 2 známé moderate dev-only.
 Živá kompatibilita brokeru zatím není ověřena; další práce je BL-006.
+Pokus BL-006 2026-09-26 byl bezpečně odmítnut kvůli script:body-size před targetem.
+Follow-up odděluje 32 MiB limit scriptu od nezměněných 16 MiB API/ostatních assets
+a 8 MiB dokumentu; size diagnostika ukládá pouze číselné bajty/limit. Checkpoint
+určuje stav review a další validace; nejde zatím o živý důkaz kompatibility.
 
 Historický důvod BL-007: plný integrační běh 2026-09-25
 jednou propustil request staré selection stránky na cizí messaging endpoint, aniž by

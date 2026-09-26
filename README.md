@@ -31,6 +31,9 @@ resources se blokují, zásah proxy znamená redigovaný hard failure. Důkazy v
 jsou v checkpointu; živá kompatibilita nového asset brokeru zatím nebyla ověřena.
 Odmítnutý asset broker zapisuje pouze pevný resource typ a důvod (HTTP status,
 redirect, typ/velikost odpovědi, timeout či request-error), nikdy URL nebo obsah.
+Script assets mají limit přijetí 32 MiB, ostatní assets/API 16 MiB a dokumenty 8 MiB;
+kontroluje se deklarovaná i rozbalená velikost. Size diagnostika obsahuje jen počty
+bajtů a limit. Playwright bufferuje odpověď, nejde o tvrdý limit spotřeby RAM.
 
 Textový adapter čte pouze známé body obálky v pořadí `body`, `messageBody`,
 `attributedBody`, `eventContent`, `content`, `commentary`, následně explicitní `text`.
