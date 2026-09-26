@@ -11,8 +11,8 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
-- **První další akce:** hlavní agent spustí autorizovaný živý harness podle
-  docs/OPERATIONS.md; nová unikátní output cesta, žádná stará baseline/content logs.
+- **První další akce:** read-only diagnostika bezpečně odmítnutého asset brokeru
+  při živém validačním běhu; další live až po vysvětlení příčiny bez oslabení policy.
 
 | Pořadí | Položka | Stav | Zbývá |
 | ---: | --- | --- | --- |
@@ -25,6 +25,15 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 | 7 | BL-004 | NOT_STARTED | Research-only; neimplementovat funkci |
 
 ## BL-006 implementation handoff (2026-09-26)
+
+**Živý pokus 2026-09-26 16:22:45Z–16:22:57Z:** explicitní harness FAIL
+READ_POLICY_BLOCK. Redigovaná evidence: selectionPreflight=1/navigation=1,
+targetPreflight=0/threadNavigations=0, transportDenied=0, hard=1,
+reason blocked-subrequest:asset-broker, list rows/conversations=0.
+Žádný obsahový důkaz ani export nevznikl. Není doložen transport escape ani login;
+broker nezaznamenal svůj konkrétní bezpečný failure enum. Nový read-only follow-up
+BL-007 reviewer navrhne nejmenší diagnostiku/status/timeout/MIME bez osobních dat.
+Nepovolovat redirect/nový endpoint ani běžný Chrome. BL-006 zůstává nedokončený.
 
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
