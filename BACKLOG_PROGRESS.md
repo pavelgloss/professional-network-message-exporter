@@ -6,8 +6,8 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 - **Aktivní položka/fáze:** BL-006 `REVIEW`; BL-007 `DONE`.
 - **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
-- **Worktree:** diagnostický follow-up nad `9b3a89f`, zachován po usage limitu fixera.
-- **Subagenti:** fixer neběží; následuje nezávislé review diagnostického diffu.
+- **Worktree:** čistý na `5cd8359` před tímto checkpointem.
+- **Subagenti:** žádný; diagnostické review dokončeno bez blokujících nálezů.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -47,7 +47,8 @@ Diagnostická oprava hotová: assetProxyFailures nese pouze resource enum a fail
 enum; uloží se do manifestu jako probe-asset-proxy-failure. Žádná změna policy.
 Main full check PASS188/188 + typecheck/build; čtyři nové status/redirect/MIME/
 5s timeout testy včetně privacy canary a post-cleanup hit0. Fixer narazil na limit
-po runtime/test části; main doplnil docs. Zbývá commit/review a jeden live pokus.
+po runtime/test části; main doplnil docs. Commit5cd8359 nezávisle zrevidován bez
+nálezů; nyní jeden další autorizovaný counts-only live pokus beze změny policy.
 
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
