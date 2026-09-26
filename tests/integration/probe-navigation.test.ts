@@ -314,6 +314,13 @@ describe('probe navigation gate against local redirects', () => {
           await raceGate.dispose();
           await raceContext.close();
         }
+        // Closing is part of the race: keep cumulative counters and inspect
+        // them after every cleanup, including the final iteration.
+        const cleanupCase = `after cleanup: ${kind} ${delay}ms`;
+        expect(allRequests.get('/voyager/api/unknownMessaging/conversations/UNREAD/events'), cleanupCase).toBeUndefined();
+        expect(allRequests.get('/voyager/api/messagingV2/conversations/UNREAD/events'), cleanupCase).toBeUndefined();
+        expect(unreadRequests, cleanupCase).toBe(0);
+        expect(targetRequests.get('/messaging/thread/UNREAD/'), cleanupCase).toBeUndefined();
       }
     }
   }, 60_000);
@@ -520,7 +527,6 @@ describe('probe navigation gate against local redirects', () => {
     const targetPath = '/messaging/thread/READ/';
 
     for (let index = 0; index < 30; index += 1) {
-      allRequests.delete(foreignPath);
       const raceContext = await createProbeContext(browser);
       const selectionPage = await raceContext.newPage();
       const selectionUrl = `${origin}/selection`;
@@ -573,6 +579,11 @@ describe('probe navigation gate against local redirects', () => {
         await raceGate.dispose().catch(() => undefined);
         await raceContext.close().catch(() => undefined);
       }
+      const cleanupCase = `after cleanup: iteration ${index}, delay ${index % 11}ms`;
+      expect(allRequests.get(foreignPath), cleanupCase).toBeUndefined();
+      expect(allRequests.get('/voyager/api/unknownMessaging/conversations/UNREAD/events'), cleanupCase).toBeUndefined();
+      expect(unreadRequests, cleanupCase).toBe(0);
+      expect(targetRequests.get('/messaging/thread/UNREAD/'), cleanupCase).toBeUndefined();
     }
   });
 

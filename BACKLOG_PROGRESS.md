@@ -11,8 +11,8 @@ akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
 - **Fáze:** `FIXING`
 - **Aktivní položka:** BL-007
 - **Poslední ověřený runtime commit:** `43ec961`; čistý před tímto checkpointem
-- **Worktree:** checkpoint review; ostatní BL beze změny
-- **Aktivní subagenti:** review dokončeno; následuje původní implementer jako jediný fixer
+- **Worktree:** po checkpointu `2815c88` pouze P2 oprava stress testů a tento záznam; runtime beze změny
+- **Aktivní subagenti:** fixer dokončen; následuje nezávislé re-review
 - **Živá LinkedIn validace:** uživatel v promptu této session výslovně povolil nezbytné
   read-only běhy v izolovaném Chromium; history probe až po uzavření BL-007.
 
@@ -70,8 +70,15 @@ Druhý plný check PASS 165/165 + build/typecheck. Oba audity zopakovány: prod 
 full 2 známé moderate dev-only. První tři nové stress procesy PASS; další běží,
 ale po opravě P2 se musí požadovaných 5 procesů provést znovu.
 
-Přesná další akce: jediný fixer doplní post-cleanup assertions, cíleně ověří,
-pak nezávislé re-review, 5 stress procesů s novou assertion a finální validace/docs.
+P2 oprava hotová ve worktree: oba stress testy kontrolují foreign/unknown messaging
+a unread server hits až po dispose/context.close každé iterace včetně poslední.
+Původní per-iteration mazání counteru odstraněno, počty zůstávají kumulativní.
+Cílené `npm.cmd test -- tests/integration/probe-navigation.test.ts -t
+'zero-to-ten-millisecond'`: PASS 2/2 (55 + 30 iterací), 26.955 s test time.
+`git diff --check`: PASS. Žádná runtime změna, fixer nespustil pět opakování.
+
+Přesná další akce: orchestrátor zkontroluje/commitne P2 opravu, nezávislé re-review,
+5 stress procesů s novou assertion a finální validace/docs.
 Položka není DONE; živý probe stále zakázán. Ostatní BL čekají.
 
 ### Schválený plán BL-007 (po read-only plánování)
