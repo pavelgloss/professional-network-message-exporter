@@ -66,6 +66,14 @@ tvrdý RAM limit. 32MiB nemusí živý zdroj pokrýt; další změna jen podle e
 Script limit implementován v bf5b34a, cíleně9/9 PASS, nezávislé review bez nálezů;
 main full check192/192 PASS + build/typecheck. Následuje autorizovaný live harness.
 
+Třetí live 2026-09-26 16:45:33Z–16:45:48Z: script cap již neblokuje,
+assetFailures žádné, hard0/transport0/target0, ale selectionConversations0/read0.
+Probe správně neotevřel thread bez fresh read evidence. Žádný login blocker doložen.
+Read-only reviewer posoudí bezpečnou alternativu obsahové validace BL-006 přes
+existující export BEZ probe: nová output cesta, stejný nezávislý witness/strict
+akceptace, partial history coverage odděleně. Žádná změna produktového defaultu
+ani otevření dalšího threadu; případnou změnu validačního plánu nejprve commitnout.
+
 Fixer nad `7f2cba1` dokončil script-only 32MiB cap, numeric size diagnostics,
 manifest a aktivní docs. Typecheck PASS; čtyři nové integrační testy PASS:17MiB
 script execute +17MiB API deny,33MiB declared/gzip script deny,17MiB stylesheet deny.
