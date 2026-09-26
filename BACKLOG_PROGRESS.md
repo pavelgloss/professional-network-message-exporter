@@ -63,6 +63,13 @@ Aktualizováno: **2026-09-26 Europe/Prague**
   Schválený minimální fix: pevný sleep nahradit bounded expect.poll na hard stav,
   zachovat rejection a nulové hity, doplnit kontrolu po cleanupu. Runtime bez změny.
   Potom cílené opakování, nezávislé re-review a plný check před live harness.
+- Test-only fixer nad `df6a968`: selection location/popup nyní čeká přes
+  `expect.poll` nejvýše 2 s na hard state; rejection zůstává a po dispose/context.close
+  ověřuje nulový unread server count i nepřítomný target hit. Dispose toleruje již
+  uzavřený context stejně jako afterEach (popup fail-closed jej může zavřít sám).
+  Tři samostatné cílené Vitest procesy PASS 2/2 každý. Runtime se neměnil.
+  Worktree dirty pouze test a tento checkpoint; fixer skončil. Další akce: main
+  zkontroluje diff, commitne test checkpoint, nezávislé re-review a full check.
 - Zbývá: main implementation commit, nezávislé review, opravy/re-review, plný check
   a oba audity, autorizovaný živý export. Obsah starých reálných exportů je nadále
   nedůvěryhodný, BL-006 není DONE. Otevřené findings: review ještě neproběhlo.

@@ -373,10 +373,14 @@ describe('probe navigation gate against local redirects', () => {
   it.each(['location', 'popup'])('keeps selection %s escape attempts fatal', async (resource) => {
     await reset(`/selection-${resource}`);
     await page.goto(`${origin}/selection-${resource}`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-    await page.waitForTimeout(100);
+    await expect.poll(() => gate!.snapshot().hardSafetyViolations, { timeout: 2_000 }).toBeGreaterThan(0);
     await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
     expect(unreadRequests).toBe(0);
     expect(gate!.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+    await gate!.dispose().catch(() => undefined);
+    await context.close();
+    expect(unreadRequests, 'after cleanup').toBe(0);
+    expect(targetRequests.get('/messaging/thread/UNREAD/'), 'after cleanup').toBeUndefined();
   });
 
   it('allows only the exact Dash conversation-list GET while selecting', async () => {
