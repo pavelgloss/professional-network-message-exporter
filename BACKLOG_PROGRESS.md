@@ -6,8 +6,8 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 - **Aktivní položka/fáze:** BL-006 `REVIEW`; BL-007 `DONE`.
 - **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
-- **Worktree:** čistý na `5cd8359` před tímto checkpointem.
-- **Subagenti:** žádný; diagnostické review dokončeno bez blokujících nálezů.
+- **Worktree:** čistý na `bf5b34a` před tímto checkpointem.
+- **Subagenti:** žádný; script-limit review dokončeno bez blokujících nálezů.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -62,6 +62,9 @@ pouze numeric actualBytes nebo declaredBytes + limitBytes, žádné raw hodnoty.
 Testy17MiB script execute,17MiB API deny,script>32 deny včetně gzip/decompressed
 limitu a canary redakce. Playwright stále bufferuje; cap je limit přijetí, nikoli
 tvrdý RAM limit. 32MiB nemusí živý zdroj pokrýt; další změna jen podle evidence.
+
+Script limit implementován v bf5b34a, cíleně9/9 PASS, nezávislé review bez nálezů;
+main full check192/192 PASS + build/typecheck. Následuje autorizovaný live harness.
 
 Fixer nad `7f2cba1` dokončil script-only 32MiB cap, numeric size diagnostics,
 manifest a aktivní docs. Typecheck PASS; čtyři nové integrační testy PASS:17MiB
