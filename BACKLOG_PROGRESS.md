@@ -4,11 +4,11 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 ## Aktuální checkpoint
 
-- **Aktivní položka/fáze:** BL-006 `IMPLEMENTING`; BL-007 `DONE`.
-- **Poslední runtime commit:** `43ec961`; P2 test fix `27b9fc4`.
+- **Aktivní položka/fáze:** BL-006 `REVIEW`; BL-007 `DONE`.
+- **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
 - **Worktree:** dirty implementace BL-006 nad resume checkpointem `c490a51`;
   parser, fixtures, testy, safe manual harness a aktivní docs jsou připravené.
-- **Subagenti:** writer předán orchestrátorovi; následuje cílená oprava nalezená plným testem.
+- **Subagenti:** writer dokončen; nový nezávislý read-only `bl006_review` běží.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -47,6 +47,9 @@ Aktualizováno: **2026-09-26 Europe/Prague**
   s message URN bez conversation identity nově správně hlásí miss místo 0; ověřit
   očekávání a zachovat redakční assertions. Ostatní výsledky běhu se ještě sbírají.
   Audity znovu: produkce 0, full 2 známé moderate dev-only.
+- Běh dokončen 183/184; jediná výše uvedená failure opravena pouze v diagnostickém
+  testu, zachované všechny privacy assertions + přidané agregáty. Cíleně 3/3 PASS.
+  Následuje opakovaný full check a nezávislé review; živý test stále neproběhl.
 - Zbývá: main implementation commit, nezávislé review, opravy/re-review, plný check
   a oba audity, autorizovaný živý export. Obsah starých reálných exportů je nadále
   nedůvěryhodný, BL-006 není DONE. Otevřené findings: review ještě neproběhlo.

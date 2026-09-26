@@ -32,9 +32,12 @@ describe('safe network diagnostics', () => {
     await capture.drain();
     capture.detach();
 
-    expect(manifest.counts).toMatchObject({ linkedinResponses: 3, relevantResponses: 2, parsedResponses: 1, skippedIrrelevantPath: 1, skippedContentType: 1 });
+    expect(manifest.counts).toMatchObject({ linkedinResponses: 3, relevantResponses: 2, parsedResponses: 1, skippedIrrelevantPath: 1, skippedContentType: 1, parserMisses: 1, parserConversations: 0, parserMessages: 0 });
     expect(manifest.networkResponses.map((entry) => entry.outcome).sort()).toEqual(['content-type-not-json', 'parsed', 'path-not-relevant']);
-    expect(manifest.networkResponses.find((entry) => entry.outcome === 'parsed')?.parserOutput).toMatchObject({ conversations: 0, messages: 0, misses: 0 });
+    // The canary is a typed message event without a conversation identity. BL-006
+    // now counts this generic nested candidate as a miss rather than dropping it.
+    expect(manifest.networkResponses.find((entry) => entry.outcome === 'parsed')?.parserOutput).toMatchObject({ conversations: 0, messages: 0, misses: 1 });
+    expect(capture.conversations).toEqual([]);
     const serialized = JSON.stringify(manifest);
     expect(serialized).not.toContain(canary);
     expect(serialized).not.toContain('urn:li:messagingMessage');
