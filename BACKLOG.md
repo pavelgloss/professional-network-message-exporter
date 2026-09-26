@@ -267,7 +267,10 @@ nikoli až při normalizaci nebo merge.
 
 ## BL-007 — KRITICKÉ: deterministicky uzavřít síť selection stránky před history probe
 
-- **Stav:** TODO / znovu otevřený bezpečnostní nález
+- **Stav:** DONE (2026-09-26); runtime `43ec961`, test fix `27b9fc4`
+- **Evidence:** tři plné check běhy 165/165 PASS; pět samostatných stress procesů
+  po 85 iteracích s post-cleanup server-hit-0; oba audity (prod 0, full 2 známé
+  moderate dev-only), nezávislé review/re-review bez otevřených blokujících nálezů.
 - **Priorita:** kritická; blokuje živý probe a BL-005
 - **Dopad:** Integrační stress test 2026-09-25 znovu jednou propustil GET staré
   selection stránky na cizí `/voyager/api/messagingV2/conversations/UNREAD/events`.

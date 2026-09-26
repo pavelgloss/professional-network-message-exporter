@@ -1,7 +1,8 @@
 # Aktuální plán a maintenance backlog
 
-Stav k 2026-09-24: **původní zadání i conversation-level `isStarred` jsou
-implementované, zrevidované, automaticky testované a živě browserově ověřené**.
+Stav k 2026-09-26: **BL-007 je uzavřen, BL-006 stále blokuje důvěryhodný obsah**.
+Schválenou práci určuje BACKLOG.md a přesnou další akci BACKLOG_PROGRESS.md.
+Níže uvedený maintenance backlog nepřepisuje závazné pořadí BL položek.
 
 Výsledná architektura je v `docs/ARCHITECTURE.md`, současné předání v `HANDOVER.md` a
 důvody rozhodnutí v `docs/DECISIONS.md`. Původní předimplementační plán je zachován v

@@ -2,10 +2,10 @@
 
 Stav: **aktuální**
 
-Ověřeno: **2026-09-25**
+Ověřeno: **2026-09-26**
 
-Aktuální implementační baseline: **`bcfa8b5`**. Implementace popsaná níže zahrnuje
-dokončené conversation-level `isStarred`.
+Aktuální runtime baseline: **`43ec961`**, testy **`27b9fc4`**. Zahrnuje
+conversation-level `isStarred` a uzavřenou transportní opravu BL-007.
 
 Tento dokument popisuje skutečně implementovaný systém, nikoli původní plán. Původní
 návrh je zachován v `docs/history/IMPLEMENTATION_PLAN_ORIGINAL.md`.
@@ -355,10 +355,9 @@ LinkedIn session a nemají sahat na reálná data.
 
 ## 10. Známá omezení
 
-- **Aktuální kritická vada BL-007:** selection-page teardown před fresh target page
-  není prokázaně deterministická síťová bariéra. Stress test 2026-09-25 jednou
-  propustil cizí messaging GET bez guard counteru; do opravy se živý history probe
-  nesmí spouštět.
+- **BL-007 uzavřen:** lifetime deny proxy chrání i requesty mimo Playwright route
+  lifecycle. Pět oddělených stress procesů prokázalo nula cizích server hitů včetně
+  cleanupu; živá kompatibilita nového asset brokeru zatím není ověřena.
 - **Aktuální kritická vada BL-006:** `textFrom()` může vybrat top-level InMail
   `subject` dříve než skutečný nested message body. Existující reálné exporty nejsou
   obsahově důvěryhodné; schema ani unikátní ID tuto sémantickou záměnu neodhalí.

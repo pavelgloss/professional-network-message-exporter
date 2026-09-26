@@ -40,8 +40,8 @@ místo skutečného textu zprávy; v jednom exportu je takto podezřelých nejm�
 
 Spustí vlastní izolovaný Playwright Chromium, zachytí JSON z LinkedIn GET odpovědí a
 při `--with-history-probe` otevře jeden potvrzeně přečtený thread, odpozoruje aktuální
-history GET kontrakt a ostatní historie stránkuje přímými autentizovanými GETy. Tento
-probe se teď nemá živě spouštět, dokud BL-007 neuzavře intermittent teardown race.
+history GET kontrakt a ostatní historie stránkuje přímými autentizovanými GETy.
+BL-007 je od 2026-09-26 uzavřen po opakovaných lokálních testech a review.
 Jeho nová transportní izolace blokuje browserový HTTP/CONNECT provoz deny proxy;
 povolená data předává přes samostatné read-only brokery. Neznámý resource nebo
 redirect proto není důvodem povolit přímý browserový fallback.

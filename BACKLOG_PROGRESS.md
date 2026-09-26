@@ -2,125 +2,64 @@
 
 Aktualizováno: **2026-09-26 Europe/Prague**
 
-Tento soubor je restartovatelný checkpoint pro implementaci `BACKLOG.md`. Není
-náhradou požadavků ani historie; zaznamenává jen ověřený současný stav a přesnou další
-akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
+## Aktuální checkpoint
 
-## Celkový stav
+- **Aktivní položka/fáze:** BL-007 `DONE`; následuje BL-006 `PLANNING`.
+- **Poslední runtime commit:** `43ec961`; P2 test fix `27b9fc4`.
+- **Worktree:** finální docs/checkpoint BL-007, po closure commitu očekáván čistý.
+- **Subagenti:** žádný writer; BL-007 planner/implementer/reviewer dokončeni.
+- **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
+  validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
+  ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
+- **První další akce:** ověřit Git, předat BL-006 novému read-only plannerovi;
+  neopakovat hotovou BL-007 implementaci ani její testy bez nové příčiny.
 
-- **Fáze:** `FIXING`
-- **Aktivní položka:** BL-007
-- **Poslední ověřený runtime commit:** `43ec961`; čistý před tímto checkpointem
-- **Worktree:** po checkpointu `2815c88` pouze P2 oprava stress testů a tento záznam; runtime beze změny
-- **Aktivní subagenti:** fixer dokončen; následuje nezávislé re-review
-- **Živá LinkedIn validace:** uživatel v promptu této session výslovně povolil nezbytné
-  read-only běhy v izolovaném Chromium; history probe až po uzavření BL-007.
-
-| Pořadí | Položka | Stav | Poznámka |
+| Pořadí | Položka | Stav | Zbývá |
 | ---: | --- | --- | --- |
-| 1 | BL-007 | `FIXING` | Review P2: server-hit assertions až po cleanupu každé iterace |
-| 2 | BL-006 | `NOT_STARTED` | Kritický blocker důvěryhodnosti textu |
-| 3 | BL-003 | `NOT_STARTED` | Nezávislé snapshoty a bundle persistence |
-| 4 | BL-005 | `NOT_STARTED` | Defaultní probe; blokováno BL-007 |
-| 5 | BL-001 | `NOT_STARTED` | Ověřená participant/display names |
-| 6 | BL-002 | `NOT_STARTED` | Lokální přílohy; závisí na bundle z BL-003 |
-| 7 | BL-004 | `NOT_STARTED` | Research-only, bez automatické implementace |
+| 1 | BL-007 | DONE | Nic; uzavřené testy/review/docs |
+| 2 | BL-006 | PLANNING | Planner, plán commit, parser/tests/docs, review, živá validace |
+| 3 | BL-003 | NOT_STARTED | Nezávislé snapshoty/bundles |
+| 4 | BL-005 | NOT_STARTED | Default fresh probe a opt-out |
+| 5 | BL-001 | NOT_STARTED | Ověřená jména |
+| 6 | BL-002 | NOT_STARTED | Lokální přílohy v bundle |
+| 7 | BL-004 | NOT_STARTED | Research-only; neimplementovat funkci |
 
-## Poslední ověřený stav projektu
+## BL-007 uzavřené rozhodnutí a důkazy
 
-- Současná runtime implementace stále obsahuje BL-006; existující reálné exporty
-  nejsou důvěryhodné pro obsahovou analýzu.
-- Kontrola 2026-09-25 nad nezměněným runtime kódem: typecheck a build PASS, ale plný
-  test run jednou selhal v race testu `keeps 30 zero-to-ten-millisecond selection
-  races disjoint from the fresh target page`. V iteraci 25, delay 3 ms, dorazil na
-  lokální server jeden cizí GET; guard snapshot přitom hlásil nula violations.
-- Tři bezprostřední spuštění stejného cíleného testu prošla. Stejný intermittent
-  průběh a endpoint už popisuje historický High nález `ZR-01`; proto je problém znovu
-  otevřen jako BL-007. Následný celý rerun prošel 157/157; jednotlivý zelený rerun
-  nedeterministický bezpečnostní nález neuzavírá.
-- Produkční audit: 0 vulnerabilities.
-- Plný audit: dvě známé moderate dev-only položky ve Vitest řetězci.
-- Plán BL-007 je commitnutý; implementace, testy a aktivní docs jsou ve worktree.
+Instalovaný Playwright při zániku frame může pokračovat přes Fetch.continueRequest
+před aplikační Route; přesné CDP pořadí původního incidentu není zachyceno.
+Probe-only lifetime loopback deny proxy nemá upstream a je instalovaná před první
+page. Dokumenty/API/assets jdou izolovanými brokery bez redirectů. Selection
+generation se revokuje synchronně a znovu kontroluje těsně před GETem; bounded drain
+předchází target page. Finální hard audit vzniká po context.close.
 
-## Přesná další akce
+Soubory: src/browser/probe-transport.ts, context.ts, src/linkedin/probe.ts,
+probe-navigation.ts, tests/integration/probe-navigation.test.ts a aktivní docs.
+CLI/data schema se nemění. Živá kompatibilita přísných asset pravidel se má ověřit
+při BL-006; kvůli úplnosti nepovolovat nejasné endpointy/redirect/POST/WS/SW.
 
-Implementace BL-007: lifetime deny HTTP/CONNECT proxy před první page; žádný
-browserový fallback. Dokument/API/asset brokery kontrolují generation a ownership,
-selection se synchronně revokuje před bounded drainem a target page. Dispose/close
-zůstává kryté proxy; finální manifest a výsledek se kontrolují až po context.close.
+- Baseline 157/157 PASS.
+- Po implementaci dva plné check běhy 165/165 PASS; po P2 test fixu třetí plný
+  check 165/165 PASS včetně typecheck/build.
+- Finálních 5 oddělených Vitest procesů po P2 opravě: všechny PASS; každý
+  původních 30 + nových 55 timing iterací (fetch/keepalive/image/iframe/worker,
+  0–10ms) a úmyslný route bypass HTTP loopback/HTTPS CONNECT.
+  Foreign/unread server hits vždy 0 včetně cleanupu poslední iterace.
+- Další testy: protected context, asset/history happy path, redirect denial,
+  in-flight drain, queued generation revocation, audit po dispose.
+- Nezávislé review: jeden P2 (chybějící post-cleanup assertion); opraven v
+  `27b9fc4`, nezávislé re-review bez otevřených blokujících nálezů.
+- Audity: prod 0; full 2 známé moderate dev-only Vitest položky, exit 1.
+- git diff --check PASS; žádná auth/env/export/obsahová diagnostics v Gitu.
 
-Hotové důkazy: původní suite 38/38 PASS; rozšířená 44/44 PASS (včetně původní 30×
-regrese a nové 55× source/timing matrix), další 2 cílené testy PASS pro queued
-broker revocation před prvním sendem a hard audit po gate.dispose. Typecheck PASS.
-První bypass test správně zastavil ještě starý CDP pattern, proto byl upraven na
-unknownMessaging namespace mimo jeho patterny; nyní prokazuje >=2 proxy hitů
-(HTTP loopback + CONNECT) a 0 server hitů, hard state blokuje target.
+## BL-006: dosud chybějící práce
 
-Orchestrátor ověřil diff a první plný `npm.cmd run check`: PASS 165/165,
-typecheck/build PASS. Implementer doložil první oddělený stress proces PASS;
-dokončení dalších čtyř není po jeho usage limitu prokázáno. Logger counter ověřen
-správný. Matrix zatím kontroluje server count před cleanupem; review má prověřit
-i explicitní assertion po cleanupu.
+Parser stále přijímá top-level subject jako Message.text. Staré skutečné exporty
+jsou obsahově nedůvěryhodné. Planner má mapovat přesné podporované body wrappers,
+subject-only parser misses/completeness, anonymní inbound/outbound/attachment
+regresi a quality gate. Po implementaci a review nový nezávislý živý export do
+nové ignorované cesty (před BL-003 ještě nesmí načíst starou baseline).
+Obsahová validace pouze anonymními agregáty, žádné zprávy/jména/tokeny do kontextu.
 
-Nezávislý reviewer: jediný P2 v tests/integration/probe-navigation.test.ts,
-oba stress testy assertují hity před cleanupem a původní počítadlo další iterace
-maže. Přidat nulové foreign/unread assertions po dispose/context.close každé
-iterace. Žádný prokázaný runtime průnik; CORS podezření reviewer synteticky vyvrátil.
-Druhý plný check PASS 165/165 + build/typecheck. Oba audity zopakovány: prod 0,
-full 2 známé moderate dev-only. První tři nové stress procesy PASS; další běží,
-ale po opravě P2 se musí požadovaných 5 procesů provést znovu.
-
-P2 oprava hotová ve worktree: oba stress testy kontrolují foreign/unknown messaging
-a unread server hits až po dispose/context.close každé iterace včetně poslední.
-Původní per-iteration mazání counteru odstraněno, počty zůstávají kumulativní.
-Cílené `npm.cmd test -- tests/integration/probe-navigation.test.ts -t
-'zero-to-ten-millisecond'`: PASS 2/2 (55 + 30 iterací), 26.955 s test time.
-`git diff --check`: PASS. Žádná runtime změna, fixer nespustil pět opakování.
-
-Přesná další akce: orchestrátor zkontroluje/commitne P2 opravu, nezávislé re-review,
-5 stress procesů s novou assertion a finální validace/docs.
-Položka není DONE; živý probe stále zakázán. Ostatní BL čekají.
-
-### Schválený plán BL-007 (po read-only plánování)
-
-- Doložená cesta v instalovaném Playwright `coreBundle.js`: zaniklý frame vede
-  přímo k `Fetch.continueRequest` před aplikačním Route; page.close také přeskakuje
-  handlery. Přesné CDP pořadí původního incidentu není zachyceno. Page-scoped fence
-  a drain aplikačních routes proto neprokazují izolaci.
-- Přidat lifetime loopback deny proxy pouze pro probe context, instalovanou před
-  první page; HTTP/CONNECT nikdy neforwarduje. Gate odmítne nechráněný context.
-  Ověřit v testu i Chromium loopback bypass a úmyslný route bypass.
-- Povolené dokumenty/API/assets zobrazovat pouze přes izolované GET/HEAD brokery,
-  maxRedirects=0, omezené originy/resource typy, bezpečné hlavičky a omezené timeouty.
-  Žádné nové POST/WS/SW, žádný přímý browserový fallback.
-- Closing synchronně revokuje selection generation, broker kontroluje generation
-  před sítí, drain dokončí pending operace; teprve pak zavřít selection a vytvořit
-  target. Ownership frames/workers se nesmí přenést do target politiky.
-- Každý zásah deny proxy je redigovaný hard stav; na skutečném cizím serveru stále 0.
-- Zachovat původní 30× race regresi a přidat 0–10ms matrix fetch/keepalive/assets,
-  iframe/worker a pending GET; happy path ověří skutečný script i history GET.
-- Validace: nejméně 5 oddělených stress procesů a 2 plné check běhy, oba audity,
-  nezávislé review; živý probe až po uzavření BL-007.
-- Soubory: nový src/browser/probe-transport.ts, context.ts, probe.ts,
-  probe-navigation.ts, integrační testy; README/HANDOVER/FAQs/ARCHITECTURE/
-  DECISIONS/OPERATIONS. Bez migrace dat nebo CLI. Riziko: omezené assets mohou
-  způsobit fail-closed živý probe; politika se kvůli úplnosti nesmí uvolnit.
-- Baseline validace v této session: npm.cmd run check PASS 157/157 + build/typecheck;
-  audit --omit=dev 0; plný audit 2 známé moderate dev-only (exit 1).
-- Přesný další krok: jediný implementer provede tento plán, neoznačí BL DONE ani
-  nespustí živý LinkedIn; potom orchestrátor diff/test/implementation checkpoint.
-
-## Dokončené checkpointy
-
-- `8624438` — kritické integritní blockery a backlog zaznamenány v aktivních docs.
-- `6168d73` — vytvořeno konsolidované FAQ.
-- `5806359` — FAQ zkráceno na 15 hlavních témat se zaměřením na `isStarred`.
-
-## Otevřené nálezy a blockery
-
-- BL-007 je znovu otevřený kritický bezpečnostní nález a blokuje živý probe.
-- BL-006 je otevřený kritický nález integrity obsahu.
-- Žádný otevřený technický blocker syntetické implementace; nezávislé review ještě
-  neproběhlo. Živá kompatibilita přísného asset allowlistu není zatím prokázána.
-- Živý history probe se nesmí spustit do uzavření BL-007; souhlas s nezbytnými
-  pozdějšími živými běhy již byl udělen v aktuálním uživatelském promptu.
+Žádný známý technický blocker; při login/challenge zastavit podle uživatelského
+pokynu. Nová session předpokládá, že starý subagent neběží.

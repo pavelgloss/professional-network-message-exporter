@@ -1,13 +1,11 @@
 # Aktuální handover
 
-Poslední review dokumentace: **2026-09-25 Europe/Prague**
+Poslední review dokumentace: **2026-09-26 Europe/Prague**
 
-Stav: **implementace existuje, ale živý probe blokuje znovu potvrzený race BL-007 a
-důvěryhodný obsahový export blokuje chyba BL-006; conversation-level `isStarred` je
-samostatně implementováno a ověřeno**
+Stav: **BL-007 uzavřen; důvěryhodný obsahový export stále blokuje chyba BL-006.
+Conversation-level `isStarred` je samostatně implementováno a ověřeno.**
 
-Poslední commit měnící runtime implementaci: **`bcfa8b5`**; novější commity před tímto
-handoverem byly dokumentační.
+Poslední runtime commit: **`43ec961`**; finální testová oprava **`27b9fc4`**.
 
 Tento soubor obsahuje pouze současný stav. Staré checkpointy, slepé cesty a jejich
 dočasné `Next:` kroky jsou v `docs/history/HANDOVER_CHECKPOINTS.md` a nejsou aktivní.
@@ -30,19 +28,21 @@ Nový agent má číst v tomto pořadí:
 Potom stačí před změnou přečíst jen relevantní zdrojové soubory a testy podle mapy v
 architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
 
-## Kritický bezpečnostní blocker — začít zde
+## Uzavřený bezpečnostní blocker BL-007
 
-Implementace BL-007 v aktuálním diffu přidává lifetime deny proxy a izolované
+Implementace BL-007 přidává lifetime deny proxy a izolované
 GET/HEAD brokery. Selection generation se synchronně revokuje před drainem a
-zavřením; nový target vzniká až po dokončení bariéry. Původní runtime baseline výše
-je historický; aktuální fáze, testy a review jsou v `BACKLOG_PROGRESS.md`. Dokud
-orchestrátor neuzavře BL-007, zůstává zákaz živého probe platný.
+zavřením; nový target vzniká až po dokončení bariéry. Nezávislé review je uzavřené.
+Tři plné check běhy prošly 165/165; pět samostatných finálních stress procesů
+ověřilo po 85 timing iteracích včetně cleanupu a úmyslného route bypassu: cizí
+server hity vždy 0. Produkční audit 0, plný audit 2 známé moderate dev-only.
+Živá kompatibilita brokeru zatím není ověřena; další práce je BL-006.
 
-`BL-007` znovu otevírá historický High nález `ZR-01`: plný integrační běh 2026-09-25
+Historický důvod BL-007: plný integrační běh 2026-09-25
 jednou propustil request staré selection stránky na cizí messaging endpoint, aniž by
 jej zaznamenaly guard countery. Tři cílená opakování potom prošla, což je typický
-intermittent race, ne důkaz bezpečnosti. Začít syntetickou opravou a opakovaným
-server-hit-0 stress testem; do uzavření BL-007 nespouštět živý history probe.
+intermittent race, ne důkaz bezpečnosti. Nová lifetime transportní bariéra uzavírá
+cestu, kterou Playwright při zániku frame pokračoval mimo aplikační route guard.
 
 ## Kritický blocker integrity obsahu
 
@@ -67,7 +67,7 @@ Dokud nebude BL-006 opraven, zrevidován a ověřen novým nezávislým živým 
 
 ## Ověřený stav
 
-Poslední ověření runtime:
+Historické ověření před BL-007 (nová evidence je výše):
 
 - baseline 2026-09-24: `npm.cmd run check` PASS — 157/157 testů včetně `isStarred`;
 - běh 2026-09-25: typecheck/build PASS, ale jeden z 157 testů selhal na BL-007;
@@ -210,8 +210,7 @@ proklikáváním všech vláken.
 
 Autoritativní detaily jsou v `BACKLOG.md`; pořadí pro nový agent je:
 
-1. **BL-007 (kritická):** deterministicky uzavřít selection-page network race a
-   opakovaně prokázat nula cizích server hitů; do té doby žádný živý probe.
+1. **BL-007 DONE:** transportní bariéra, opakované testy a review uzavřené.
 2. **BL-006 (kritická):** opravit záměnu InMail subject/body, přidat regresní testy,
    review a teprve potom provést nový živý export s explicitním souhlasem.
 3. **BL-003 (kritická změna produktu):** každý běžný export jako nový nezávislý
@@ -238,10 +237,9 @@ npm.cmd audit --omit=dev
 npm.cmd audit
 ```
 
-Očekávaný stav po tomto dokumentačním commitu je čistý worktree. První implementační
-úkol nové session je BL-007; až po jeho uzavření následuje BL-006. Historický zelený
-baseline 157 testů není důvod intermittent race ani chybějící InMail fixture
-přeskočit.
+První nedokončená položka je BL-006; přesnou fázi ověřte v BACKLOG_PROGRESS.md.
+BL-007 neopakujte. Souhlas s nezbytnou živou validací byl v této session udělen;
+obsah exportů zůstává nedůvěryhodný do opravy a nové validace BL-006.
 
 Při změně architektury, CLI, bezpečnostní politiky nebo persistence aktualizovat ve
 stejném commitu `README.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` a relevantní

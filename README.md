@@ -20,16 +20,15 @@ se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 > důvěryhodné pro práci s obsahem, dokud nebude opraven a ověřen
 > [BL-006](BACKLOG.md#bl-006--kritické-inmail-subject-se-chybně-exportuje-jako-text-zprávy).
 >
-> **Aktuální bezpečnostní blocker:** Intermittent selection-page teardown race může
-> před history probe propustit cizí messaging GET bez záznamu guardu. Do opravy
-> [BL-007](BACKLOG.md#bl-007--kritické-deterministicky-uzavřít-síť-selection-stránky-před-history-probe)
-> nespouštějte živý history probe.
+> **BL-007 uzavřen (2026-09-26):** selection teardown chrání samostatná transportní
+> bariéra, opakované lokální server-hit-0 testy a nezávislé review. Živý probe nadále
+> vyžaduje výslovný souhlas uživatele; oprava neověřuje obsah zpráv BL-006.
 
 Oprava BL-007 nyní používá pro probe vlastní loopback deny proxy po celou dobu
 contextu. Browser nemá přímou HTTP/CONNECT cestu ven; dokumenty, povolené API a
 statické assets dostává přes oddělené GET/HEAD brokery bez redirectů. Neznámé
-resources se blokují, zásah proxy znamená redigovaný hard failure. Uzavření položky
-a povolení živého probe vyžaduje dokončení testů a nezávislého review v checkpointu.
+resources se blokují, zásah proxy znamená redigovaný hard failure. Důkazy validace
+jsou v checkpointu; živá kompatibilita nového asset brokeru zatím nebyla ověřena.
 
 ## Dokumentace a předání projektu
 
@@ -173,8 +172,8 @@ nástroj; současná CLI dokumentace takovou funkci neslibuje.
 
 ## Známá omezení
 
-- Kritický BL-007: stress test jednou reprodukoval síťový únik requestu staré
-  selection stránky bez hard-failure counteru; živý probe je do opravy blokovaný.
+- BL-007 je opraven a synteticky ověřen; nové nepodporované assets mohou probe
+  ukončit fail-closed. Jeho živá kompatibilita se ověří při BL-006.
 - Kritický BL-006: u InMail zpráv může být `subject` zaměněn za `Message.text`; schema,
   unikátní ID ani `partial=false` tuto sémantickou chybu neodhalí.
 - Živě byl ověřen úplný export 100 konverzací. `--limit 200` je podporovaný, ale

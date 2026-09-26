@@ -14,11 +14,14 @@ kontextu. Níže jsou pouze anonymní agregáty.
 
 ## 1. Co umí nativní CLI
 
-BL-007 se ověřuje výhradně syntetickými loopback servery: původní 30× timing race,
+BL-007 byl uzavřen 2026-09-26 výhradně syntetickými loopback servery: původní 30× timing race,
 rozšířená 0–10ms source matrix, úmyslný Playwright route bypass, broker asset/history
 happy path a pending selection GET drain. Runtime nově vyžaduje lifetime deny proxy
 pro probe. Žádný nový živý LinkedIn běh není touto implementací deklarován; přesné
-výsledky opakovaných procesů a nezávislého review eviduje `BACKLOG_PROGRESS.md`.
+výsledky eviduje `BACKLOG_PROGRESS.md`: 5 samostatných procesů × 85 timing iterací,
+kontroly po cleanupu a úmyslný bypass, všechny foreign/unread hity 0; tři plné
+check běhy 165/165 PASS. Review P2 o post-cleanup assertion opraven a re-review
+bez otevřených blokujících nálezů. Audity: produkce 0, full 2 známé moderate dev-only.
 
 Nativní podporovaný export je:
 
