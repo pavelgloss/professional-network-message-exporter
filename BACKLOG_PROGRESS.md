@@ -50,6 +50,12 @@ Main full check PASS188/188 + typecheck/build; čtyři nové status/redirect/MIM
 po runtime/test části; main doplnil docs. Commit5cd8359 nezávisle zrevidován bez
 nálezů; nyní jeden další autorizovaný counts-only live pokus beze změny policy.
 
+Druhý live pokus 2026-09-26 16:38:14Z–16:38:27Z: opět bezpečně odmítnut před
+targetem, transportDenied0/targetnav0; konkrétní příčina **script:body-size**.
+Sdílený 16MiB API limit odmítl rozbalený statický JS, nikoli endpoint/redirect/login.
+Následuje read-only plán odděleného omezeného script limitu; API/doc limity zůstávají.
+Další live až po implementaci, syntetické velikostní regresi a nezávislém review.
+
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
 Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými
