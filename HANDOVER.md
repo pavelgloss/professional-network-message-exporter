@@ -46,10 +46,14 @@ cestu, kterou Playwright při zániku frame pokračoval mimo aplikační route g
 
 ## Kritický blocker integrity obsahu
 
-`BL-006` v `BACKLOG.md` blokuje důvěryhodný export textů zpráv. Funkce `textFrom()` v
-`src/linkedin/network/response-parser.ts` přijímá top-level InMail `subject` dříve,
-než projde skutečné body obálky; v date-range výstupu se proto u různých message ID,
-časů a směrů opakuje například pracovní titulek `AI Architect @ČEPS` místo obsahu.
+`BL-006` v `BACKLOG.md` nadále blokuje důvěryhodný export do review a nové živé
+validace. Implementovaný adapter v `src/linkedin/network/response-parser.ts` již
+odmítá `subject` jako body, ignoruje obecné renderer metadata jako přílohy a počítá
+miss také u generic nested/id-less kandidátů. Nová anonymní InMail fixture ověřuje
+přesné inbound/outbound texty, ID, časy, přílohu a ochranu úplného JSON přes store.
+
+Původní chyba přijímala top-level subject před skutečným body; v date-range výstupu
+se proto u různých message ID, časů a směrů opakoval pracovní titulek místo obsahu.
 
 Anonymní kontrola `messages-since-2026-05-01-updated.json` našla nejméně 107 takto
 silně podezřelých zpráv z 253 ve 28 konverzacích. Message ID duplicitní nejsou; vadný
@@ -195,7 +199,7 @@ proklikáváním všech vláken.
 - `messages-since-2026-05-01-updated.json` používá incremental baseline, protože
   čerstvý list 2026-09-25 nepřekročil hranici 1. 5. Jeho `range.complete` není totéž
   co nativní globální `partial=false`.
-- Parser aktuálně může zaměnit InMail `subject` za `Message.text`; viz kritický BL-006.
+- Parser opraven v BL-006; nezávislé review a nový živý obsahový důkaz ještě chybí.
 - Běžný opakovaný export do stejného `--output` dnes implicitně merguje předchozí
   výsledek a může použít snapshot recovery. Uživatel požaduje opačný default: každý
   běh jako nový izolovaný bundle, merge pouze explicitně; viz kritický BL-003.

@@ -7,10 +7,39 @@ architekturu ani o veřejná testovací data. Uvedené JSON soubory jsou ignorov
 Gitem, obsahují soukromé zprávy a nesmějí se commitovat, sdílet ani vkládat do AI
 kontextu. Níže jsou pouze anonymní agregáty.
 
-> **Později zjištěná obsahová vada (BL-006):** Network parser může u InMail eventů
-> vybrat top-level `subject` místo skutečného message body. Oba níže popsané
+> **Později zjištěná obsahová vada (BL-006):** Před opravou network parser u InMail
+> eventů mohl vybrat top-level `subject` místo skutečného body. Oba níže popsané
 > date-range soubory jsou proto historické diagnostické artefakty a nesmějí se použít
 > pro obsahovou analýzu; jejich strukturální kontroly tuto sémantickou chybu nekryly.
+
+## BL-006: připravené ověření, zatím bez nového živého výsledku
+
+Nová anonymní fixture `inmail-body-integrity.json` zachovává Dash InMail tvar:
+stejný subject, dva různé body, inbound/outbound, stabilní ID, časy a přílohu.
+Quality gate porovnává přesné hodnoty po normalizaci a persistence; subject-only
+kandidát musí vést na `.partial` a zachovat úplný JSON beze změny. Historický
+minimální dopad zůstává 107/253 zpráv ve 28 konverzacích, není to úplný odhad.
+
+Živá validace je záměrně mimo `npm test`/`npm run check`. Po review a s aktuálním
+souhlasem vlastníka lze explicitně spustit:
+
+```powershell
+$env:LINKEDIN_LIVE_INMAIL_VALIDATION = '1'
+npx.cmd vitest run --config scripts/manual-tests/vitest.config.ts
+Remove-Item Env:LINKEDIN_LIVE_INMAIL_VALIDATION
+```
+
+Harness spustí standardní export `--with-history-probe --limit 100` s novou UUID
+output cestou pod ignorovaným `data/linkedin/`; ověří nepřítomnost JSON i `.partial`.
+Existující export tedy není baseline. Zachycené bodies porovná pouze v paměti přes
+nezávislé explicitní referenční paths se skutečně uloženým exportem a stabilními ID.
+Loguje jen počty/booleany a uzavřené error kódy; běžné log details, obsahové
+diagnostics a původní výjimky nevypisuje. Potřebuje inbound i outbound InMail body,
+alespoň jedno skutečné body odlišné od subjectu a reportuje počet attachment-only,
+nulové neshody, chybějící/unsupported vzorky a nulové parser misses; žádné vzorky
+není úspěch. `partial` kvůli coverage se reportuje odděleně od integrity textu.
+AUTH_REQUIRED/AUTH_CHALLENGE nebo hard bezpečnostní chyba znamená zastavit;
+policy se kvůli úspěchu testu nerozšiřuje. Běžný Chrome se nepoužívá ani nezavírá.
 
 ## 1. Co umí nativní CLI
 

@@ -6,14 +6,14 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 - **Aktivní položka/fáze:** BL-006 `IMPLEMENTING`; BL-007 `DONE`.
 - **Poslední runtime commit:** `43ec961`; P2 test fix `27b9fc4`.
-- **Worktree:** ověřen čistý na `adfb919`; předchozí implementer před usage limitem
-  neuložil žádnou změnu. Schválený plán se neopakuje.
-- **Subagenti:** read-only `bl006_plan` dokončen; obnovuje se jediný `bl006_impl`.
+- **Worktree:** dirty implementace BL-006 nad resume checkpointem `c490a51`;
+  parser, fixtures, testy, safe manual harness a aktivní docs jsou připravené.
+- **Subagenti:** writer předán orchestrátorovi; následuje cílená oprava nalezená plným testem.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
-- **První další akce:** implementovat commitnutý plán BL-006;
-  neopakovat hotovou BL-007 implementaci ani její testy bez nové příčiny.
+- **První další akce:** hlavní agent zkontroluje diff a vytvoří implementation
+  checkpoint commit; pak nezávislé review a plná validace. Živý harness až po review.
 
 | Pořadí | Položka | Stav | Zbývá |
 | ---: | --- | --- | --- |
@@ -24,6 +24,32 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 | 5 | BL-001 | NOT_STARTED | Ověřená jména |
 | 6 | BL-002 | NOT_STARTED | Lokální přílohy v bundle |
 | 7 | BL-004 | NOT_STARTED | Research-only; neimplementovat funkci |
+
+## BL-006 implementation handoff (2026-09-26)
+
+- Body adapter čte jen body/messageBody/attributedBody/eventContent/content/commentary
+  a nakonec explicitní text, bounded depth/visited. Subject a metadata se nepoužívají.
+- Attachment adapter čte přímá explicitní attachment metadata a známé renderContent
+  media hranice. Obecný renderer type/card title/tracking ID není příloha.
+- Generic nested/id-less relevantní kandidáti započítávají miss; stejný wrapped
+  objekt se nepočítá znovu jako standalone/nested. Included event s vlastní message
+  i conversation identitou se počítá i mimo elements; profily/cards nikoli.
+- Nová anonymní Dash InMail fixture a integrační quality gate ověřují exact text,
+  ID, čas, inbound/outbound, přílohu, precedence, poison metadata, cyklus, fallback ID
+  a subject-only partial bez změny úplného exportu. Žádný schema/policy/CLI upgrade.
+- scripts/manual-tests obsahuje explicitní opt-in live test, standalone Vitest config
+  a nezávislý counts-only InMail witness. Default test glob jej nespouští; typecheck
+  jej kontroluje. Výjimky se převádějí na uzavřené kódy bez původního obsahu.
+  Instrukce jsou v docs/OPERATIONS.md; živý test zatím NEPROBĚHL.
+- Cílené ověření: typecheck PASS; parser/inmail/history/store/domain/witness
+  72/72 PASS ve 6 souborech; git diff --check PASS (jen CRLF upozornění).
+- Main full check zatím FAIL v tests/unit/network-diagnostics.test.ts: canary event
+  s message URN bez conversation identity nově správně hlásí miss místo 0; ověřit
+  očekávání a zachovat redakční assertions. Ostatní výsledky běhu se ještě sbírají.
+  Audity znovu: produkce 0, full 2 známé moderate dev-only.
+- Zbývá: main implementation commit, nezávislé review, opravy/re-review, plný check
+  a oba audity, autorizovaný živý export. Obsah starých reálných exportů je nadále
+  nedůvěryhodný, BL-006 není DONE. Otevřené findings: review ještě neproběhlo.
 
 ## BL-007 uzavřené rozhodnutí a důkazy
 
@@ -85,14 +111,10 @@ při BL-006; kvůli úplnosti nepovolovat nejasné endpointy/redirect/POST/WS/SW
    či skutečný hard safety blocker vyžaduje zastavení. Partial kvůli page coverage
    vyhodnotit odděleně od správnosti textu.
 
-Přesný další krok: jediný implementer provede body/miss/attachment opravu, fixtures,
-quality gate, docs a safe live harness; sám živý test nespouští a neoznačuje DONE.
-
-Parser stále přijímá top-level subject jako Message.text. Staré skutečné exporty
-jsou obsahově nedůvěryhodné. Planner má mapovat přesné podporované body wrappers,
-subject-only parser misses/completeness, anonymní inbound/outbound/attachment
-regresi a quality gate. Po implementaci a review nový nezávislý živý export do
-nové ignorované cesty (před BL-003 ještě nesmí načíst starou baseline).
+Přesný další krok: opravit/ověřit diagnostický test z plné validace, pak nezávislé
+review, plná validace a nový autorizovaný živý běh. Parser již subject nečte;
+staré skutečné exporty však zůstávají obsahově nedůvěryhodné. Živá validace musí
+použít novou ignorovanou cestu (před BL-003 nesmí načíst starou baseline).
 Obsahová validace pouze anonymními agregáty, žádné zprávy/jména/tokeny do kontextu.
 
 Žádný známý technický blocker; při login/challenge zastavit podle uživatelského

@@ -177,3 +177,19 @@ skutečného serveru pro HTTP loopback i HTTPS CONNECT a auditovatelný hard sta
 **Důsledek:** Samotné CDP freeze/Network.setBlockedURLs není autoritativní bariéra.
 Nepodporovaný asset či nová LinkedIn závislost může omezit funkčnost, ale nesmí
 způsobit rozšíření API policy nebo přímý fallback. CLI a data schema se nemění.
+
+## D14 — Subject není message body a metadata nejsou příloha (BL-006)
+
+**Rozhodnutí:** Nahradit obecný textový fallback explicitními body hranami
+`body` → `messageBody` → `attributedBody` → `eventContent` → `content` → `commentary`
+→ `text`, s omezením hloubky a visited setem. Subject se neukládá a schema v1 zůstává.
+Obecné renderer metadata nejsou důkaz attachment-only zprávy; podporované přílohy
+musí být uvnitř explicitní attachments nebo známého media discriminantu.
+
+**Proč:** Předchozí parser kontaminoval zprávy InMail subjectem ještě před merge.
+Úspěšné schema/ID kontroly chybu neodhalí. Přesné texty, časy, směry a přílohy nově
+ověřuje anonymní quality gate až přes persistence. Miss jakéhokoli relevantního
+kandidáta musí zneplatnit úplnost včetně generic nested/id-less cesty.
+
+**Důkazní hranice:** Implementace a syntetické testy neopravují staré JSONy. BL-006
+se uzavře až po nezávislém review, plné validaci a nezávislém živém obsahovém důkazu.

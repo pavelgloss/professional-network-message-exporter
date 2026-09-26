@@ -83,13 +83,25 @@ function participantFrom(value: unknown, index: IncludedIndex): RawParticipant |
   return { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(profileUrl ? { profileUrl } : {}), ...(headline ? { headline } : {}) };
 }
 
+// Only these body edges may carry message text. Never recursively search arbitrary
+// metadata (including subjects, titles, attributes, cards, or attachment names).
+// Nested body fields take precedence over a wrapper's generic `text` field.
+const bodyKeys = ['body', 'messageBody', 'attributedBody', 'eventContent', 'content', 'commentary'] as const;
 function textFrom(obj: JsonRecord): string | undefined {
-  const direct = stringAt(obj, 'text', 'body', 'messageBody', 'subject');
-  if (direct) return cleanText(direct);
-  for (const key of ['body', 'eventContent', 'attributedBody', 'commentary', 'content']) {
-    if (record(obj[key])) { const found = textFrom(obj[key] as JsonRecord); if (found) return found; }
-  }
-  return undefined;
+  const seen = new WeakSet<object>();
+  let remaining = 100;
+  const read = (value: unknown, depth: number): string | undefined => {
+    if (depth > 8 || remaining-- <= 0) return undefined;
+    if (typeof value === 'string') return cleanText(value);
+    if (!record(value) || seen.has(value)) return undefined;
+    seen.add(value);
+    for (const key of bodyKeys) {
+      const found = read(value[key], depth + 1);
+      if (found) return found;
+    }
+    return cleanText(value.text);
+  };
+  return read(obj, 0);
 }
 
 function conversationIdForMessage(obj: JsonRecord, conversationUrn?: string): string | undefined {
@@ -97,45 +109,23 @@ function conversationIdForMessage(obj: JsonRecord, conversationUrn?: string): st
   return conversationIdFromUrn(reference) ?? cleanText(stringAt(obj, 'conversationId'));
 }
 
-function looksLikeMessageCandidate(obj: JsonRecord): boolean {
+function looksLikeMessageCandidate(obj: JsonRecord, conversationUrn?: string): boolean {
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const entityType = entityUrn?.match(/^urn:li:([^:]+):/i)?.[1];
   if (/(?:message|event)/i.test(entityType ?? '')) return true;
-  const hasSender = Boolean(urnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn'));
-  const hasConversation = Boolean(conversationIdForMessage(obj));
+  const hasSender = Boolean(identityUrnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn'));
+  const hasConversation = Boolean(conversationIdForMessage(obj, conversationUrn));
   const hasTimestamp = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created') !== undefined;
-  const hasContentShape = ['text', 'body', 'messageBody', 'eventContent', 'content', 'attachments'].some((key) => key in obj);
+  const hasContentShape = ['text', ...bodyKeys, 'subject', 'attachments', 'renderContent'].some((key) => key in obj);
   return hasSender && hasConversation && hasTimestamp && hasContentShape;
 }
 
-function firstStringInTree(root: unknown, keys: readonly string[]): string | undefined {
-  const queue: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
-  const seen = new WeakSet<object>();
-  let remaining = 200;
-  while (queue.length && remaining > 0) {
-    remaining -= 1;
-    const current = queue.shift()!;
-    if (!current.value || typeof current.value !== 'object' || current.depth > 6
-      || seen.has(current.value as object)) continue;
-    seen.add(current.value as object);
-    if (record(current.value)) {
-      for (const key of keys) {
-        const value = current.value[key];
-        if (typeof value === 'string' && cleanText(value)) return cleanText(value);
-      }
-      for (const child of Object.values(current.value)) queue.push({ value: child, depth: current.depth + 1 });
-    } else if (Array.isArray(current.value)) {
-      for (const child of current.value) queue.push({ value: child, depth: current.depth + 1 });
-    }
-  }
-  return undefined;
-}
-
-function attachmentFrom(root: unknown, allowTypeOnly: boolean): Attachment | undefined {
-  const id = firstStringInTree(root, ['id', 'entityUrn', 'urn', 'mediaUrn', 'assetUrn', 'digitalmediaAssetUrn']);
-  const name = firstStringInTree(root, ['fileName', 'filename', 'name', 'title']);
-  const type = firstStringInTree(root, ['mimeType', 'mediaType', 'contentType', 'type']);
-  const rawUrl = firstStringInTree(root, ['downloadUrl', 'mediaUrl', 'navigationUrl', 'url']);
+function attachmentFrom(root: unknown): Attachment | undefined {
+  if (!record(root)) return undefined;
+  const id = cleanText(stringAt(root, 'id', 'entityUrn', 'urn', 'mediaUrn', 'assetUrn', 'digitalmediaAssetUrn'));
+  const name = cleanText(stringAt(root, 'fileName', 'filename', 'name'));
+  const type = cleanText(stringAt(root, 'mimeType', 'mediaType', 'contentType', 'type'));
+  const rawUrl = stringAt(root, 'downloadUrl', 'mediaUrl', 'url');
   let url: string | undefined;
   if (rawUrl) {
     try {
@@ -143,22 +133,28 @@ function attachmentFrom(root: unknown, allowTypeOnly: boolean): Attachment | und
       if (parsed.protocol === 'https:' && /(^|\.)linkedin\.com$/i.test(parsed.hostname)) url = parsed.toString();
     } catch { /* malformed attachment URLs are omitted without losing the message */ }
   }
-  const meaningfulType = Boolean(type && (allowTypeOnly || type.includes('/') || /file|image|video|audio|document|attachment/i.test(type)));
+  const meaningfulType = Boolean(type && (/^[\w.+-]+\/[\w.+-]+$/.test(type) || /^(?:file|image|video|audio|document|attachment)$/i.test(type)));
   if (!id && !name && !url && !meaningfulType) return undefined;
   return { ...(id ? { id } : {}), ...(name ? { name } : {}), ...(type ? { type } : {}), ...(url ? { url } : {}) };
 }
 
-function attachmentsFrom(obj: JsonRecord, allowWeakRenderContent: boolean): Attachment[] {
-  const roots: Array<{ value: unknown; allowTypeOnly: boolean }> = [];
+function attachmentsFrom(obj: JsonRecord): Attachment[] {
+  const roots: unknown[] = [];
   const explicit = obj.attachments;
-  if (Array.isArray(explicit)) roots.push(...explicit.map((value) => ({ value, allowTypeOnly: true })));
-  else if (record(explicit)) roots.push({ value: explicit, allowTypeOnly: true });
+  if (Array.isArray(explicit)) roots.push(...explicit.slice(0, 100));
+  else if (record(explicit)) roots.push(explicit);
   const rendered = obj.renderContent;
-  if (Array.isArray(rendered)) roots.push(...rendered.map((value) => ({ value, allowTypeOnly: allowWeakRenderContent })));
-  else if (record(rendered)) roots.push({ value: rendered, allowTypeOnly: allowWeakRenderContent });
+  // Only known media discriminants establish an attachment boundary. A generic
+  // renderer's type, card title, or tracking ID is not attachment evidence.
+  for (const value of (Array.isArray(rendered) ? rendered.slice(0, 100) : [rendered])) {
+    if (!record(value) || !record(value.content)) continue;
+    for (const key of ['file', 'image', 'video', 'audio', 'document']) {
+      if (record(value.content[key])) roots.push(value.content[key]);
+    }
+  }
   const unique = new Map<string, Attachment>();
   for (const root of roots.slice(0, 100)) {
-    const attachment = attachmentFrom(root.value, root.allowTypeOnly);
+    const attachment = attachmentFrom(root);
     if (!attachment) continue;
     const key = JSON.stringify([attachment.id, attachment.name, attachment.type, attachment.url]);
     unique.set(key, attachment);
@@ -170,11 +166,11 @@ function messageFrom(obj: JsonRecord, index: IncludedIndex, sourcePage: string, 
   const entityUrn = urnAt(obj, 'entityUrn', 'eventUrn', 'messageUrn', 'backendUrn');
   const senderUrn = identityUrnAt(obj, 'from', '*from', 'sender', '*sender', 'actor', '*actor', 'senderUrn', 'participantUrn');
   const text = textFrom(obj);
-  const attachments = attachmentsFrom(obj, !text);
+  const attachments = attachmentsFrom(obj);
   const sentAt = numberOrStringAt(obj, 'createdAt', 'sentAt', 'deliveredAt', 'timestamp', 'created');
   // Empty text is accepted only when the bounded adapter preserved meaningful
   // attachment/rich-content metadata. Unknown content still fails coverage closed.
-  if (!looksLikeMessageCandidate(obj) || (!text && !attachments.length)) return undefined;
+  if (!looksLikeMessageCandidate(obj, conversationUrn) || (!text && !attachments.length)) return undefined;
   const senderValue = ['from', '*from', 'sender', '*sender', 'actor', '*actor'].map((key) => obj[key]).find((value) => record(value) || typeof value === 'string');
   const senderObj = record(senderValue) ? senderValue : typeof senderValue === 'string' ? lookupIncluded(index, senderValue) : undefined;
   const senderProfile = senderObj ? profileFrom(senderObj, index) : undefined;
@@ -313,16 +309,18 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: N
   const standaloneCandidates = isHistoryResource(sourceUrl) ? uniqueEnvelopeElements(restEnvelopeElements(payload)).map((value, sourceOrder) => {
     const resolution = resolveIncludedReference(value, index);
     return { value, resolved: resolution.object, candidate: resolution.messageLike, sourceOrder };
-  }).filter((entry) => entry.candidate) : [];
+  }).filter((entry) => entry.candidate && (!entry.resolved || !wrappedMessageObjects.has(entry.resolved))) : [];
   const standaloneResults = standaloneCandidates.map((entry) => {
     const parsed = entry.resolved ? messageFrom(entry.resolved, index, sourcePage) : undefined;
     return { ...entry, parsed: parsed ? { ...parsed, sourceOrder: entry.sourceOrder } : undefined };
   });
   const standaloneMisses = standaloneResults.filter((result) => !result.parsed?.conversationId);
   const standaloneObjects = new WeakSet(standaloneResults.map((entry) => entry.resolved).filter(record));
+  const nestedMisses: Array<{ resolved: JsonRecord }> = [];
   const nestedMessages: RawMessage[] = objects.flatMap((obj, sourceOrder) => {
     if (wrappedMessageObjects.has(obj) || standaloneObjects.has(obj)) return [];
     const message = messageFrom(obj, index, sourcePage);
+    if (looksLikeMessageCandidate(obj) && !message?.conversationId) nestedMisses.push({ resolved: obj });
     return message ? [{ ...message, sourceOrder }] : [];
   });
   const standaloneMessages: RawMessage[] = standaloneResults.flatMap((entry) => entry.parsed?.conversationId ? [entry.parsed] : []);
@@ -338,7 +336,7 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: N
     if (!duplicate) (conversation.messages ??= []).push(message);
   }
   let unassignedStandaloneMisses = 0;
-  for (const { resolved } of standaloneMisses) {
+  for (const { resolved } of [...standaloneMisses, ...nestedMisses]) {
     const conversationId = resolved ? conversationIdForMessage(resolved) : undefined;
     if (!conversationId) { unassignedStandaloneMisses += 1; continue; }
     let conversation = conversations.find((value) => value.id === conversationId);
@@ -379,7 +377,7 @@ export function parseNetworkPayload(payload: unknown, sourceUrl = '', options: N
       account = { ...(id ? { id } : {}), ...(entityUrn ? { entityUrn } : {}), ...(name ? { name } : {}), ...(publicIdentifier ? { profileUrl: `https://www.linkedin.com/in/${publicIdentifier}` } : {}) };
     }
   }
-  const relevantMisses = wrappedMisses + standaloneMisses.length;
+  const relevantMisses = wrappedMisses + standaloneMisses.length + nestedMisses.length;
   return { conversations, ...(account ? { account } : {}), paginationUrls: [...paginationUrls], strategies: conversations.length ? ['network:recursive-voyager'] : [], misses: relevantMisses };
 }
 

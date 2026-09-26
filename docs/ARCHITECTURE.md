@@ -235,6 +235,22 @@ Pokud nový běh nedokáže znovu načíst starší stránky, smí použít hist
 Pouhá shoda conversation ID, textový fingerprint nebo id-less zpráva nestačí. Tím se
 brání označení historie s časovou mezerou jako úplné.
 
+### InMail body adapter (BL-006, čeká na review/živou validaci)
+
+Parser sleduje výhradně známé klíče `body`, `messageBody`, `attributedBody`,
+`eventContent`, `content`, `commentary` v tomto pořadí a poté explicitní `text`.
+Pořadí platí v každé obálce; průchod má visited set, hloubku nejvýše 8 a rozpočet
+100 návštěv. Neprochází pole, neznámé obálky, text attributes, card metadata ani
+subject/title/headline. Whitespace-only text není body. Body shodné se subjectem
+je platné, pokud bylo skutečně načteno z body cesty.
+
+Příloha musí mít přímá meaningful metadata v explicitním `attachments` nebo pod
+`renderContent[].content.file|image|video|audio|document`. Tracking ID, card title
+a obecný renderer discriminator přílohu nedokazují. Attachment-only event má prázdný
+text; neznámý/subject-only event způsobí miss v wrapped, standalone, referenced
+i generic nested cestě. Již zpracovaný objekt se v další cestě nepočítá podruhé.
+Subject nemá schema pole a neúčastní se fallback ID. Schema zůstává v1.
+
 ## 4. Normalizace, schema a merge
 
 Runtime schema je v `src/domain/schema.ts` a má verzi `schemaVersion: 1`.
@@ -358,9 +374,9 @@ LinkedIn session a nemají sahat na reálná data.
 - **BL-007 uzavřen:** lifetime deny proxy chrání i requesty mimo Playwright route
   lifecycle. Pět oddělených stress procesů prokázalo nula cizích server hitů včetně
   cleanupu; živá kompatibilita nového asset brokeru zatím není ověřena.
-- **Aktuální kritická vada BL-006:** `textFrom()` může vybrat top-level InMail
-  `subject` dříve než skutečný nested message body. Existující reálné exporty nejsou
-  obsahově důvěryhodné; schema ani unikátní ID tuto sémantickou záměnu neodhalí.
+- **BL-006 čeká na review/živý důkaz:** omezený body adapter již odmítá subject jako
+  text. Existující reálné exporty zůstávají obsahově vadné; schema ani unikátní ID
+  jejich sémantickou chybu neodhalí. Nové testy porovnávají přesné texty přes store.
 - End-to-end byl živě ověřen limit 100; limit 200 je podporovaný, ale na tomto účtu
   nebyl živě ověřen. Maximální povolená konfigurace je 500.
 - Lazy-loading older-page operace je na straně LinkedIn UI nondeterministický. Na

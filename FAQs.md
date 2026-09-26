@@ -32,9 +32,10 @@ textů zpráv.
 
 ## 6. Je dnes export zpráv jako celek důvěryhodný?
 
-Ne: kritický BL-006 ukázal, že parser může u InMail eventů uložit společný `subject`
-místo skutečného textu zprávy; v jednom exportu je takto podezřelých nejméně 107 z
-253 zpráv, proto se po opravě musí vytvořit nový nezávislý export.
+Dosavadní exporty ne: BL-006 kontaminoval nejméně 107 z 253 zpráv v jednom exportu
+společným InMail `subject`. Parser nyní přijímá jen známé body struktury a skutečné
+přílohy; chybějící body znamená parser miss. Oprava čeká na review a nové živé
+ověření. Staré vadné soubory se neopravují mergem a schema v1 subject neukládá.
 
 ## 7. Jak export technicky získává konverzace a celé historie?
 

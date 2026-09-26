@@ -1,0 +1,33 @@
+{
+  "elements": [{
+    "entityUrn": "urn:li:fsd_messengerConversation:INMAIL-THREAD",
+    "conversationParticipants": [
+      { "hostIdentityUrn": "urn:li:fsd_profile:SELF", "name": "Account Owner" },
+      { "hostIdentityUrn": "urn:li:fsd_profile:EXT", "name": "External Person" }
+    ],
+    "paging": { "hasNextPage": false },
+    "messages": { "elements": [
+      {
+        "entityUrn": "urn:li:fsd_messageEvent:INMAIL-IN",
+        "backendConversationUrn": "urn:li:msg_conversation:INMAIL-THREAD",
+        "sender": { "hostIdentityUrn": "urn:li:fsd_profile:EXT", "name": "External Person" },
+        "deliveredAt": 1760000000000,
+        "subject": "Example position at Example Company",
+        "body": { "text": "Hello, would you like the project details?", "attributes": [] },
+        "renderContent": [{ "renderer": { "type": "text", "tracking": { "id": "TRACKING-ONLY" } } }]
+      },
+      {
+        "entityUrn": "urn:li:fsd_messageEvent:INMAIL-OUT",
+        "backendConversationUrn": "urn:li:msg_conversation:INMAIL-THREAD",
+        "sender": { "hostIdentityUrn": "urn:li:fsd_profile:SELF", "name": "Account Owner" },
+        "deliveredAt": 1760000001000,
+        "subject": "Example position at Example Company",
+        "body": { "text": "Thank you. Please send the technical scope.", "attributes": [] },
+        "renderContent": [{ "content": { "file": {
+          "id": "FILE-EXAMPLE", "name": "example.pdf", "mimeType": "application/pdf",
+          "url": "https://www.linkedin.com/dms/document/example"
+        } } }]
+      }
+    ] }
+  }]
+}

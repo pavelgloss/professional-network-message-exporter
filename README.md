@@ -15,9 +15,9 @@ nemaže, nearchivuje ani nemění profil. V exportním režimu blokuje všechny 
 kromě `GET`, `HEAD` a `OPTIONS`, veškeré WebSockety; service workery jsou vypnuté. Používání automatizace
 se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 
-> **Aktuální kritický blocker:** Parser může u InMail eventů uložit top-level
-> `subject` místo skutečného textu zprávy. Existující reálné JSON exporty proto nejsou
-> důvěryhodné pro práci s obsahem, dokud nebude opraven a ověřen
+> **BL-006 čeká na review a živé ověření:** Parser již nepoužívá InMail `subject`
+> jako text zprávy. Existující reálné JSON exporty ale zůstávají obsahově vadné;
+> oprava musí projít nezávislým review a novým živým exportem podle
 > [BL-006](BACKLOG.md#bl-006--kritické-inmail-subject-se-chybně-exportuje-jako-text-zprávy).
 >
 > **BL-007 uzavřen (2026-09-26):** selection teardown chrání samostatná transportní
@@ -29,6 +29,13 @@ contextu. Browser nemá přímou HTTP/CONNECT cestu ven; dokumenty, povolené AP
 statické assets dostává přes oddělené GET/HEAD brokery bez redirectů. Neznámé
 resources se blokují, zásah proxy znamená redigovaný hard failure. Důkazy validace
 jsou v checkpointu; živá kompatibilita nového asset brokeru zatím nebyla ověřena.
+
+Textový adapter čte pouze známé body obálky v pořadí `body`, `messageBody`,
+`attributedBody`, `eventContent`, `content`, `commentary`, následně explicitní `text`.
+Stejné pořadí platí uvnitř známých obálek, maximálně do hloubky 8. Metadata jako
+`subject`, `title`, `headline`, názvy příloh a neznámé obálky nejsou text zprávy.
+Subject-only event bez skutečné přílohy způsobí parser miss a neúplný export.
+Subject se neukládá ani nepoužívá ve fallback ID; schema zůstává v1.
 
 ## Dokumentace a předání projektu
 

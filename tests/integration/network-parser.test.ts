@@ -311,7 +311,7 @@ describe('network parser', () => {
     await expectPartialPersistence(parsed, 'linkedin-reference-miss-');
   });
 
-  it('counts unresolved message refs, ignores profile refs, and deduplicates repeated refs', async () => {
+  it('counts unresolved refs and unsupported included events, ignores profile refs, and deduplicates repeated refs', async () => {
     const fixture = JSON.parse(await readFile(new URL('../fixtures/network/history-referenced-parser-miss.json', import.meta.url), 'utf8'));
     fixture.elements = [
       'urn:li:messagingMessage:KNOWN-REF',
@@ -323,7 +323,9 @@ describe('network parser', () => {
     fixture.paging = { start: 0, count: 2, total: 2, hasNextPage: false, links: [] };
     const parsed = parseNetworkPayload(fixture, 'https://www.linkedin.com/voyager/api/messaging/history?start=0&count=2');
     expect(parsed.conversations[0]?.messages?.map((message) => message.id)).toEqual(['KNOWN-REF']);
-    expect(parsed.misses).toBe(1);
+    // One unresolved reference, plus the unsupported included event retained by
+    // this fixture: generic nested candidates also participate in coverage.
+    expect(parsed.misses).toBe(2);
     expect(parsed.conversations[0]?.sourceMetadata?.historyComplete).toBe(false);
   });
 
