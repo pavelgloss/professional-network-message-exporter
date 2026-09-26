@@ -74,6 +74,14 @@ existující export BEZ probe: nová output cesta, stejný nezávislý witness/s
 akceptace, partial history coverage odděleně. Žádná změna produktového defaultu
 ani otevření dalšího threadu; případnou změnu validačního plánu nejprve commitnout.
 
+Schváleno read-only reviewerem BL-006: manual-only režimy with-probe(default)/
+without-probe, unknown hodnota odmítnuta před browserem uzavřeným kódem. Režim
+without-probe pouze vynechá současný opt-in; limit100/UUIDoutput/no-env-overrides/
+no-content-diagnostics a strict witness zůstávají. Výstup booleanhistoryProbeEnabled.
+Žádný automatický retry/fallback. Syntetické testy obou módů/invalid, docs a review
+před live. Pasivní úspěch neprokazuje úplnost ani živou kompatibilitu probe; tu
+řešit nejpozději BL-005. Pokud vzorky nestačí, BL-006 nelze uzavřít.
+
 Fixer nad `7f2cba1` dokončil script-only 32MiB cap, numeric size diagnostics,
 manifest a aktivní docs. Typecheck PASS; čtyři nové integrační testy PASS:17MiB
 script execute +17MiB API deny,33MiB declared/gzip script deny,17MiB stylesheet deny.
