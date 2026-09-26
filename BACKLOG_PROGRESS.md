@@ -8,18 +8,17 @@ akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
 
 ## Celkový stav
 
-- **Fáze:** `REVIEW`
+- **Fáze:** `FIXING`
 - **Aktivní položka:** BL-007
-- **Poslední ověřený commit:** `b564546` (schválený plán); aktuálně dirty implementace BL-007
-- **Worktree:** vlastní necommitnutý runtime/test/docs diff BL-007; ostatní BL beze změny
-- **Aktivní subagenti:** žádný writer; implementer narazil na usage limit po předání
-  runtime diffu. Následuje nový read-only reviewer.
+- **Poslední ověřený runtime commit:** `43ec961`; čistý před tímto checkpointem
+- **Worktree:** checkpoint review; ostatní BL beze změny
+- **Aktivní subagenti:** review dokončeno; následuje původní implementer jako jediný fixer
 - **Živá LinkedIn validace:** uživatel v promptu této session výslovně povolil nezbytné
   read-only běhy v izolovaném Chromium; history probe až po uzavření BL-007.
 
 | Pořadí | Položka | Stav | Poznámka |
 | ---: | --- | --- | --- |
-| 1 | BL-007 | `REVIEW` | Implementace a první plný check PASS; čeká review a další validace |
+| 1 | BL-007 | `FIXING` | Review P2: server-hit assertions až po cleanupu každé iterace |
 | 2 | BL-006 | `NOT_STARTED` | Kritický blocker důvěryhodnosti textu |
 | 3 | BL-003 | `NOT_STARTED` | Nezávislé snapshoty a bundle persistence |
 | 4 | BL-005 | `NOT_STARTED` | Defaultní probe; blokováno BL-007 |
@@ -63,8 +62,16 @@ dokončení dalších čtyř není po jeho usage limitu prokázáno. Logger coun
 správný. Matrix zatím kontroluje server count před cleanupem; review má prověřit
 i explicitní assertion po cleanupu.
 
-Přesná další akce: commit tohoto implementation checkpointu, nový read-only review,
-dokončit doložené oddělené stress procesy, druhý plný check a audity.
+Nezávislý reviewer: jediný P2 v tests/integration/probe-navigation.test.ts,
+oba stress testy assertují hity před cleanupem a původní počítadlo další iterace
+maže. Přidat nulové foreign/unread assertions po dispose/context.close každé
+iterace. Žádný prokázaný runtime průnik; CORS podezření reviewer synteticky vyvrátil.
+Druhý plný check PASS 165/165 + build/typecheck. Oba audity zopakovány: prod 0,
+full 2 známé moderate dev-only. První tři nové stress procesy PASS; další běží,
+ale po opravě P2 se musí požadovaných 5 procesů provést znovu.
+
+Přesná další akce: jediný fixer doplní post-cleanup assertions, cíleně ověří,
+pak nezávislé re-review, 5 stress procesů s novou assertion a finální validace/docs.
 Položka není DONE; živý probe stále zakázán. Ostatní BL čekají.
 
 ### Schválený plán BL-007 (po read-only plánování)
