@@ -50,6 +50,12 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 - Běh dokončen 183/184; jediná výše uvedená failure opravena pouze v diagnostickém
   testu, zachované všechny privacy assertions + přidané agregáty. Cíleně 3/3 PASS.
   Následuje opakovaný full check a nezávislé review; živý test stále neproběhl.
+- Druhý full check 183/184: diagnostika PASS, nově FAIL popup selection test
+  v probe-navigation.test.ts:377. Po pevných 100 ms assertSelectionSafe ještě
+  neodmítl; žádný server-hit leak tímto výsledkem doložen není. BL-006 reviewer
+  bez blokujících nálezů, nezávisle 22/22 PASS. Před živým během nutno read-only
+  diagnostikovat timing popup testu vs skutečnou lifecycle chybu; žádný živý běh
+  zatím nespouštět. Jde o nezbytný validační follow-up BL-007, ne další feature BL.
 - Zbývá: main implementation commit, nezávislé review, opravy/re-review, plný check
   a oba audity, autorizovaný živý export. Obsah starých reálných exportů je nadále
   nedůvěryhodný, BL-006 není DONE. Otevřené findings: review ještě neproběhlo.
