@@ -56,6 +56,13 @@ Sdílený 16MiB API limit odmítl rozbalený statický JS, nikoli endpoint/redir
 Následuje read-only plán odděleného omezeného script limitu; API/doc limity zůstávají.
 Další live až po implementaci, syntetické velikostní regresi a nezávislém review.
 
+Schválený plán po read-only review: script asset cap32MiB pro declared i actual
+bytes; API/ostatní assets16MiB, dokument8MiB beze změny. Size failures smějí nést
+pouze numeric actualBytes nebo declaredBytes + limitBytes, žádné raw hodnoty.
+Testy17MiB script execute,17MiB API deny,script>32 deny včetně gzip/decompressed
+limitu a canary redakce. Playwright stále bufferuje; cap je limit přijetí, nikoli
+tvrdý RAM limit. 32MiB nemusí živý zdroj pokrýt; další změna jen podle evidence.
+
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
 Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými
