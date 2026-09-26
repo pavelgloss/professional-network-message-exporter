@@ -8,7 +8,8 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 - **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
 - **Worktree:** dirty implementace BL-006 nad resume checkpointem `c490a51`;
   parser, fixtures, testy, safe manual harness a aktivní docs jsou připravené.
-- **Subagenti:** writer dokončen; nový nezávislý read-only `bl006_review` běží.
+- **Subagenti:** BL-006 review dokončeno bez nálezů; BL-007 reviewer diagnostikoval
+  popup timing. Následuje jediný fixer pouze testu.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -56,6 +57,12 @@ Aktualizováno: **2026-09-26 Europe/Prague**
   bez blokujících nálezů, nezávisle 22/22 PASS. Před živým během nutno read-only
   diagnostikovat timing popup testu vs skutečnou lifecycle chybu; žádný živý běh
   zatím nespouštět. Jde o nezbytný validační follow-up BL-007, ne další feature BL.
+- Read-only diagnostika popupu: původní cílený test FAIL; 20 instrumentovaných
+  cyklů vždy foreign server hits 0 a konečné popupPagesBlocked=1/hard=1. V 16/20
+  hard událost přišla až po testových 100 ms (cca 96–170 ms po goto).
+  Schválený minimální fix: pevný sleep nahradit bounded expect.poll na hard stav,
+  zachovat rejection a nulové hity, doplnit kontrolu po cleanupu. Runtime bez změny.
+  Potom cílené opakování, nezávislé re-review a plný check před live harness.
 - Zbývá: main implementation commit, nezávislé review, opravy/re-review, plný check
   a oba audity, autorizovaný živý export. Obsah starých reálných exportů je nadále
   nedůvěryhodný, BL-006 není DONE. Otevřené findings: review ještě neproběhlo.
