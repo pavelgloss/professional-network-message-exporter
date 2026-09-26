@@ -35,6 +35,14 @@ broker nezaznamenal svůj konkrétní bezpečný failure enum. Nový read-only f
 BL-007 reviewer navrhne nejmenší diagnostiku/status/timeout/MIME bez osobních dat.
 Nepovolovat redirect/nový endpoint ani běžný Chrome. BL-006 zůstává nedokončený.
 
+Schválená diagnostická oprava po read-only review: asset větev zahazuje existující
+proxied.failure. Přidat assetProxyFailures do snapshotu/manifestu jako uzavřené
+status-NNN/redirect/content-type/declared-size/body-size/generation-retired/timeout/
+request-error + pevný resource typ, případně MIME kategorii. Žádná raw URL/header/
+exception/body. Timeout rozlišit errors.TimeoutError. Zachovat hard failure a
+všechny síťové hranice. Jeden fixer, syntetické status/redirect/MIME/timeout canary
+testy, nezávislé review a full check před jedním dalším autorizovaným live pokusem.
+
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
 Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými
