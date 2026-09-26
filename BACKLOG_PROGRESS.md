@@ -7,7 +7,7 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 - **Aktivní položka/fáze:** BL-006 `PLANNING`; BL-007 `DONE`.
 - **Poslední runtime commit:** `43ec961`; P2 test fix `27b9fc4`.
 - **Worktree:** obnovení z čistého closure commitu `2350167`; tento planning checkpoint.
-- **Subagenti:** read-only `bl006_plan` běží; žádný writer.
+- **Subagenti:** read-only `bl006_plan` dokončen; následuje jediný implementer BL-006.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -53,6 +53,39 @@ při BL-006; kvůli úplnosti nepovolovat nejasné endpointy/redirect/POST/WS/SW
 - git diff --check PASS; žádná auth/env/export/obsahová diagnostics v Gitu.
 
 ## BL-006: dosud chybějící práce
+
+### Schválený plán (2026-09-26)
+
+1. Omezený body adapter, dokumentovaná priorita body/messageBody/attributedBody/
+   eventContent/content/commentary a explicitní text; pouze známé obálky a textová
+   pole, bounded depth/visited. Subject/title/headline/names nikdy nejsou body.
+   Subject do schema nepřidávat; schema v1 ponechat.
+2. Uzavřít falešný attachment-only úspěch z libovolného renderContent.type,
+   tracking ID nebo title karty. Zachovat známý content.file a skutečné explicitní
+   attachments. Pouhý subject a obecný renderer musí být miss.
+3. Prověřit wrapped/standalone/referenced i generic nested/id-less candidate misses;
+   nevynechat subject-only event, nedvojit miss již zpracovaného objektu.
+4. Anonymní InMail fixture: stejné subjecty, odlišné inbound/outbound bodies,
+   ID/čas/směr/příloha. Quality gate až přes normalizaci a persistence; poison
+   metadata, whitespace/unknown wrapper, precedence, fallback ID nezávislé na
+   subjectu, skutečný body shodný se subjectem je validní. Subject-only způsobí
+   partial a nezmění předchozí úplný JSON.
+5. Aktivní docs popíší adapter, staré vadné exporty a známý minimální dopad.
+   Žádná BL-003 persistence změna ani oprava starých exportů mergem.
+6. Cílené parser/domain/history/store testy, implementation commit, nezávislé
+   review, plný check/audity a opravy podle AGENTS.md.
+7. Explicitní live validační harness mimo default test glob: wrapper skutečného
+   parseru zachytí pouze v paměti očekávané body z nezávislých známých paths a
+   srovná přes stabilní ID s výsledným exportem. Výstup jen anonymní agregáty,
+   žádné bodies/jména/credentials/URL. Nová neexistující ignorovaná output cesta,
+   žádná baseline; --with-history-probe --limit 100, bez diagnostics-content.
+   Živý běh až po opravě/review; user autorizace platí. Zero InMail samples,
+   neshody nebo nepodporované relevantní eventy nejsou důkaz opravy. Login/challenge
+   či skutečný hard safety blocker vyžaduje zastavení. Partial kvůli page coverage
+   vyhodnotit odděleně od správnosti textu.
+
+Přesný další krok: jediný implementer provede body/miss/attachment opravu, fixtures,
+quality gate, docs a safe live harness; sám živý test nespouští a neoznačuje DONE.
 
 Parser stále přijímá top-level subject jako Message.text. Staré skutečné exporty
 jsou obsahově nedůvěryhodné. Planner má mapovat přesné podporované body wrappers,
