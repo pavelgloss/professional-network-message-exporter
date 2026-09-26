@@ -63,6 +63,11 @@ Aktualizováno: **2026-09-26 Europe/Prague**
   Schválený minimální fix: pevný sleep nahradit bounded expect.poll na hard stav,
   zachovat rejection a nulové hity, doplnit kontrolu po cleanupu. Runtime bez změny.
   Potom cílené opakování, nezávislé re-review a plný check před live harness.
+- Po opravě selection popupu (`8b63737`, re-review bez nálezů) fullcheck183/184
+  našel obdobný testový race u target=_blank popupu ř.629: snapshot hard=0 byl
+  přečten před async assertTargetSafe, které už správně odmítlo READ_POLICY_BLOCK.
+  Žádný doložený server leak. Před live nutno opravit i tento test na konečný
+  pozorovaný stav, ponechat server-hit-0 a nezávisle zrevidovat.
 - Test-only fixer nad `df6a968`: selection location/popup nyní čeká přes
   `expect.poll` nejvýše 2 s na hard state; rejection zůstává a po dispose/context.close
   ověřuje nulový unread server count i nepřítomný target hit. Dispose toleruje již
