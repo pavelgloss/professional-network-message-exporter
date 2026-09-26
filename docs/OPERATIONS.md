@@ -31,6 +31,15 @@ Remove-Item Env:LINKEDIN_LIVE_INMAIL_VALIDATION
 
 Harness spustí standardní export `--with-history-probe --limit 100` s novou UUID
 output cestou pod ignorovaným `data/linkedin/`; ověří nepřítomnost JSON i `.partial`.
+Pouze tento manual harness přijímá `LINKEDIN_LIVE_INMAIL_MODE`: výchozí
+`with-probe`, nebo explicitní `without-probe`, který vynechá jen
+`--with-history-probe`. Například před příkazem nastavte
+`$env:LINKEDIN_LIVE_INMAIL_MODE = 'without-probe'` a po něm proměnnou odstraňte.
+Jiná hodnota skončí `LIVE_VALIDATION_MODE_INVALID` před spuštěním browseru;
+neexistuje automatický fallback ani retry. Counts uvádějí boolean
+`historyProbeEnabled`; produktové CLI defaulty ani přísnost body witness se nemění.
+Pasivní běh může doložit obsahovou integritu i při samostatně reportované partial
+coverage, ale stále vyžaduje stejné inbound/outbound InMail důkazy a nulové misses.
 Existující export tedy není baseline. Zachycené bodies porovná pouze v paměti přes
 nezávislé explicitní referenční paths se skutečně uloženým exportem a stabilními ID.
 Loguje jen počty/booleany a uzavřené error kódy; běžné log details, obsahové

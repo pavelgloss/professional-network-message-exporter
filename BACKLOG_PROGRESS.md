@@ -26,6 +26,16 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 ## BL-006 implementation handoff (2026-09-26)
 
+Manual-mode fixer nad `eff0837` dokončil explicitní LINKEDIN_LIVE_INMAIL_MODE
+with-probe(default)/without-probe; neplatný vstup končí fixed error před browserem.
+Bez probe se pouze vynechá flag, neexistuje retry/fallback, witness se nemění.
+Counts nově obsahují historyProbeEnabled boolean; limit100/UUID/output collision/
+prázdné env konfigurace/content diagnostics off zachovány. Synthetic helper modes,
+invalid canary/env isolation a witness 4/4 PASS; typecheck/diffcheck PASS.
+Dotčeno scripts/manual-tests/inmail-live-config.ts a live.test, nový unit test,
+OPERATIONS a checkpoint. Worktree dirty, bez commitu/live/fullcheck/DONE.
+Fixer skončil; následuje main diff/commit, nezávislé review a validace.
+
 **Živý pokus 2026-09-26 16:22:45Z–16:22:57Z:** explicitní harness FAIL
 READ_POLICY_BLOCK. Redigovaná evidence: selectionPreflight=1/navigation=1,
 targetPreflight=0/threadNavigations=0, transportDenied=0, hard=1,

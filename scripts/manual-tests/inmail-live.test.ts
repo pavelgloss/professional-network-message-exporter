@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createInmailWitness } from './inmail-witness.js';
 import { AppError } from '../../src/errors.js';
-import { parseConfig } from '../../src/config.js';
+import { liveInmailConfig } from './inmail-live-config.js';
 import { loadExport } from '../../src/io/export-store.js';
 
 const witness = vi.hoisted(() => ({ current: undefined as ReturnType<typeof createInmailWitness> | undefined }));
@@ -21,8 +21,10 @@ vi.mock('../../src/linkedin/network/response-parser.js', async (original) => {
 // npm run check never include this file. Requires current user authorization.
 it('validates fresh live InMail bodies using in-memory independent reference paths', async () => {
   if (process.env.LINKEDIN_LIVE_INMAIL_VALIDATION !== '1') throw new Error('LIVE_VALIDATION_NOT_EXPLICITLY_ENABLED');
-  witness.current = createInmailWitness();
   const output = path.resolve('data/linkedin', `messages.inmail-validation-${randomUUID()}.json`);
+  // Validate the explicit manual mode before any browser/export work.
+  const config = liveInmailConfig(output, process.env.LINKEDIN_LIVE_INMAIL_MODE);
+  witness.current = createInmailWitness();
   for (const candidate of [output, `${output}.partial`]) {
     let exists = true;
     try { await access(candidate); } catch (error) {
@@ -33,9 +35,8 @@ it('validates fresh live InMail bodies using in-memory independent reference pat
   }
   // Use explicit defaults, not arbitrary env overrides (including output/baseline
   // or invalid boolean values that could leak through configuration exceptions).
-  const config = parseConfig(['export', '--with-history-probe', '--limit', '100', '--output', output], {});
   config.diagnosticsContent = false;
-  const counts = { info: 0, warn: 0, error: 0 };
+  const counts = { info: 0, warn: 0, error: 0, historyProbeEnabled: config.withHistoryProbe };
   const logger = {
     info: () => { counts.info += 1; return true; },
     warn: () => { counts.warn += 1; return true; },
@@ -48,7 +49,7 @@ it('validates fresh live InMail bodies using in-memory independent reference pat
     const persisted = await loadExport(result.stats.partial ? `${output}.partial` : output);
     if (!persisted) throw new Error('VALIDATION_OUTPUT_MISSING');
     const summary = witness.current.compare(persisted);
-    console.log(JSON.stringify(summary));
+    console.log(JSON.stringify({ ...summary, historyProbeEnabled: config.withHistoryProbe }));
     // Never pass content or IDs to assertion APIs: failures must remain counts-only.
     expect(summary.passed, 'LIVE_INMAIL_BODY_EVIDENCE_INSUFFICIENT').toBe(true);
   } catch (error) {
