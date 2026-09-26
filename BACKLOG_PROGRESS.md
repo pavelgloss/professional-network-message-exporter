@@ -6,8 +6,8 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 - **Aktivní položka/fáze:** BL-006 `REVIEW`; BL-007 `DONE`.
 - **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
-- **Worktree:** čistý na `93b18cd` před tímto validačním checkpointem.
-- **Subagenti:** žádný writer; všechna review dokončena bez otevřených nálezů.
+- **Worktree:** diagnostický follow-up nad `9b3a89f`, zachován po usage limitu fixera.
+- **Subagenti:** fixer neběží; následuje nezávislé review diagnostického diffu.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
@@ -43,6 +43,12 @@ exception/body. Timeout rozlišit errors.TimeoutError. Zachovat hard failure a
 všechny síťové hranice. Jeden fixer, syntetické status/redirect/MIME/timeout canary
 testy, nezávislé review a full check před jedním dalším autorizovaným live pokusem.
 
+Diagnostická oprava hotová: assetProxyFailures nese pouze resource enum a failure
+enum; uloží se do manifestu jako probe-asset-proxy-failure. Žádná změna policy.
+Main full check PASS188/188 + typecheck/build; čtyři nové status/redirect/MIME/
+5s timeout testy včetně privacy canary a post-cleanup hit0. Fixer narazil na limit
+po runtime/test části; main doplnil docs. Zbývá commit/review a jeden live pokus.
+
 **Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
 typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
 Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými
@@ -62,7 +68,8 @@ Audity: prod 0, full 2 známé moderate dev-only. Live test začne až po tomto 
 - scripts/manual-tests obsahuje explicitní opt-in live test, standalone Vitest config
   a nezávislý counts-only InMail witness. Default test glob jej nespouští; typecheck
   jej kontroluje. Výjimky se převádějí na uzavřené kódy bez původního obsahu.
-  Instrukce jsou v docs/OPERATIONS.md; živý test zatím NEPROBĚHL.
+  Instrukce jsou v docs/OPERATIONS.md; první živý test skončil bezpečně před targetem
+  (viz aktuální evidence výše), obsahová validace stále chybí.
 - Cílené ověření: typecheck PASS; parser/inmail/history/store/domain/witness
   72/72 PASS ve 6 souborech; git diff --check PASS (jen CRLF upozornění).
 - Main full check zatím FAIL v tests/unit/network-diagnostics.test.ts: canary event

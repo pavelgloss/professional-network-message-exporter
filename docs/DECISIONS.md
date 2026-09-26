@@ -161,6 +161,11 @@ date-range workflow vyžaduje samostatnou implementaci, testy a verzované schem
 
 ## D13 — Probe nikdy nemá přímý browserový síťový fallback (BL-007)
 
+Provozní follow-up 2026-09-26 přidává pouze uzavřené asset failure důvody do
+redigované diagnostiky. První BL-006 live pokus bezpečně skončil před targetem;
+samotný důvod asset-broker neprokazuje login ani transport escape. Konkrétní
+status/timeout/type evidence musí předcházet případné opravě, policy se neuvolňuje.
+
 **Rozhodnutí:** Probe má od vytvoření contextu neforwardující loopback proxy.
 Povolené resources se načítají izolovanými GET/HEAD brokery bez redirectů. Selection
 generation se revokuje před drainem a zavřením; worker bez owning frame nemá broker

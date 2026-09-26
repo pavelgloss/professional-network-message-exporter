@@ -125,6 +125,14 @@ nástroj. Do té doby se ad-hoc `jq` výstup nesmí vydávat za nativní CLI for
 
 ## 3. Živé běhy a měření
 
+### 2026-09-26 — BL-006 validační pokus
+
+Autorizovaný manual harness skončil za 13,8 s READ_POLICY_BLOCK na asset brokeru.
+Selection preflight/navigation 1, target preflight/thread navigation 0,
+transport denied 0, hard failure 1, list rows/conversations 0. Obsahový důkaz
+nevznikl. Doplněná redigovaná asset diagnostika prošla full check 188/188; další
+pokus smí následovat po nezávislém review, bez oslabení endpoint/redirect politiky.
+
 ### 2026-09-24
 
 - pokus `--limit 500`: LinkedIn UI načetlo 180 konverzací, 368 zpráv a skončilo na

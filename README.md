@@ -29,6 +29,8 @@ contextu. Browser nemá přímou HTTP/CONNECT cestu ven; dokumenty, povolené AP
 statické assets dostává přes oddělené GET/HEAD brokery bez redirectů. Neznámé
 resources se blokují, zásah proxy znamená redigovaný hard failure. Důkazy validace
 jsou v checkpointu; živá kompatibilita nového asset brokeru zatím nebyla ověřena.
+Odmítnutý asset broker zapisuje pouze pevný resource typ a důvod (HTTP status,
+redirect, typ/velikost odpovědi, timeout či request-error), nikdy URL nebo obsah.
 
 Textový adapter čte pouze známé body obálky v pořadí `body`, `messageBody`,
 `attributedBody`, `eventContent`, `content`, `commentary`, následně explicitní `text`.

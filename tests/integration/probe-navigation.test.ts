@@ -84,6 +84,17 @@ describe('probe navigation gate against local redirects', () => {
         response.end();
         return;
       }
+      if (request.url?.startsWith('/assets/private-asset-canary-')) {
+        if (request.url.includes('-timeout.js')) return; // Broker's real 5 s deadline aborts this request.
+        const status = request.url.includes('-status.js') ? 403 : 200;
+        response.writeHead(status, {
+          'content-type': request.url.includes('-mime.js') ? 'text/html; private=mime-canary' : 'text/javascript',
+          'x-private-canary': 'header-canary',
+          ...(request.url.includes('-redirect.js') ? { location: '/messaging/thread/UNREAD/?secret=redirect-canary' } : {}),
+        });
+        response.end('body-private-canary');
+        return;
+      }
       if (redirectConversationList && request.url === '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations') {
         response.writeHead(302, { location: '/voyager/api/messagingV2/conversations/UNREAD/events' });
         response.end();
@@ -255,6 +266,34 @@ describe('probe navigation gate against local redirects', () => {
     expect(allRequests.get('/voyager/api/messagingV2/conversations/UNREAD/events')).toBeUndefined();
     await expect(gate!.assertSelectionSafe()).rejects.toThrow();
   });
+
+  it.each([
+    ['status', 'status-403'],
+    ['redirect', 'redirect'],
+    ['mime', 'content-type'],
+    ['timeout', 'timeout'],
+  ])('reports only closed asset failure diagnostics for %s', async (kind, reason) => {
+    await reset();
+    await loadSafeSelection();
+    await page.evaluate((url) => {
+      const script = document.createElement('script');
+      script.src = url;
+      document.body.append(script);
+    }, `/assets/private-asset-canary-${kind}.js?secret=query-canary`);
+    await expect.poll(() => gate!.snapshot().assetProxyFailures, { timeout: 7_000 })
+      .toEqual([{ resourceType: 'script', reason }]);
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().hardViolationReasons).toContain('blocked-subrequest:asset-broker');
+    await gate!.dispose().catch(() => undefined);
+    await context.close();
+    const snapshot = gate!.snapshot();
+    expect(snapshot.targetPreflightGets).toBe(0);
+    expect(snapshot.targetNavigationsAllowed).toBe(0);
+    expect(snapshot.transportRequestsDenied).toBe(0);
+    expect(unreadRequests).toBe(0);
+    expect(targetRequests.size).toBe(0);
+    expect(JSON.stringify(snapshot)).not.toMatch(/canary|secret|127\.0\.0\.1|https?:|\/assets\//);
+  }, 10_000);
 
   it('drains an in-flight selection broker GET before target preflight', async () => {
     slowConversationList = true;

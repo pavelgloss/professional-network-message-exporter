@@ -303,6 +303,12 @@ vstupem `export-store.ts` a jejich `range.complete` nelze zaměňovat za nativn�
 
 ## 6. Diagnostika a soukromí
 
+Probe asset broker ukládá `assetProxyFailures` jako uzavřený resource typ a failure
+enum (`status-NNN`, `redirect`, `content-type`, `declared-size`, `body-size`,
+`generation-retired`, `timeout`, `request-error`). Manifest používá pouze
+`probe-asset-proxy-failure:<resource>:<reason>`; žádné raw URL/header/error/body.
+Hard-failure a síťová politika se diagnostikou nemění.
+
 Výchozí manifest obsahuje run ID, časy, status, počty, použité strategie, warnings a
 redigované strukturální informace. Query hodnoty, cookies, authorization/CSRF tokeny,
 request/response bodies a texty zpráv se do něj neukládají.

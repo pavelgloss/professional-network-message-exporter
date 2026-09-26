@@ -1,4 +1,4 @@
-import { request as playwrightRequest, type APIResponse, type BrowserContext, type CDPSession, type Page, type Request, type Route } from 'playwright';
+import { errors, request as playwrightRequest, type APIResponse, type BrowserContext, type CDPSession, type Page, type Request, type Route } from 'playwright';
 import { canonicalUrlView, repeatedlyDecodeAndNormalize } from '../domain/url-safety.js';
 import { redactedPathShape } from '../domain/url-redaction.js';
 import { AppError } from '../errors.js';
@@ -26,6 +26,7 @@ export type ProbeNavigationSnapshot = {
   selectionBlockedRequestShapes: string[];
   hardViolationReasons: string[];
   apiProxyFailures: string[];
+  assetProxyFailures: { resourceType: AssetResourceType; reason: BrokerFailure }[];
   transportRequestsDenied: number;
 };
 
@@ -39,6 +40,9 @@ export type ProbeNavigationGate = {
 
 type Phase = 'selection' | 'closing-selection' | 'target-preflight' | 'armed' | 'target-used' | 'failed';
 type CachedDocument = { status: 200; headers: Record<string, string>; body: Buffer };
+type AssetResourceType = 'script' | 'stylesheet' | 'image' | 'font';
+type BrokerFailure = `status-${number}` | 'redirect' | 'content-type' | 'declared-size' | 'body-size'
+  | 'generation-retired' | 'timeout' | 'request-error';
 const MAX_PROBE_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const MAX_PROBE_API_BYTES = 16 * 1024 * 1024;
 const BROKER_TIMEOUT_MS = 5_000;
@@ -131,7 +135,7 @@ async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, e
   }
 }
 
-async function isolatedApiResponse(context: BrowserContext, browserRequest: Request, active: () => boolean, asset = false): Promise<{ document?: CachedDocument; failure?: string }> {
+async function isolatedApiResponse(context: BrowserContext, browserRequest: Request, active: () => boolean, asset = false): Promise<{ document?: CachedDocument; failure?: BrokerFailure }> {
   const storageState = await context.storageState();
   const originalHeaders = await browserRequest.allHeaders();
   const headers = Object.fromEntries(Object.entries(originalHeaders).filter(([name]) =>
@@ -145,7 +149,7 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
     const responseHeaders = response.headers();
     const contentType = responseHeaders['content-type'] ?? '';
     const declaredSize = Number(responseHeaders['content-length'] ?? 0);
-    if (response.status() !== 200) return { failure: `status-${response.status()}` };
+    if (response.status() !== 200) return { failure: /^[1-5]\d{2}$/.test(String(response.status())) ? `status-${response.status()}` : 'request-error' };
     if (responseHeaders.location) return { failure: 'redirect' };
     const permittedType = asset
       ? /^(?:text\/(?:css|javascript)|application\/(?:javascript|x-javascript|font-woff|vnd.ms-fontobject)|image\/(?:png|jpeg|gif|webp|svg\+xml|x-icon)|font\/(?:woff2?|ttf|otf))(?:;|$)/i.test(contentType)
@@ -155,8 +159,8 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
     const body = await response.body();
     if (body.byteLength > MAX_PROBE_API_BYTES) return { failure: 'body-size' };
     return { document: { status: 200, headers: { 'content-type': contentType }, body } };
-  } catch {
-    return { failure: 'request-error' };
+  } catch (error) {
+    return { failure: error instanceof errors.TimeoutError ? 'timeout' : 'request-error' };
   } finally {
     await response?.dispose().catch(() => undefined);
     await isolated.dispose().catch(() => undefined);
@@ -235,6 +239,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     selectionBlockedRequestShapes: [],
     hardViolationReasons: [],
     apiProxyFailures: [],
+    assetProxyFailures: [],
     transportRequestsDenied: transport.hits,
   };
 
@@ -523,7 +528,16 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     if (active() && allowedAsset(request, expectedOrigin)) {
       const proxied = await isolatedApiResponse(context, request, active, true);
       if (proxied.document && active()) await route.fulfill(proxied.document);
-      else await block(route, 'subrequest', active(), true, 'asset-broker');
+      else {
+        // allowedAsset already restricts this to a closed resource enum. Never
+        // retain URLs, response headers, exception messages or asset contents.
+        const resourceType = request.resourceType() as AssetResourceType;
+        const reason = proxied.failure ?? 'generation-retired';
+        if (!counts.assetProxyFailures.some(failure => failure.resourceType === resourceType && failure.reason === reason)) {
+          counts.assetProxyFailures.push({ resourceType, reason });
+        }
+        await block(route, 'subrequest', active(), true, 'asset-broker');
+      }
       return;
     }
     await block(route, 'subrequest', false, true, 'unapproved-resource');
