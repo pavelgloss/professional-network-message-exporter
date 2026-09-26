@@ -4,20 +4,21 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 ## Aktuální checkpoint
 
-- **Aktivní položka/fáze:** BL-006 `PLANNING`; BL-007 `DONE`.
+- **Aktivní položka/fáze:** BL-006 `IMPLEMENTING`; BL-007 `DONE`.
 - **Poslední runtime commit:** `43ec961`; P2 test fix `27b9fc4`.
-- **Worktree:** obnovení z čistého closure commitu `2350167`; tento planning checkpoint.
-- **Subagenti:** read-only `bl006_plan` dokončen; následuje jediný implementer BL-006.
+- **Worktree:** ověřen čistý na `adfb919`; předchozí implementer před usage limitem
+  neuložil žádnou změnu. Schválený plán se neopakuje.
+- **Subagenti:** read-only `bl006_plan` dokončen; obnovuje se jediný `bl006_impl`.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
-- **První další akce:** zrevidovat výstup BL-006 planneru a commitnout plán;
+- **První další akce:** implementovat commitnutý plán BL-006;
   neopakovat hotovou BL-007 implementaci ani její testy bez nové příčiny.
 
 | Pořadí | Položka | Stav | Zbývá |
 | ---: | --- | --- | --- |
 | 1 | BL-007 | DONE | Nic; uzavřené testy/review/docs |
-| 2 | BL-006 | PLANNING | Planner, plán commit, parser/tests/docs, review, živá validace |
+| 2 | BL-006 | IMPLEMENTING | Parser/tests/docs, review, živá validace; plán schválen |
 | 3 | BL-003 | NOT_STARTED | Nezávislé snapshoty/bundles |
 | 4 | BL-005 | NOT_STARTED | Default fresh probe a opt-out |
 | 5 | BL-001 | NOT_STARTED | Ověřená jména |
