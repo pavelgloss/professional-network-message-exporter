@@ -6,20 +6,18 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 
 - **Aktivní položka/fáze:** BL-006 `REVIEW`; BL-007 `DONE`.
 - **Poslední runtime commit:** BL-006 `2ab4000`; BL-007 `43ec961`.
-- **Worktree:** dirty implementace BL-006 nad resume checkpointem `c490a51`;
-  parser, fixtures, testy, safe manual harness a aktivní docs jsou připravené.
-- **Subagenti:** BL-006 review dokončeno bez nálezů; BL-007 reviewer diagnostikoval
-  popup timing. Následuje jediný fixer pouze testu.
+- **Worktree:** čistý na `93b18cd` před tímto validačním checkpointem.
+- **Subagenti:** žádný writer; všechna review dokončena bez otevřených nálezů.
 - **Autorizace:** uživatel v této session povolil nezbytné read-only živé LinkedIn
   validační běhy v izolovaném Playwright Chromium. Běžný Chrome nikdy nepoužívat
   ani nezavírat. Živý probe byl během BL-007 zakázán a neproběhl.
-- **První další akce:** hlavní agent zkontroluje diff a vytvoří implementation
-  checkpoint commit; pak nezávislé review a plná validace. Živý harness až po review.
+- **První další akce:** hlavní agent spustí autorizovaný živý harness podle
+  docs/OPERATIONS.md; nová unikátní output cesta, žádná stará baseline/content logs.
 
 | Pořadí | Položka | Stav | Zbývá |
 | ---: | --- | --- | --- |
 | 1 | BL-007 | DONE | Nic; uzavřené testy/review/docs |
-| 2 | BL-006 | IMPLEMENTING | Parser/tests/docs, review, živá validace; plán schválen |
+| 2 | BL-006 | REVIEW | Implementace/review/check PASS; zbývá živý obsahový důkaz a closure |
 | 3 | BL-003 | NOT_STARTED | Nezávislé snapshoty/bundles |
 | 4 | BL-005 | NOT_STARTED | Default fresh probe a opt-out |
 | 5 | BL-001 | NOT_STARTED | Ověřená jména |
@@ -27,6 +25,12 @@ Aktualizováno: **2026-09-26 Europe/Prague**
 | 7 | BL-004 | NOT_STARTED | Research-only; neimplementovat funkci |
 
 ## BL-006 implementation handoff (2026-09-26)
+
+**Nejnovější validace:** HEAD `93b18cd`, `npm.cmd run check` PASS 184/184,
+typecheck/build PASS. Nezávislé BL-006 review bez nálezů (22/22 vlastních testů).
+Oba popup testové timing nálezy opraveny (`8b63737`, `93b18cd`), každý s cílenými
+opakovanými procesy a nezávislým re-review bez nálezů; runtime beze změny.
+Audity: prod 0, full 2 známé moderate dev-only. Live test začne až po tomto commitu.
 
 - Body adapter čte jen body/messageBody/attributedBody/eventContent/content/commentary
   a nakonec explicitní text, bounded depth/visited. Subject a metadata se nepoužívají.
