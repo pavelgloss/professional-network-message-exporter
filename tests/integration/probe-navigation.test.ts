@@ -621,12 +621,15 @@ describe('probe navigation gate against local redirects', () => {
     const target = `${origin}/messaging/thread/READ-POPUP/`;
     page = await gate!.armTarget(target, ['READ-POPUP']);
     await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-    await page.waitForTimeout(100);
+    await expect.poll(() => gate!.snapshot().hardSafetyViolations, { timeout: 2_000 }).toBeGreaterThan(0);
+    await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
+    expect(gate!.snapshot().targetNavigationsAllowed).toBe(1);
     expect(unreadRequests).toBe(0);
     expect(targetRequests.get('/messaging/thread/UNREAD/')).toBeUndefined();
-    const snapshot = gate!.snapshot();
-    if (snapshot.hardSafetyViolations > 0) await expect(gate!.assertTargetSafe()).rejects.toThrow(/exact safe target/);
-    else await expect(gate!.assertTargetSafe()).resolves.toBeUndefined();
+    await gate!.dispose().catch(() => undefined);
+    await context.close();
+    expect(unreadRequests, 'after cleanup').toBe(0);
+    expect(targetRequests.get('/messaging/thread/UNREAD/'), 'after cleanup').toBeUndefined();
   });
 
   it('tolerates a guarded target History API attempt when the exact URL remains unchanged', async () => {

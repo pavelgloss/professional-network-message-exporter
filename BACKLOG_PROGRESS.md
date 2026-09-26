@@ -68,6 +68,12 @@ Aktualizováno: **2026-09-26 Europe/Prague**
   přečten před async assertTargetSafe, které už správně odmítlo READ_POLICY_BLOCK.
   Žádný doložený server leak. Před live nutno opravit i tento test na konečný
   pozorovaný stav, ponechat server-hit-0 a nezávisle zrevidovat.
+- Test-only follow-up nad `590d1c3`: target=_blank fixture vždy kliká link; test nyní
+  bounded poll čeká na hard state (2 s), vyžaduje rejection a právě jednu target
+  navigaci. Nulové unread/target server hity ověřuje i po context cleanupu.
+  Tři samostatné cílené procesy selection location/popup + target popup PASS 3/3
+  každý. Runtime beze změny; dirty pouze tento checkpoint a probe-navigation test.
+  Fixer skončil; main následuje kontrolou diffu/commitem, re-review a full checkem.
 - Test-only fixer nad `df6a968`: selection location/popup nyní čeká přes
   `expect.poll` nejvýše 2 s na hard state; rejection zůstává a po dispose/context.close
   ověřuje nulový unread server count i nepřítomný target hit. Dispose toleruje již
