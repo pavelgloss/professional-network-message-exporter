@@ -32,6 +32,12 @@ architektuře; není nutné rekonstruovat projekt z celého zdrojového kódu.
 
 ## Kritický bezpečnostní blocker — začít zde
 
+Implementace BL-007 v aktuálním diffu přidává lifetime deny proxy a izolované
+GET/HEAD brokery. Selection generation se synchronně revokuje před drainem a
+zavřením; nový target vzniká až po dokončení bariéry. Původní runtime baseline výše
+je historický; aktuální fáze, testy a review jsou v `BACKLOG_PROGRESS.md`. Dokud
+orchestrátor neuzavře BL-007, zůstává zákaz živého probe platný.
+
 `BL-007` znovu otevírá historický High nález `ZR-01`: plný integrační běh 2026-09-25
 jednou propustil request staré selection stránky na cizí messaging endpoint, aniž by
 jej zaznamenaly guard countery. Tři cílená opakování potom prošla, což je typický

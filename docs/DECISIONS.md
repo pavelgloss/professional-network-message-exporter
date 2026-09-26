@@ -39,6 +39,8 @@ povolených GETů. Cílem je kontrola vedlejších efektů, nikoli neviditelnost
 
 ## D3 — Network identity je autoritativní, DOM je doplněk
 
+Viz také D13 pro transportní hranici speciálního probe contextu.
+
 **Rozhodnutí:** Conversation/message/participant identity se bere primárně z network
 odpovědí. Inertní DOM řádky bez URL/URN nesmí dostat ID odvozené z viditelného textu.
 
@@ -157,3 +159,22 @@ uživatele i další agenty. Strict schema navíc jiný top-level kontrakt práv
 **Důsledek:** Tyto soubory se nesmějí použít jako vstup `export-store.ts` a jejich
 `range.complete` má užší, v `docs/OPERATIONS.md` popsaný význam. Opakovaně podporovaný
 date-range workflow vyžaduje samostatnou implementaci, testy a verzované schema.
+
+## D13 — Probe nikdy nemá přímý browserový síťový fallback (BL-007)
+
+**Rozhodnutí:** Probe má od vytvoření contextu neforwardující loopback proxy.
+Povolené resources se načítají izolovanými GET/HEAD brokery bez redirectů. Selection
+generation se revokuje před drainem a zavřením; worker bez owning frame nemá broker
+oprávnění. Proxy zůstává až do context.close a každý její hit vyvolá hard state.
+
+**Důkaz příčiny:** Instalované Playwright `coreBundle.js` obsahuje cestu, která při
+chybějícím frame volá `Fetch.continueRequest` před vytvořením aplikační Route; při
+page closing se také přeskakují route handlery. Request naplánovaný selection
+rendererem tedy může po zániku frame obejít JavaScript guard. Přesné CDP časování
+původního incidentu nebylo zachyceno; nebylo by správné je vydávat za změřené.
+Deterministický test místo toho úmyslně volá route.continue a ověřuje nulový hit
+skutečného serveru pro HTTP loopback i HTTPS CONNECT a auditovatelný hard state.
+
+**Důsledek:** Samotné CDP freeze/Network.setBlockedURLs není autoritativní bariéra.
+Nepodporovaný asset či nová LinkedIn závislost může omezit funkčnost, ale nesmí
+způsobit rozšíření API policy nebo přímý fallback. CLI a data schema se nemění.

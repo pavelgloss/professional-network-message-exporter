@@ -217,7 +217,7 @@ export async function navigateOneSafeProbeThread(page: Pick<Page, 'goto'>, conve
 
 export async function probeReadThread(config: AppConfig, logger: Logger): Promise<ObservedHistoryGet> {
   const manifest = createManifest();
-  const context = await launchContext(config, 'export', manifest, logger);
+  const context = await launchContext(config, 'export', manifest, logger, { probe: true });
   const selectionPage = await context.newPage();
   let targetPage: Page | undefined;
   const selectionManifest = createManifest();
@@ -345,7 +345,6 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     manifest.counts.probeHistoryParsedMessages = result.seedConversations
       .reduce((sum, conversation) => sum + (conversation.messages?.length ?? 0), 0);
     manifest.status = 'success';
-    logger.info('read-thread-probe-complete', { threadNavigations: navigationGate.snapshot().targetNavigationsAllowed, historyQueryTemplates: templates.size });
   } catch (error) {
     const safeError = error instanceof AppError ? error : new AppError('READ_POLICY_BLOCK', 'Read-thread probe failed before its safe target could be verified', 4);
     manifest.status = safeError.code;
@@ -358,6 +357,10 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
     if (requestHandler && targetPage) targetPage.off('request', requestHandler);
     targetCapture?.detach();
     selectionCapture.detach();
+    await navigationGate?.dispose().catch(() => undefined);
+    // Snapshot only after browser shutdown: a lost-frame request may hit the
+    // deny transport during dispose/close, and must invalidate a cached result.
+    await closeContext(context);
     if (navigationGate) {
       const snapshot = navigationGate.snapshot();
       manifest.counts.probeSelectionNavigations = snapshot.selectionNavigationsAllowed;
@@ -371,6 +374,7 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
       manifest.counts.probeSelectionPopupAttemptsBlocked = snapshot.selectionPopupAttemptsBlocked;
       manifest.counts.probeSelectionSameDocumentAttemptsBlocked = snapshot.selectionSameDocumentAttemptsBlocked;
       manifest.counts.probeHardSafetyViolations = snapshot.hardSafetyViolations;
+      manifest.counts.probeTransportRequestsDenied = snapshot.transportRequestsDenied;
       manifest.counts.probeSelectionPreflightGets = snapshot.selectionPreflightGets;
       manifest.counts.probeTargetPreflightGets = snapshot.targetPreflightGets;
       manifest.counts.probeSelectionPreflightFailures = snapshot.selectionPreflightFailures;
@@ -379,12 +383,16 @@ export async function probeReadThread(config: AppConfig, logger: Logger): Promis
         .map((shape) => `probe-selection-blocked:${shape}`));
       manifest.strategies.push(...snapshot.hardViolationReasons.map((reason) => `probe-hard-reason:${reason}`));
       manifest.strategies.push(...snapshot.apiProxyFailures.map((reason) => `probe-api-proxy-failure:${reason}`));
-      await navigationGate.dispose().catch(() => undefined);
+      if (snapshot.hardSafetyViolations > 0) {
+        result = undefined;
+        manifest.status = 'READ_POLICY_BLOCK';
+      }
     }
     manifest.finishedAt = new Date().toISOString();
-    await closeContext(context);
     await saveManifest(config.diagnosticsDir, manifest).catch(() => undefined);
   }
+  if (manifest.counts.probeHardSafetyViolations) throw new AppError('READ_POLICY_BLOCK', 'Probe transport or lifecycle safety failed', 4);
   if (!result) throw new AppError('PARSER_NO_DATA', 'The one-thread probe produced no validated history GET', 4);
+  logger.info('read-thread-probe-complete', { threadNavigations: manifest.counts.probeThreadNavigations, historyQueryTemplates: templates.size });
   return result;
 }

@@ -25,6 +25,12 @@ se řídí podmínkami LinkedIn a odpovědností vlastníka účtu.
 > [BL-007](BACKLOG.md#bl-007--kritické-deterministicky-uzavřít-síť-selection-stránky-před-history-probe)
 > nespouštějte živý history probe.
 
+Oprava BL-007 nyní používá pro probe vlastní loopback deny proxy po celou dobu
+contextu. Browser nemá přímou HTTP/CONNECT cestu ven; dokumenty, povolené API a
+statické assets dostává přes oddělené GET/HEAD brokery bez redirectů. Neznámé
+resources se blokují, zásah proxy znamená redigovaný hard failure. Uzavření položky
+a povolení živého probe vyžaduje dokončení testů a nezávislého review v checkpointu.
+
 ## Dokumentace a předání projektu
 
 Pro běžné použití pokračujte tímto README. Nový vývojář nebo AI agent má začít v

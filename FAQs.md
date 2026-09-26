@@ -42,6 +42,9 @@ Spustí vlastní izolovaný Playwright Chromium, zachytí JSON z LinkedIn GET od
 při `--with-history-probe` otevře jeden potvrzeně přečtený thread, odpozoruje aktuální
 history GET kontrakt a ostatní historie stránkuje přímými autentizovanými GETy. Tento
 probe se teď nemá živě spouštět, dokud BL-007 neuzavře intermittent teardown race.
+Jeho nová transportní izolace blokuje browserový HTTP/CONNECT provoz deny proxy;
+povolená data předává přes samostatné read-only brokery. Neznámý resource nebo
+redirect proto není důvodem povolit přímý browserový fallback.
 
 ## 8. Používá exporter můj běžný Chrome nebo jeho přihlášení?
 

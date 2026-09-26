@@ -1,6 +1,6 @@
 # Backlog implementation progress
 
-Aktualizováno: **2026-09-25 Europe/Prague**
+Aktualizováno: **2026-09-26 Europe/Prague**
 
 Tento soubor je restartovatelný checkpoint pro implementaci `BACKLOG.md`. Není
 náhradou požadavků ani historie; zaznamenává jen ověřený současný stav a přesnou další
@@ -8,17 +8,18 @@ akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
 
 ## Celkový stav
 
-- **Fáze:** `PLANNING`
+- **Fáze:** `REVIEW`
 - **Aktivní položka:** BL-007
-- **Poslední ověřený commit:** `f90cbdb`; při obnovení čistý worktree
-- **Očekávaný worktree po commitu tohoto checkpointu:** čistý
-- **Aktivní subagenti:** planner dokončen; následuje jediný implementer BL-007
+- **Poslední ověřený commit:** `b564546` (schválený plán); aktuálně dirty implementace BL-007
+- **Worktree:** vlastní necommitnutý runtime/test/docs diff BL-007; ostatní BL beze změny
+- **Aktivní subagenti:** žádný writer; implementer narazil na usage limit po předání
+  runtime diffu. Následuje nový read-only reviewer.
 - **Živá LinkedIn validace:** uživatel v promptu této session výslovně povolil nezbytné
   read-only běhy v izolovaném Chromium; history probe až po uzavření BL-007.
 
 | Pořadí | Položka | Stav | Poznámka |
 | ---: | --- | --- | --- |
-| 1 | BL-007 | `PLANNING` | Read-only plán lifecycle bariéry a regresních důkazů |
+| 1 | BL-007 | `REVIEW` | Implementace a první plný check PASS; čeká review a další validace |
 | 2 | BL-006 | `NOT_STARTED` | Kritický blocker důvěryhodnosti textu |
 | 3 | BL-003 | `NOT_STARTED` | Nezávislé snapshoty a bundle persistence |
 | 4 | BL-005 | `NOT_STARTED` | Defaultní probe; blokováno BL-007 |
@@ -40,15 +41,31 @@ akci. Při rozporu nejprve ověřte Git a pracovní strom podle `AGENTS.md`.
   nedeterministický bezpečnostní nález neuzavírá.
 - Produkční audit: 0 vulnerabilities.
 - Plný audit: dvě známé moderate dev-only položky ve Vitest řetězci.
-- Dokumentace, FAQ a backlog jsou commitnuté; žádná implementace backlogu ještě
-  nezačala.
+- Plán BL-007 je commitnutý; implementace, testy a aktivní docs jsou ve worktree.
 
 ## Přesná další akce
 
-Obnovení 2026-09-25: přečteny povinné aktivní dokumenty a relevantní navigation
-modul/stress test; Git potvrzuje čistý baseline `f90cbdb`, runtime stále `bcfa8b5`.
-Testy v této session zatím neběžely. Následuje read-only plánovací subagent BL-007,
-pak revize a commit schváleného plánu před jediným implementerem. Ostatní BL čekají.
+Implementace BL-007: lifetime deny HTTP/CONNECT proxy před první page; žádný
+browserový fallback. Dokument/API/asset brokery kontrolují generation a ownership,
+selection se synchronně revokuje před bounded drainem a target page. Dispose/close
+zůstává kryté proxy; finální manifest a výsledek se kontrolují až po context.close.
+
+Hotové důkazy: původní suite 38/38 PASS; rozšířená 44/44 PASS (včetně původní 30×
+regrese a nové 55× source/timing matrix), další 2 cílené testy PASS pro queued
+broker revocation před prvním sendem a hard audit po gate.dispose. Typecheck PASS.
+První bypass test správně zastavil ještě starý CDP pattern, proto byl upraven na
+unknownMessaging namespace mimo jeho patterny; nyní prokazuje >=2 proxy hitů
+(HTTP loopback + CONNECT) a 0 server hitů, hard state blokuje target.
+
+Orchestrátor ověřil diff a první plný `npm.cmd run check`: PASS 165/165,
+typecheck/build PASS. Implementer doložil první oddělený stress proces PASS;
+dokončení dalších čtyř není po jeho usage limitu prokázáno. Logger counter ověřen
+správný. Matrix zatím kontroluje server count před cleanupem; review má prověřit
+i explicitní assertion po cleanupu.
+
+Přesná další akce: commit tohoto implementation checkpointu, nový read-only review,
+dokončit doložené oddělené stress procesy, druhý plný check a audity.
+Položka není DONE; živý probe stále zakázán. Ostatní BL čekají.
 
 ### Schválený plán BL-007 (po read-only plánování)
 
@@ -79,14 +96,6 @@ pak revize a commit schváleného plánu před jediným implementerem. Ostatní 
 - Přesný další krok: jediný implementer provede tento plán, neoznačí BL DONE ani
   nespustí živý LinkedIn; potom orchestrátor diff/test/implementation checkpoint.
 
-1. Ověřit `git status --short` a poslední commity.
-2. Spustit read-only plánovacího subagenta pouze pro BL-007.
-3. Nechat jej zmapovat teardown selection stránky, CDP/network ordering, fresh target
-   lifecycle, historický nález `ZR-01`, současný stress test a deterministickou
-   server-hit-0 akceptaci.
-4. Zrevidovaný stručný plán zapsat sem, nastavit fázi `PLANNING` a commitnout plan
-   checkpoint před zahájením implementace.
-
 ## Dokončené checkpointy
 
 - `8624438` — kritické integritní blockery a backlog zaznamenány v aktivních docs.
@@ -97,6 +106,7 @@ pak revize a commit schváleného plánu před jediným implementerem. Ostatní 
 
 - BL-007 je znovu otevřený kritický bezpečnostní nález a blokuje živý probe.
 - BL-006 je otevřený kritický nález integrity obsahu.
-- Žádný technický blocker zatím nebrání zahájení plánování a syntetické implementace.
+- Žádný otevřený technický blocker syntetické implementace; nezávislé review ještě
+  neproběhlo. Živá kompatibilita přísného asset allowlistu není zatím prokázána.
 - Živý history probe se nesmí spustit do uzavření BL-007; souhlas s nezbytnými
   pozdějšími živými běhy již byl udělen v aktuálním uživatelském promptu.

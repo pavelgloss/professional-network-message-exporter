@@ -143,6 +143,29 @@ jedním exact GET preflightem bez redirectu; jeho in-memory kopie se zobrazí br
 aby browser neposílal druhý document GET. Popup, History API escape, location změna,
 cizí thread reference nebo další target navigation ukončí probe fail-closed.
 
+BL-007 přidává `src/browser/probe-transport.ts`: probe context musí vzniknout přes
+`createProbeContext` ještě před první page. Lifetime HTTP/CONNECT deny proxy nikdy
+nic neforwarduje a explicitně vypíná Chromium implicitní loopback bypass. Zásah
+proxy znamená `transport-denied` hard state bez URL či hlaviček v diagnostice.
+Gate neakceptuje běžný context. Tato hranice zůstává aktivní také během dispose a
+zaniká až s contextem; login a hlavní export transport nemění.
+
+Všechny povolené dokumenty/API se fulfillují přes izolované request contexty bez
+redirectů, se stávající úzkou message policy. Assets mají allowlist resource typů
+script/stylesheet/image/font a cest `/sc/h/`, `/aero-v1/sc/h/` na stejném originu
+nebo `https://static.licdn.com`, případně `/dms/image/` na `https://media.licdn.com`.
+Lokální syntetické testy mají `/assets/` pouze na přesném loopback originu fixture.
+Asset broker nepřenáší cookies či request hlavičky; do browseru se nikdy nevrací
+Set-Cookie. Neznámé resources nemají fallback na browserovou síť. Všechny brokery
+povolují pouze GET/HEAD, ověřují response type/size a mají 5s request timeout.
+
+Každý browser request zachytí generation a owning page. Worker bez frame ownership
+nedostane oprávnění selection ani target page. Před každým brokerovým síťovým
+voláním se generation znovu kontroluje; closing ji synchronně revokuje, drain má
+7s fail-closed deadline, potom se selection zavře. Teprve poté vznikne nová target
+page. CDP freeze/network fence zůstává pomocná ochrana; bezpečnost již nezávisí na
+tom, zda zanikající Playwright frame předá request aplikačnímu Route handleru.
+
 Tato politika je defense-in-depth, ne stealth. Browserové UI se může pokusit o mnoho
 POSTů, z nichž část je pouze telemetrie; guard je přesto abortuje před sítí, protože
 jejich význam není spolehlivě známý. LinkedIn může automatizaci nadále rozpoznat ze
@@ -309,6 +332,7 @@ více příčin.
 | CLI/config/error/log redaction | `src/cli.ts`, `config.ts`, `errors.ts`, `logger.ts` |
 | Login a storage state | `src/auth/login.ts`, `src/auth/session.ts` |
 | Browser isolation a globální guard | `src/browser/context.ts`, `request-guard.ts` |
+| Probe lifetime transport deny | `src/browser/probe-transport.ts` |
 | Export orchestrace | `src/linkedin/exporter.ts` |
 | One-thread opt-in | `probe.ts`, `probe-navigation.ts`, `probe-request-policy.ts` |
 | Přímá historie | `history-reader.ts` |

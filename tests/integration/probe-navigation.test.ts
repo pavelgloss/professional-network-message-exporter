@@ -1,7 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installProbeNavigationGate, type ProbeNavigationGate } from '../../src/linkedin/probe-navigation.js';
+import { createProbeContext, probeTransport } from '../../src/browser/probe-transport.js';
 
 describe('probe navigation gate against local redirects', () => {
   let browser: Browser;
@@ -15,6 +16,8 @@ describe('probe navigation gate against local redirects', () => {
   let allRequests = new Map<string, number>();
   let requestCookies = new Map<string, string>();
   let redirectConversationList = false;
+  let slowConversationList = false;
+  let listFinished = false;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -66,9 +69,19 @@ describe('probe navigation gate against local redirects', () => {
         }, 350);
         return;
       }
-      if (request.url === '/worker.js') {
+      if (request.url === '/assets/worker.js') {
         response.writeHead(200, { 'content-type': 'text/javascript' });
         response.end("fetch('/messaging/thread/UNREAD/').catch(()=>{})");
+        return;
+      }
+      if (request.url === '/assets/app.js') {
+        response.writeHead(200, { 'content-type': 'text/javascript', 'set-cookie': 'assetPrivate=secret' });
+        response.end('globalThis.assetLoaded=true;');
+        return;
+      }
+      if (request.url === '/assets/redirect.js') {
+        response.writeHead(302, { location: '/voyager/api/messagingV2/conversations/UNREAD/events' });
+        response.end();
         return;
       }
       if (redirectConversationList && request.url === '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations') {
@@ -77,6 +90,14 @@ describe('probe navigation gate against local redirects', () => {
         return;
       }
       if (request.url?.startsWith('/voyager/api/')) {
+        if (slowConversationList && request.url.includes('queryId=messengerConversations')) {
+          setTimeout(() => {
+            listFinished = true;
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end('{"ok":true}');
+          }, 300);
+          return;
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end('{"ok":true}');
         return;
@@ -87,7 +108,9 @@ describe('probe navigation gate against local redirects', () => {
         '/selection-iframe': '<iframe src="/messaging/thread/UNREAD/"></iframe>',
         '/selection-prefetch': '<link rel="prefetch" href="/messaging/thread/UNREAD/">',
         '/selection-subframe': '<object data="/messaging/thread/UNREAD/"></object>',
-        '/selection-worker': '<script>new Worker("/worker.js")</script>',
+        '/selection-worker': '<script>new Worker("/assets/worker.js")</script>',
+        '/selection-script': '<script src="/assets/app.js"></script>',
+        '/selection-asset-redirect': '<script src="/assets/redirect.js"></script>',
         '/selection-list': '<script>fetch("/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations").catch(()=>{})</script>',
         '/selection-eager-messaging': '<script>Promise.all([fetch("/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=UNREAD"),fetch("/voyager/api/messagingV2/conversations/UNREAD/events")]).catch(()=>{})</script>',
         '/selection-history': '<script>try { history.pushState({}, "", "/messaging/thread/UNREAD/") } catch {}</script>',
@@ -121,7 +144,9 @@ describe('probe navigation gate against local redirects', () => {
     allRequests = new Map();
     requestCookies = new Map();
     redirectConversationList = false;
-    context = await browser.newContext({ serviceWorkers: 'block' });
+    slowConversationList = false;
+    listFinished = false;
+    context = await createProbeContext(browser);
     page = await context.newPage();
     gate = undefined;
   });
@@ -144,6 +169,154 @@ describe('probe navigation gate against local redirects', () => {
     await page.goto(`${origin}/selection`, { waitUntil: 'domcontentloaded' });
     await gate!.assertSelectionSafe();
   }
+
+  it('requires transport isolation before accepting a probe context', async () => {
+    const unprotected = await browser.newContext();
+    try {
+      await expect(installProbeNavigationGate(unprotected, await unprotected.newPage(), `${origin}/selection`))
+        .rejects.toThrow(/transport isolation/);
+      expect(allRequests.size).toBe(0);
+    } finally { await unprotected.close(); }
+  });
+
+  it('denies intentional Playwright route bypass including loopback and CONNECT with a hard state', async () => {
+    await reset();
+    await loadSafeSelection();
+    // This reproduces the lower-level continueRequest outcome deterministically,
+    // regardless of whether a detached-frame/closing-page race occurs this run.
+    await context.route('**/*', route => route.continue());
+    await page.evaluate(async ({ http, https }) => {
+      await Promise.all([fetch(http).catch(() => undefined), fetch(https).catch(() => undefined)]);
+    }, { http: `${origin}/voyager/api/unknownMessaging/conversations/UNREAD/events`,
+      https: origin.replace('http:', 'https:') + '/voyager/api/unknownMessaging/conversations/UNREAD/events' });
+    expect(allRequests.get('/voyager/api/unknownMessaging/conversations/UNREAD/events')).toBeUndefined();
+    expect(probeTransport(context).hits).toBeGreaterThanOrEqual(2);
+    expect(gate!.snapshot().hardViolationReasons).toContain('transport-denied');
+    await expect(gate!.armTarget(`${origin}/messaging/thread/READ/`, ['READ'])).rejects.toThrow();
+    expect(targetRequests.size).toBe(0);
+  });
+
+  it('executes an isolated asset and exact history GET without browser egress or cookie propagation', async () => {
+    await context.addCookies([{ name: 'private', value: 'canary', url: origin }]);
+    await reset('/selection-script');
+    await page.goto(`${origin}/selection-script`);
+    expect(await page.evaluate(() => (globalThis as typeof globalThis & { assetLoaded?: boolean }).assetLoaded)).toBe(true);
+    expect(allRequests.get('/assets/app.js')).toBe(1);
+    expect(requestCookies.get('/assets/app.js')).toBe('');
+    expect((await context.cookies()).some(cookie => cookie.name === 'assetPrivate')).toBe(false);
+    page = await gate!.armTarget(`${origin}/messaging/thread/READ/`, ['READ']);
+    await page.goto(`${origin}/messaging/thread/READ/`);
+    const history = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerMessagesByConversation&conversationId=READ';
+    expect(await page.evaluate(async url => (await fetch(url)).json(), history)).toEqual({ ok: true });
+    expect(allRequests.get(history)).toBe(1);
+    expect(probeTransport(context).hits).toBe(0);
+    await gate!.assertTargetSafe();
+  });
+
+  it('retains transport hard-state auditing after gate disposal until context closes', async () => {
+    await reset();
+    await loadSafeSelection();
+    await gate!.dispose();
+    const foreign = '/voyager/api/unknownMessaging/conversations/UNREAD/events';
+    await page.evaluate(url => fetch(url).catch(() => undefined), foreign);
+    await context.close();
+    expect(allRequests.get(foreign)).toBeUndefined();
+    expect(gate!.snapshot().transportRequestsDenied).toBeGreaterThan(0);
+    expect(gate!.snapshot().hardViolationReasons).toContain('transport-denied');
+  });
+
+  it('revokes a queued selection broker before its first network send', async () => {
+    await reset();
+    await loadSafeSelection();
+    const originalStorageState = context.storageState.bind(context);
+    let release!: () => void;
+    let entered = false;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const spy = vi.spyOn(context, 'storageState').mockImplementationOnce(async () => {
+      entered = true;
+      await barrier;
+      return originalStorageState();
+    });
+    const list = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations';
+    try {
+      await page.evaluate(url => { void fetch(url).catch(() => undefined); }, list);
+      await expect.poll(() => entered).toBe(true);
+      const arming = gate!.armTarget(`${origin}/messaging/thread/READ/`, ['READ']);
+      release();
+      page = await arming;
+      expect(allRequests.get(list)).toBeUndefined();
+      expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+    } finally { release(); spy.mockRestore(); }
+  });
+
+  it('never follows an asset redirect to an unknown messaging endpoint', async () => {
+    await reset('/selection-asset-redirect');
+    await page.goto(`${origin}/selection-asset-redirect`);
+    expect(allRequests.get('/voyager/api/messagingV2/conversations/UNREAD/events')).toBeUndefined();
+    await expect(gate!.assertSelectionSafe()).rejects.toThrow();
+  });
+
+  it('drains an in-flight selection broker GET before target preflight', async () => {
+    slowConversationList = true;
+    await reset();
+    await loadSafeSelection();
+    const list = '/voyager/api/voyagerMessagingGraphQL/graphql?queryId=messengerConversations';
+    await page.evaluate(url => { void fetch(url).catch(() => undefined); }, list);
+    await expect.poll(() => allRequests.get(list)).toBe(1);
+    expect(listFinished).toBe(false);
+    page = await gate!.armTarget(`${origin}/messaging/thread/READ/`, ['READ']);
+    expect(listFinished).toBe(true);
+    expect(allRequests.get(list)).toBe(1);
+    expect(targetRequests.get('/messaging/thread/READ/')).toBe(1);
+    expect(gate!.snapshot().hardSafetyViolations).toBe(0);
+  });
+
+  it('keeps fetch keepalive asset iframe and worker zero-to-ten-millisecond races off foreign servers', async () => {
+    await context.close();
+    for (const kind of ['fetch', 'keepalive', 'asset', 'iframe', 'worker']) {
+      for (let delay = 0; delay <= 10; delay += 1) {
+        const raceContext = await createProbeContext(browser);
+        const selection = await raceContext.newPage();
+        const raceGate = await installProbeNavigationGate(raceContext, selection, `${origin}/selection`);
+        try {
+          await selection.goto(`${origin}/selection`);
+          await selection.evaluate(async ({ delay, kind, url }) => {
+            const code = `setTimeout(()=>fetch(${JSON.stringify(url)}).catch(()=>{}),${delay})`;
+            if (kind === 'worker') {
+              const worker = new Worker(URL.createObjectURL(new Blob([`postMessage('ready');onmessage=()=>{${code}}`], { type: 'text/javascript' })));
+              await new Promise<void>(resolve => { worker.onmessage = () => resolve(); });
+              worker.postMessage('start');
+              return;
+            }
+            if (kind === 'iframe') {
+              const frame = document.createElement('iframe');
+              const loaded = new Promise<void>(resolve => { frame.onload = () => resolve(); });
+              frame.srcdoc = `<script>onmessage=()=>{${code}}</script>`;
+              document.body.append(frame);
+              await loaded;
+              frame.contentWindow!.postMessage('start', '*');
+              return;
+            }
+            setTimeout(() => {
+              if (kind === 'asset') { const image = new Image(); image.src = url; }
+              else void fetch(url, { keepalive: kind === 'keepalive' }).catch(() => undefined);
+            }, delay);
+          }, { delay, kind, url: `${origin}/voyager/api/unknownMessaging/conversations/UNREAD/events` });
+          let target: Page | undefined;
+          try { target = await raceGate.armTarget(`${origin}/messaging/thread/READ/`, ['READ']); } catch { /* hard fail is permitted */ }
+          if (target) {
+            await target.goto(`${origin}/messaging/thread/READ/`).catch(() => undefined);
+            await raceGate.assertTargetSafe().catch(() => undefined);
+          }
+          expect(allRequests.get('/voyager/api/unknownMessaging/conversations/UNREAD/events'), `${kind} ${delay}ms`).toBeUndefined();
+          if (!target) expect(raceGate.snapshot().hardSafetyViolations).toBeGreaterThan(0);
+        } finally {
+          await raceGate.dispose();
+          await raceContext.close();
+        }
+      }
+    }
+  }, 60_000);
 
   it('blocks a selection redirect before an unread thread receives a request', async () => {
     await reset('/selection-redirect');
@@ -348,7 +521,7 @@ describe('probe navigation gate against local redirects', () => {
 
     for (let index = 0; index < 30; index += 1) {
       allRequests.delete(foreignPath);
-      const raceContext = await browser.newContext({ serviceWorkers: 'block' });
+      const raceContext = await createProbeContext(browser);
       const selectionPage = await raceContext.newPage();
       const selectionUrl = `${origin}/selection`;
       const raceGate = await installProbeNavigationGate(raceContext, selectionPage, selectionUrl);

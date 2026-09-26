@@ -4,6 +4,8 @@ import { redactedPathShape } from '../domain/url-redaction.js';
 import { AppError } from '../errors.js';
 import { isProbeThreadUrl, parseProbeConversationReferences, probeMessagingRequestPolicy } from './probe-request-policy.js';
 import { conversationIdFromUrn } from '../domain/stable-id.js';
+import { probeTransport } from '../browser/probe-transport.js';
+import { requestPolicy } from '../browser/request-guard.js';
 
 export type ProbeNavigationSnapshot = {
   selectionNavigationsAllowed: number;
@@ -24,6 +26,7 @@ export type ProbeNavigationSnapshot = {
   selectionBlockedRequestShapes: string[];
   hardViolationReasons: string[];
   apiProxyFailures: string[];
+  transportRequestsDenied: number;
 };
 
 export type ProbeNavigationGate = {
@@ -38,6 +41,7 @@ type Phase = 'selection' | 'closing-selection' | 'target-preflight' | 'armed' | 
 type CachedDocument = { status: 200; headers: Record<string, string>; body: Buffer };
 const MAX_PROBE_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const MAX_PROBE_API_BYTES = 16 * 1024 * 1024;
+const BROKER_TIMEOUT_MS = 5_000;
 
 function exactCanonicalLocation(rawUrl: string): string | undefined {
   const canonical = canonicalUrlView(rawUrl);
@@ -108,7 +112,7 @@ async function cacheSafeDocument(response: APIResponse, expectedLocation: string
   return { status: 200, headers: safeHeaders, body };
 }
 
-async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, expectedLocation: string): Promise<CachedDocument | undefined> {
+async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, expectedLocation: string, active: () => boolean): Promise<CachedDocument | undefined> {
   // APIRequestContext receives a copy of the auth state. Response Set-Cookie
   // processing is confined to this short-lived context and can never mutate the
   // probe browser's cookie jar.
@@ -116,7 +120,8 @@ async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, e
   const isolated = await playwrightRequest.newContext({ storageState });
   let response: APIResponse | undefined;
   try {
-    response = await isolated.get(rawUrl, { maxRedirects: 0, failOnStatusCode: false });
+    if (!active()) return undefined;
+    response = await isolated.get(rawUrl, { maxRedirects: 0, failOnStatusCode: false, timeout: BROKER_TIMEOUT_MS });
     return await cacheSafeDocument(response, expectedLocation);
   } catch {
     return undefined;
@@ -126,21 +131,26 @@ async function isolatedCachedDocument(context: BrowserContext, rawUrl: string, e
   }
 }
 
-async function isolatedApiResponse(context: BrowserContext, browserRequest: Request): Promise<{ document?: CachedDocument; failure?: string }> {
+async function isolatedApiResponse(context: BrowserContext, browserRequest: Request, active: () => boolean, asset = false): Promise<{ document?: CachedDocument; failure?: string }> {
   const storageState = await context.storageState();
   const originalHeaders = await browserRequest.allHeaders();
   const headers = Object.fromEntries(Object.entries(originalHeaders).filter(([name]) =>
     /^(?:accept|accept-language|user-agent|referer|origin|csrf-token|x-li-[a-z0-9-]+|x-restli-protocol-version)$/i.test(name)));
-  const isolated = await playwrightRequest.newContext({ storageState });
+  const isolated = await playwrightRequest.newContext(asset ? {} : { storageState });
   let response: APIResponse | undefined;
   try {
-    response = await isolated.get(browserRequest.url(), { headers, maxRedirects: 0, failOnStatusCode: false });
+    if (!active()) return { failure: 'generation-retired' };
+    response = await isolated.fetch(browserRequest.url(), { method: browserRequest.method(), headers: asset ? {} : headers,
+      maxRedirects: 0, failOnStatusCode: false, timeout: BROKER_TIMEOUT_MS });
     const responseHeaders = response.headers();
     const contentType = responseHeaders['content-type'] ?? '';
     const declaredSize = Number(responseHeaders['content-length'] ?? 0);
     if (response.status() !== 200) return { failure: `status-${response.status()}` };
     if (responseHeaders.location) return { failure: 'redirect' };
-    if (!/(?:json|graphql)/i.test(contentType)) return { failure: 'content-type' };
+    const permittedType = asset
+      ? /^(?:text\/(?:css|javascript)|application\/(?:javascript|x-javascript|font-woff|vnd.ms-fontobject)|image\/(?:png|jpeg|gif|webp|svg\+xml|x-icon)|font\/(?:woff2?|ttf|otf))(?:;|$)/i.test(contentType)
+      : /(?:json|graphql)/i.test(contentType);
+    if (!permittedType) return { failure: 'content-type' };
     if (Number.isFinite(declaredSize) && declaredSize > MAX_PROBE_API_BYTES) return { failure: 'declared-size' };
     const body = await response.body();
     if (body.byteLength > MAX_PROBE_API_BYTES) return { failure: 'body-size' };
@@ -153,11 +163,25 @@ async function isolatedApiResponse(context: BrowserContext, browserRequest: Requ
   }
 }
 
+function allowedAsset(request: Request, expectedOrigin: string): boolean {
+  const canonical = canonicalUrlView(request.url());
+  if (!canonical || canonical.url.username || canonical.url.password || canonical.url.hash
+    || !['GET', 'HEAD'].includes(request.method())
+    || !['script', 'stylesheet', 'image', 'font'].includes(request.resourceType())) return false;
+  const sameOrigin = canonical.url.origin === expectedOrigin;
+  const staticOrigin = canonical.url.origin === 'https://static.licdn.com';
+  const mediaOrigin = canonical.url.origin === 'https://media.licdn.com';
+  return ((sameOrigin || staticOrigin) && /^\/(?:aero-v1\/)?sc\/h\/[A-Za-z0-9._/-]+$/.test(canonical.pathname))
+    || (mediaOrigin && /^\/dms\/image\/[A-Za-z0-9._/-]+$/.test(canonical.pathname))
+    // Local anonymous fixtures exercise the identical broker without internet.
+    || (sameOrigin && /^http:\/\/127\.0\.0\.1:\d+$/.test(expectedOrigin)
+      && /^\/assets\/[A-Za-z0-9._/-]+$/.test(canonical.pathname));
+}
+
 async function retireSelectionPage(session: CDPSession, page: Page, onFenced: () => void, drainRoutes: () => Promise<void>): Promise<boolean> {
-  // Fence the old renderer at Chromium's network layer before closing it. Any
-  // timer racing page.close is therefore denied independently of Playwright's
-  // route lifecycle, while avoiding a terminateExecution/Page.navigate CDP
-  // deadlock observed on the real LinkedIn renderer.
+  // Freeze and CDP blocking reduce teardown activity. The context's lifetime
+  // deny proxy is the authority when Playwright bypasses routes for lost frames;
+  // these page-scoped commands alone were not a deterministic network barrier.
   try {
     // Freeze first so no new timer can enter the narrow interval between the
     // route drain and Chromium's network fence. Already-started routes are
@@ -174,6 +198,7 @@ async function retireSelectionPage(session: CDPSession, page: Page, onFenced: ()
 }
 
 export async function installProbeNavigationGate(context: BrowserContext, selectionPage: Page, selectionUrl: string): Promise<ProbeNavigationGate> {
+  const transport = probeTransport(context);
   const selectionLocation = exactCanonicalLocation(selectionUrl);
   if (!selectionLocation) throw new AppError('READ_POLICY_BLOCK', 'Probe selection URL was ambiguous');
   const expectedOrigin = new URL(selectionLocation).origin;
@@ -189,6 +214,8 @@ export async function installProbeNavigationGate(context: BrowserContext, select
   let internallyCreatedPage: Page | undefined;
   let selectionSession: CDPSession | undefined;
   let selectionNetworkFenced = false;
+  let generation = 0;
+  let disposed = false;
   const counts: ProbeNavigationSnapshot = {
     selectionNavigationsAllowed: 0,
     targetNavigationsAllowed: 0,
@@ -208,6 +235,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     selectionBlockedRequestShapes: [],
     hardViolationReasons: [],
     apiProxyFailures: [],
+    transportRequestsDenied: transport.hits,
   };
 
   const markHardViolation = (reason = 'unspecified'): void => {
@@ -218,6 +246,12 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     counts.hardSafetyViolations += 1;
     if (!counts.hardViolationReasons.includes(reason)) counts.hardViolationReasons.push(reason);
   };
+  const transportDenied = () => {
+    counts.transportRequestsDenied = transport.hits;
+    markHardViolation('transport-denied');
+  };
+  transport.listeners.add(transportDenied);
+  if (transport.hits) transportDenied();
 
   try {
     selectionSession = await context.newCDPSession(selectionPage);
@@ -238,7 +272,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     throw new AppError('READ_POLICY_BLOCK', 'Probe could not prepare the selection network fence', 4);
   }
 
-  selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation);
+  selectionDocument = await isolatedCachedDocument(context, selectionUrl, selectionLocation, () => !hardViolated && !disposed);
   if (!selectionDocument) {
     counts.selectionPreflightFailures += 1;
     markHardViolation('selection-preflight');
@@ -363,6 +397,20 @@ export async function installProbeNavigationGate(context: BrowserContext, select
 
   const routeHandler = async (route: Route): Promise<void> => {
     const request = route.request();
+    const requestGeneration = generation;
+    let owner: Page | undefined;
+    try { owner = request.frame().page(); } catch { /* workers never inherit page authority */ }
+    const active = () => !disposed && !hardViolated && generation === requestGeneration
+      && ((phase === 'selection' && owner === selectionPage)
+        || (['armed', 'target-used'].includes(phase) && owner === targetPage));
+    if (!active() && phase !== 'closing-selection' && phase !== 'failed') {
+      await block(route, 'subrequest', false, true, 'unowned-request');
+      return;
+    }
+    if (!['GET', 'HEAD'].includes(request.method()) || !requestPolicy(request.method(), request.url()).allow) {
+      await block(route, 'subrequest', false, true, 'read-policy');
+      return;
+    }
     const location = exactCanonicalLocation(request.url());
     if (phase === 'selection' && counts.selectionNavigationsAllowed === 0 && location === selectionLocation
       && selectionDocument && mainPageNavigation(route, selectionPage)) {
@@ -391,9 +439,8 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       return;
     }
 
-    // Once final selection validation starts, every late subrequest is aborted
-    // while the old page is being destroyed. Non-navigation cancellation is
-    // safe and nonfatal; navigations remain hard failures. Nothing is proxied.
+    // Final selection validation revokes this generation synchronously. No new
+    // request is brokered while the old page is being destroyed.
     if (phase === 'closing-selection') {
       const messaging = isProbeThreadUrl(request.url(), expectedOrigin)
         || probeMessagingRequestPolicy('selection', request.method(), request.url(), expectedOrigin, targetIds).messaging;
@@ -412,7 +459,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       const equivalentTarget = phase === 'target-used' && request.isNavigationRequest() && Boolean(routeId && targetIds.has(routeId));
       if (equivalentTarget && counts.targetEquivalentNavigationsAllowed < 2) {
         const equivalentLocation = exactCanonicalLocation(request.url());
-        const document = equivalentLocation ? await isolatedCachedDocument(context, request.url(), equivalentLocation) : undefined;
+        const document = equivalentLocation ? await isolatedCachedDocument(context, request.url(), equivalentLocation, active) : undefined;
         if (document && !hardViolated) {
           counts.targetEquivalentNavigationsAllowed += 1;
           await route.fulfill(document);
@@ -444,7 +491,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
         return;
       }
       const requestPhase = phase;
-      const proxied = await isolatedApiResponse(context, request);
+      const proxied = await isolatedApiResponse(context, request, active);
       const sameTargetLifecycle = ['armed', 'target-used'].includes(requestPhase)
         && ['armed', 'target-used'].includes(phase);
       if (proxied.document && !hardViolated && (phase === requestPhase || sameTargetLifecycle)) await route.fulfill(proxied.document);
@@ -461,8 +508,8 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       return;
     }
 
-    // No frame may navigate away from either cached document. Ordinary
-    // non-messaging subresources still pass through the global read-only guard.
+    // No frame may navigate away from either cached document. Only explicitly
+    // allowlisted assets may use the isolated broker below.
     if (request.isNavigationRequest()) {
       // A denied ordinary child-frame navigation cannot escape the route or
       // reach the wire. Only a main-page navigation changes the trusted probe
@@ -473,18 +520,37 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       await block(route, 'navigation', mainPage, false, 'ordinary-navigation');
       return;
     }
-    await route.fallback();
+    if (active() && allowedAsset(request, expectedOrigin)) {
+      const proxied = await isolatedApiResponse(context, request, active, true);
+      if (proxied.document && active()) await route.fulfill(proxied.document);
+      else await block(route, 'subrequest', active(), true, 'asset-broker');
+      return;
+    }
+    await block(route, 'subrequest', false, true, 'unapproved-resource');
   };
   const pendingRoutes = new Set<Promise<void>>();
   const trackedRouteHandler = (route: Route): Promise<void> => {
-    const task = routeHandler(route).finally(() => pendingRoutes.delete(task));
+    const task = routeHandler(route).catch(() => {
+      if (!disposed && phase !== 'closing-selection') markHardViolation('route-error');
+    }).finally(() => pendingRoutes.delete(task));
     pendingRoutes.add(task);
     return task;
   };
   await context.route('**/*', trackedRouteHandler);
 
   const drainRoutes = async (): Promise<void> => {
-    while (pendingRoutes.size) await Promise.allSettled([...pendingRoutes]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        (async () => { while (pendingRoutes.size) await Promise.allSettled([...pendingRoutes]); })(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            markHardViolation('broker-drain-timeout');
+            reject(new AppError('READ_POLICY_BLOCK', 'Probe broker drain exceeded its bounded deadline', 4));
+          }, BROKER_TIMEOUT_MS + 2_000);
+        }),
+      ]);
+    } finally { if (timer) clearTimeout(timer); }
   };
 
   const pageMatches = async (candidatePage: Page, expected: string): Promise<boolean> => {
@@ -554,6 +620,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
       targetLocation = location;
       targetIds = ids;
       phase = 'closing-selection';
+      generation += 1;
       if (!selectionSession || !await retireSelectionPage(selectionSession, selectionPage, () => {
         selectionNetworkFenced = true;
       }, drainRoutes)) markHardViolation();
@@ -593,7 +660,7 @@ export async function installProbeNavigationGate(context: BrowserContext, select
 
       phase = 'target-preflight';
       counts.targetPreflightGets += 1;
-      const document = await isolatedCachedDocument(context, targetUrl, location);
+      const document = await isolatedCachedDocument(context, targetUrl, location, () => !disposed && !hardViolated && phase === 'target-preflight');
       if (!document) {
         counts.targetPreflightFailures += 1;
         markHardViolation();
@@ -634,9 +701,14 @@ export async function installProbeNavigationGate(context: BrowserContext, select
     },
     snapshot() { return { ...counts }; },
     async dispose() {
+      disposed = true;
+      generation += 1;
+      await drainRoutes();
       context.off('page', popupHandler);
       await context.unroute('**/*', trackedRouteHandler);
       await selectionSession?.detach().catch(() => undefined);
+      // The transport deny listener stays alive until context.close: teardown
+      // must not hide a late route-bypass attempt from the final hard state.
     },
   };
 }
